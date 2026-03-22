@@ -10,4 +10,3 @@ The system will support TA applications, job posting, and selection processes.
 - Xiaowang QMUL ID: 231226510
 - Yucheng Liu QMUL ID：231226945
 - Zhixing Sun QMUL ID：231226738
-- Conghao Li QMUL ID:231225546
