@@ -1,0 +1,3 @@
+id,role,name,email,password,programme,yearOfStudy,skills,availableHours,active
+ADMIN001,ADMIN,System Admin,admin@bupt.local,admin123,,, ,0,true
+MO001,MO,Dr Smith,drsmith@bupt.local,mo123456,,, ,0,true
