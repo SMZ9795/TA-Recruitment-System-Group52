@@ -123,8 +123,9 @@ public class ConsoleApp {
             System.out.println("=== MO Dashboard ===");
             System.out.println("Welcome, " + user.getName());
             System.out.println("1. Post a job");
-            System.out.println("2. View all jobs");
-            System.out.println("3. Logout");
+            System.out.println("2. View my jobs");
+            System.out.println("3. View all jobs");
+            System.out.println("4. Logout");
             System.out.print("Choose an option: ");
             String choice = scanner.nextLine().trim();
             switch (choice) {
@@ -132,9 +133,12 @@ public class ConsoleApp {
                     createJob(user);
                     break;
                 case "2":
-                    listJobs();
+                    listJobsByMo(user);
                     break;
                 case "3":
+                    listJobs();
+                    break;
+                case "4":
                     running = false;
                     break;
                 default:
@@ -156,6 +160,19 @@ public class ConsoleApp {
             System.out.println("No jobs available.");
             return;
         }
+        printJobs(jobs);
+    }
+
+    private void listJobsByMo(User user) {
+        List<Job> jobs = jobService.getJobsByMoId(user.getId());
+        if (jobs.isEmpty()) {
+            System.out.println("You have not posted any jobs.");
+            return;
+        }
+        printJobs(jobs);
+    }
+
+    private void printJobs(List<Job> jobs) {
         System.out.println();
         for (Job job : jobs) {
             System.out.println(job.getId() + " | " + job.getModuleCode() + " | " + job.getModuleName()
@@ -183,6 +200,8 @@ public class ConsoleApp {
             Job job = jobService.createJob(
                     moduleCode, moduleName, description, requiredSkills, hours, positions, deadline, user.getId());
             System.out.println("Job created: " + job.getId());
+        } catch (NumberFormatException e) {
+            System.out.println("Job creation failed: Hours per week and positions must be whole numbers.");
         } catch (IllegalArgumentException e) {
             System.out.println("Job creation failed: " + e.getMessage());
         }
