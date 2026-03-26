@@ -37,6 +37,12 @@ public class JobRepository {
         return findAll().stream().filter(job -> job.getId().equalsIgnoreCase(jobId)).findFirst();
     }
 
+    public List<Job> findByPostedByMoId(String moId) {
+        return findAll().stream()
+                .filter(job -> job.getPostedByMoId() != null && job.getPostedByMoId().equalsIgnoreCase(moId))
+                .toList();
+    }
+
     public void save(Job job) {
         List<Job> jobs = findAll();
         jobs.removeIf(existing -> existing.getId().equalsIgnoreCase(job.getId()));
