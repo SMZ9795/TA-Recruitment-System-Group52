@@ -6,6 +6,7 @@ import com.group52.tarecruitment.repository.UserRepository;
 import com.group52.tarecruitment.service.ApplicationService;
 import com.group52.tarecruitment.service.AuthService;
 import com.group52.tarecruitment.service.JobService;
+import com.group52.tarecruitment.service.UserProfileService;
 import com.group52.tarecruitment.ui.ConsoleApp;
 import java.nio.file.Path;
 
@@ -20,9 +21,10 @@ public class Main {
 
         AuthService authService = new AuthService(userRepository);
         JobService jobService = new JobService(jobRepository);
-        ApplicationService applicationService = new ApplicationService(applicationRepository);
+        ApplicationService applicationService = new ApplicationService(applicationRepository, jobRepository);
+        UserProfileService userProfileService = new UserProfileService(userRepository);
 
-        ConsoleApp app = new ConsoleApp(authService, jobService, applicationService);
+        ConsoleApp app = new ConsoleApp(authService, jobService, applicationService, userProfileService);
         app.start();
     }
 }
