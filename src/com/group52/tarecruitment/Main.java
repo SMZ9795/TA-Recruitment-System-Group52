@@ -20,7 +20,7 @@ public class Main {
 
         AuthService authService = new AuthService(userRepository);
         JobService jobService = new JobService(jobRepository);
-        ApplicationService applicationService = new ApplicationService(applicationRepository);
+        ApplicationService applicationService = new ApplicationService(applicationRepository, jobRepository);
 
         ConsoleApp app = new ConsoleApp(authService, jobService, applicationService);
         app.start();

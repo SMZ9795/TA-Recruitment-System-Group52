@@ -7,6 +7,7 @@ import com.group52.tarecruitment.util.FileUtil;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 public class ApplicationRepository {
     private static final String HEADER = "id,jobId,taUserId,status,appliedDate";
@@ -29,6 +30,24 @@ public class ApplicationRepository {
             applications.add(toApplication(values));
         }
         return applications;
+    }
+
+    public Optional<Application> findById(String applicationId) {
+        return findAll().stream()
+                .filter(application -> application.getId().equalsIgnoreCase(applicationId))
+                .findFirst();
+    }
+
+    public List<Application> findByJobId(String jobId) {
+        return findAll().stream()
+                .filter(application -> application.getJobId().equalsIgnoreCase(jobId))
+                .toList();
+    }
+
+    public List<Application> findByTaUserId(String taUserId) {
+        return findAll().stream()
+                .filter(application -> application.getTaUserId().equalsIgnoreCase(taUserId))
+                .toList();
     }
 
     public void save(Application application) {

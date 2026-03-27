@@ -1,5 +1,7 @@
 package com.group52.tarecruitment.ui;
 
+import com.group52.tarecruitment.model.Application;
+import com.group52.tarecruitment.model.ApplicationStatus;
 import com.group52.tarecruitment.model.Job;
 import com.group52.tarecruitment.model.Role;
 import com.group52.tarecruitment.model.User;
@@ -97,7 +99,8 @@ public class ConsoleApp {
             System.out.println("Welcome, " + user.getName());
             System.out.println("1. Browse jobs");
             System.out.println("2. Apply for a job");
-            System.out.println("3. Logout");
+            System.out.println("3. View my applications");
+            System.out.println("4. Logout");
             System.out.print("Choose an option: ");
             String choice = scanner.nextLine().trim();
             switch (choice) {
@@ -108,6 +111,9 @@ public class ConsoleApp {
                     applyForJob(user);
                     break;
                 case "3":
+                    listApplicationsByTa(user);
+                    break;
+                case "4":
                     running = false;
                     break;
                 default:
@@ -124,8 +130,10 @@ public class ConsoleApp {
             System.out.println("Welcome, " + user.getName());
             System.out.println("1. Post a job");
             System.out.println("2. View my jobs");
-            System.out.println("3. View all jobs");
-            System.out.println("4. Logout");
+            System.out.println("3. View applications for my jobs");
+            System.out.println("4. Review an application");
+            System.out.println("5. View all jobs");
+            System.out.println("6. Logout");
             System.out.print("Choose an option: ");
             String choice = scanner.nextLine().trim();
             switch (choice) {
@@ -136,9 +144,15 @@ public class ConsoleApp {
                     listJobsByMo(user);
                     break;
                 case "3":
-                    listJobs();
+                    listApplicationsByMo(user);
                     break;
                 case "4":
+                    reviewApplication(user);
+                    break;
+                case "5":
+                    listJobs();
+                    break;
+                case "6":
                     running = false;
                     break;
                 default:
@@ -180,6 +194,34 @@ public class ConsoleApp {
         }
     }
 
+    private void listApplicationsByTa(User user) {
+        List<Application> applications = applicationService.getApplicationsByTaUserId(user.getId());
+        if (applications.isEmpty()) {
+            System.out.println("You have not submitted any applications.");
+            return;
+        }
+        printApplications(applications);
+    }
+
+    private void listApplicationsByMo(User user) {
+        List<Application> applications = applicationService.getApplicationsForMo(user.getId());
+        if (applications.isEmpty()) {
+            System.out.println("There are no applications for your jobs yet.");
+            return;
+        }
+        printApplications(applications);
+    }
+
+    private void printApplications(List<Application> applications) {
+        System.out.println();
+        for (Application application : applications) {
+            System.out.println(application.getId() + " | job=" + application.getJobId()
+                    + " | ta=" + application.getTaUserId()
+                    + " | " + application.getStatus()
+                    + " | applied=" + application.getAppliedDate());
+        }
+    }
+
     private void createJob(User user) {
         try {
             System.out.print("Module code: ");
@@ -215,6 +257,30 @@ public class ConsoleApp {
             System.out.println("Application submitted.");
         } catch (IllegalArgumentException e) {
             System.out.println("Application failed: " + e.getMessage());
+        }
+    }
+
+    private void reviewApplication(User user) {
+        try {
+            System.out.print("Enter application ID: ");
+            String applicationId = scanner.nextLine().trim();
+            System.out.print("Action (A=accept, R=reject): ");
+            String action = scanner.nextLine().trim();
+
+            ApplicationStatus newStatus;
+            if ("A".equalsIgnoreCase(action)) {
+                newStatus = ApplicationStatus.ACCEPTED;
+            } else if ("R".equalsIgnoreCase(action)) {
+                newStatus = ApplicationStatus.REJECTED;
+            } else {
+                System.out.println("Invalid action.");
+                return;
+            }
+
+            Application application = applicationService.updateApplicationStatus(applicationId, user.getId(), newStatus);
+            System.out.println("Application updated: " + application.getId() + " -> " + application.getStatus());
+        } catch (IllegalArgumentException e) {
+            System.out.println("Review failed: " + e.getMessage());
         }
     }
 }
