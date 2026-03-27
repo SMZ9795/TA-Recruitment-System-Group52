@@ -8,6 +8,7 @@ import com.group52.tarecruitment.model.User;
 import com.group52.tarecruitment.service.ApplicationService;
 import com.group52.tarecruitment.service.AuthService;
 import com.group52.tarecruitment.service.JobService;
+import com.group52.tarecruitment.service.UserProfileService;
 import java.util.List;
 import java.util.Optional;
 import java.util.Scanner;
@@ -16,12 +17,15 @@ public class ConsoleApp {
     private final AuthService authService;
     private final JobService jobService;
     private final ApplicationService applicationService;
+    private final UserProfileService userProfileService;
     private final Scanner scanner;
 
-    public ConsoleApp(AuthService authService, JobService jobService, ApplicationService applicationService) {
+    public ConsoleApp(AuthService authService, JobService jobService, ApplicationService applicationService,
+            UserProfileService userProfileService) {
         this.authService = authService;
         this.jobService = jobService;
         this.applicationService = applicationService;
+        this.userProfileService = userProfileService;
         this.scanner = new Scanner(System.in);
     }
 
@@ -100,7 +104,9 @@ public class ConsoleApp {
             System.out.println("1. Browse jobs");
             System.out.println("2. Apply for a job");
             System.out.println("3. View my applications");
-            System.out.println("4. Logout");
+            System.out.println("4. View my profile");
+            System.out.println("5. Edit my profile");
+            System.out.println("6. Logout");
             System.out.print("Choose an option: ");
             String choice = scanner.nextLine().trim();
             switch (choice) {
@@ -114,6 +120,12 @@ public class ConsoleApp {
                     listApplicationsByTa(user);
                     break;
                 case "4":
+                    showTaProfile(user);
+                    break;
+                case "5":
+                    editTaProfile(user);
+                    break;
+                case "6":
                     running = false;
                     break;
                 default:
@@ -222,6 +234,36 @@ public class ConsoleApp {
         }
     }
 
+    private void showTaProfile(User user) {
+        System.out.println();
+        System.out.println("=== TA Profile ===");
+        System.out.println("Name: " + user.getName());
+        System.out.println("Email: " + user.getEmail());
+        System.out.println(userProfileService.formatProfile(user));
+    }
+
+    private void editTaProfile(User user) {
+        try {
+            System.out.print("Programme: ");
+            String programme = scanner.nextLine().trim();
+            System.out.print("Year of study: ");
+            int yearOfStudy = Integer.parseInt(scanner.nextLine().trim());
+            System.out.print("Skills: ");
+            String skills = scanner.nextLine().trim();
+            System.out.print("Available hours: ");
+            int availableHours = Integer.parseInt(scanner.nextLine().trim());
+
+            User updatedUser = userProfileService.updateTaProfile(
+                    user.getId(), programme, yearOfStudy, skills, availableHours);
+            syncUserProfile(user, updatedUser);
+            System.out.println("Profile updated.");
+        } catch (NumberFormatException e) {
+            System.out.println("Profile update failed: Year of study and available hours must be whole numbers.");
+        } catch (IllegalArgumentException e) {
+            System.out.println("Profile update failed: " + e.getMessage());
+        }
+    }
+
     private void createJob(User user) {
         try {
             System.out.print("Module code: ");
@@ -282,5 +324,12 @@ public class ConsoleApp {
         } catch (IllegalArgumentException e) {
             System.out.println("Review failed: " + e.getMessage());
         }
+    }
+
+    private void syncUserProfile(User currentUser, User updatedUser) {
+        currentUser.setProgramme(updatedUser.getProgramme());
+        currentUser.setYearOfStudy(updatedUser.getYearOfStudy());
+        currentUser.setSkills(updatedUser.getSkills());
+        currentUser.setAvailableHours(updatedUser.getAvailableHours());
     }
 }
