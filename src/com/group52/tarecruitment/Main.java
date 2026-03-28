@@ -3,6 +3,7 @@ package com.group52.tarecruitment;
 import com.group52.tarecruitment.repository.ApplicationRepository;
 import com.group52.tarecruitment.repository.JobRepository;
 import com.group52.tarecruitment.repository.UserRepository;
+import com.group52.tarecruitment.service.AdminService;
 import com.group52.tarecruitment.service.ApplicationService;
 import com.group52.tarecruitment.service.AuthService;
 import com.group52.tarecruitment.service.JobService;
@@ -23,8 +24,9 @@ public class Main {
         JobService jobService = new JobService(jobRepository);
         ApplicationService applicationService = new ApplicationService(applicationRepository, jobRepository);
         UserProfileService userProfileService = new UserProfileService(userRepository);
+        AdminService adminService = new AdminService(userRepository, jobRepository, applicationRepository);
 
-        ConsoleApp app = new ConsoleApp(authService, jobService, applicationService, userProfileService);
+        ConsoleApp app = new ConsoleApp(authService, jobService, applicationService, userProfileService, adminService);
         app.start();
     }
 }
