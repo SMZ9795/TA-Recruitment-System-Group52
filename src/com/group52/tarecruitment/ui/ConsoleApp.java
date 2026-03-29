@@ -259,14 +259,17 @@ public class ConsoleApp {
             System.out.println("There are no applications for your jobs yet.");
             return;
         }
+        System.out.println();
+        System.out.println("=== Applications For My Jobs ===");
         printApplications(applications);
     }
 
     private void printApplications(List<Application> applications) {
         System.out.println();
         for (Application application : applications) {
-            System.out.println(application.getId() + " | job=" + application.getJobId()
-                    + " | ta=" + application.getTaUserId()
+            System.out.println("Application " + application.getId()
+                    + " | Job " + application.getJobId()
+                    + " | Applicant " + application.getTaUserId()
                     + " | " + application.getStatus()
                     + " | applied=" + application.getAppliedDate());
         }
