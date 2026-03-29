@@ -75,8 +75,26 @@ public class ApplicationService {
             throw new IllegalArgumentException("Only pending applications can be reviewed.");
         }
 
+        if (newStatus == ApplicationStatus.ACCEPTED) {
+            long acceptedCount = applicationRepository.countByJobIdAndStatus(job.getId(), ApplicationStatus.ACCEPTED);
+            if (acceptedCount >= job.getPositions()) {
+                job.setStatus(JobStatus.FILLED);
+                jobRepository.save(job);
+                throw new IllegalArgumentException("This job has already reached its positions limit.");
+            }
+        }
+
         application.setStatus(newStatus);
         applicationRepository.save(application);
+
+        if (newStatus == ApplicationStatus.ACCEPTED) {
+            long acceptedCount = applicationRepository.countByJobIdAndStatus(job.getId(), ApplicationStatus.ACCEPTED);
+            if (acceptedCount >= job.getPositions()) {
+                job.setStatus(JobStatus.FILLED);
+                jobRepository.save(job);
+            }
+        }
+
         return application;
     }
 

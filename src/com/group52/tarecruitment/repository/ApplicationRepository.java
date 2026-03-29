@@ -50,6 +50,13 @@ public class ApplicationRepository {
                 .toList();
     }
 
+    public long countByJobIdAndStatus(String jobId, ApplicationStatus status) {
+        return findAll().stream()
+                .filter(application -> application.getJobId().equalsIgnoreCase(jobId))
+                .filter(application -> application.getStatus() == status)
+                .count();
+    }
+
     public void save(Application application) {
         List<Application> applications = findAll();
         applications.removeIf(existing -> existing.getId().equalsIgnoreCase(application.getId()));
