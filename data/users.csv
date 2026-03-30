@@ -1,0 +1,11 @@
+﻿id,role,name,email,password,programme,yearOfStudy,skills,availableHours,active
+"ADMIN001","ADMIN","System Admin","admin@bupt.local","admin123","","0","","0","true"
+"MO001","MO","Dr Smith","drsmith@bupt.local","mo123456","","0","","0","true"
+"MO002","MO","Prof Li","profli@bupt.local","mo234567","","0","","0","true"
+"MO003","MO","Ms Chen","mschen@bupt.local","mo345678","","0","","0","true"
+"TA2023213483","TA","szsing","2023213483@bupt.cn","szx20050308","Computer Science","2","Java;Python","12","true"
+"TA231226244","TA","Alice Zhang","alice.zhang@bupt.local","ta123456","Computer Science","2","Java;SQL","12","true"
+"TA231226510","TA","Bob Liu","bob.liu@bupt.local","ta234567","Data Science","3","Python;ML","10","true"
+"TA231226945","TA","Carol Wu","carol.wu@bupt.local","ta345678","Applied Math","1","Calculus;Tutor","8","true"
+"TA231267380","TA","David Sun","david.sun@bupt.local","ta456789","Software Engineering","4","Java;Testing","15","true"
+"TA231225546","TA","Eva Li","eva.li@bupt.local","ta567890","Cyber Security","2","Linux;C","6","true"
