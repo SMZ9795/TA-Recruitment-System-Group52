@@ -1,0 +1,7 @@
+﻿id,moduleCode,moduleName,description,requiredSkills,hoursPerWeek,positions,deadline,postedByMoId,status
+"JOB100001","CS101","Intro Programming","Support lab and marking","Java","6","2","2026-12-15","MO001","OPEN"
+"JOB100002","CS102","Data Structures","Weekly tutorial support","Java;Algorithms","8","1","2026-10-01","MO001","FILLED"
+"JOB100003","MA201","Calculus Tutoring","Help first-year students","Calculus;Communication","4","2","2026-09-30","MO002","OPEN"
+"JOB100004","AI301","Machine Learning Lab","Lab supervision and office hours","Python;ML","10","1","2026-05-30","MO002","FILLED"
+"JOB100005","SE401","Software Testing","Assist with test design","Testing;JUnit","5","1","2026-04-15","MO003","CLOSED"
+"JOB100006","DB202","Database Systems","Database lab assistant","SQL;DB","7","1","2025-12-31","MO003","OPEN"
