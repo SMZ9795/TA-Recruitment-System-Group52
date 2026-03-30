@@ -73,7 +73,10 @@ public class JobService {
 
     private void validateDeadline(String deadline) {
         try {
-            LocalDate.parse(deadline);
+            LocalDate parsedDeadline = LocalDate.parse(deadline);
+            if (!parsedDeadline.isAfter(LocalDate.now())) {
+                throw new IllegalArgumentException("Deadline must be after today.");
+            }
         } catch (DateTimeParseException e) {
             throw new IllegalArgumentException("Deadline must use YYYY-MM-DD format.");
         }
