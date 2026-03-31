@@ -32,6 +32,31 @@ public class ApplicationRepository {
         return applications;
     }
 
+    public Optional<Application> findById(String applicationId) {
+        return findAll().stream()
+                .filter(application -> application.getId().equalsIgnoreCase(applicationId))
+                .findFirst();
+    }
+
+    public List<Application> findByJobId(String jobId) {
+        return findAll().stream()
+                .filter(application -> application.getJobId().equalsIgnoreCase(jobId))
+                .toList();
+    }
+
+    public List<Application> findByTaUserId(String taUserId) {
+        return findAll().stream()
+                .filter(application -> application.getTaUserId().equalsIgnoreCase(taUserId))
+                .toList();
+    }
+
+    public long countByJobIdAndStatus(String jobId, ApplicationStatus status) {
+        return findAll().stream()
+                .filter(application -> application.getJobId().equalsIgnoreCase(jobId))
+                .filter(application -> application.getStatus() == status)
+                .count();
+    }
+
     public void save(Application application) {
         List<Application> applications = findAll();
         applications.removeIf(existing -> existing.getId().equalsIgnoreCase(application.getId()));

@@ -2,7 +2,10 @@ package com.group52.tarecruitment.service;
 
 import com.group52.tarecruitment.model.Application;
 import com.group52.tarecruitment.model.ApplicationStatus;
+import com.group52.tarecruitment.model.Job;
+import com.group52.tarecruitment.model.JobStatus;
 import com.group52.tarecruitment.repository.ApplicationRepository;
+import com.group52.tarecruitment.repository.JobRepository;
 import com.group52.tarecruitment.util.IdGenerator;
 import java.time.LocalDate;
 import java.util.List;
@@ -10,26 +13,29 @@ import java.util.Optional;
 
 public class ApplicationService {
     private final ApplicationRepository applicationRepository;
+    private final JobRepository jobRepository;
 
-    public ApplicationService(ApplicationRepository applicationRepository) {
+    public ApplicationService(ApplicationRepository applicationRepository, JobRepository jobRepository) {
         this.applicationRepository = applicationRepository;
+        this.jobRepository = jobRepository;
     }
 
     public Application applyForJob(String jobId, String taUserId) {
-        if (jobId == null || jobId.isBlank()) {
-            throw new IllegalArgumentException("Job ID is required.");
-        }
-        if (taUserId == null || taUserId.isBlank()) {
-            throw new IllegalArgumentException("TA user ID is required.");
-        }
-        if (applicationRepository.existsByJobIdAndTaUserId(jobId, taUserId)) {
+        String normalizedJobId = requireText(jobId, "Job ID");
+        String normalizedTaUserId = requireText(taUserId, "TA user ID");
+
+        Job job = jobRepository.findById(normalizedJobId)
+                .orElseThrow(() -> new IllegalArgumentException("Job not found."));
+        validateJobIsOpen(job);
+
+        if (applicationRepository.existsByJobIdAndTaUserId(normalizedJobId, normalizedTaUserId)) {
             throw new IllegalArgumentException("This TA has already applied for the job.");
         }
 
         Application application = new Application(
                 IdGenerator.nextId("APP"),
-                jobId,
-                taUserId,
+                normalizedJobId,
+                normalizedTaUserId,
                 ApplicationStatus.PENDING,
                 LocalDate.now().toString());
         applicationRepository.save(application);
