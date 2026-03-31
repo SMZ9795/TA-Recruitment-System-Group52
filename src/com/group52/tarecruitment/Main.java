@@ -7,6 +7,7 @@ import com.group52.tarecruitment.service.ApplicationService;
 import com.group52.tarecruitment.service.AuthService;
 import com.group52.tarecruitment.service.JobService;
 import com.group52.tarecruitment.ui.ConsoleApp;
+import com.group52.tarecruitment.ui.SwingApp;
 import java.nio.file.Path;
 
 public class Main {
@@ -22,7 +23,13 @@ public class Main {
         JobService jobService = new JobService(jobRepository);
         ApplicationService applicationService = new ApplicationService(applicationRepository);
 
-        ConsoleApp app = new ConsoleApp(authService, jobService, applicationService);
+        boolean consoleMode = args.length > 0 && "console".equalsIgnoreCase(args[0]);
+        if (consoleMode) {
+            ConsoleApp app = new ConsoleApp(authService, jobService, applicationService);
+            app.start();
+            return;
+        }
+        SwingApp app = new SwingApp(authService, jobService, applicationService);
         app.start();
     }
 }
