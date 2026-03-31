@@ -8,8 +8,8 @@ import com.group52.tarecruitment.repository.ApplicationRepository;
 import com.group52.tarecruitment.repository.JobRepository;
 import com.group52.tarecruitment.util.IdGenerator;
 import java.time.LocalDate;
-import java.time.format.DateTimeParseException;
 import java.util.List;
+import java.util.Optional;
 
 public class ApplicationService {
     private final ApplicationRepository applicationRepository;
@@ -42,80 +42,33 @@ public class ApplicationService {
         return application;
     }
 
+    public List<Application> getAllApplications() {
+        return applicationRepository.findAll();
+    }
+
     public List<Application> getApplicationsByTaUserId(String taUserId) {
-        return applicationRepository.findByTaUserId(requireText(taUserId, "TA user ID"));
+        return applicationRepository.findByTaUserId(taUserId);
     }
 
-    public List<Application> getApplicationsForMo(String moId) {
-        String normalizedMoId = requireText(moId, "MO ID");
-        return jobRepository.findByPostedByMoId(normalizedMoId).stream()
-                .flatMap(job -> applicationRepository.findByJobId(job.getId()).stream())
-                .toList();
+    public List<Application> getApplicationsByJobId(String jobId) {
+        return applicationRepository.findByJobId(jobId);
     }
 
-    public Application updateApplicationStatus(String applicationId, String moId, ApplicationStatus newStatus) {
-        String normalizedApplicationId = requireText(applicationId, "Application ID");
-        String normalizedMoId = requireText(moId, "MO ID");
-        if (newStatus == null) {
+    public Optional<Application> getApplicationById(String applicationId) {
+        return applicationRepository.findById(applicationId);
+    }
+
+    public void updateStatus(String applicationId, ApplicationStatus status) {
+        if (applicationId == null || applicationId.isBlank()) {
+            throw new IllegalArgumentException("Application ID is required.");
+        }
+        if (status == null) {
             throw new IllegalArgumentException("Application status is required.");
         }
-        if (newStatus == ApplicationStatus.WITHDRAWN) {
-            throw new IllegalArgumentException("MO cannot set status to WITHDRAWN.");
-        }
-
-        Application application = applicationRepository.findById(normalizedApplicationId)
+        Application application = applicationRepository
+                .findById(applicationId)
                 .orElseThrow(() -> new IllegalArgumentException("Application not found."));
-        Job job = jobRepository.findById(application.getJobId())
-                .orElseThrow(() -> new IllegalArgumentException("Job not found for the application."));
-
-        if (!job.getPostedByMoId().equalsIgnoreCase(normalizedMoId)) {
-            throw new IllegalArgumentException("You can only review applications for your own jobs.");
-        }
-        if (application.getStatus() != ApplicationStatus.PENDING) {
-            throw new IllegalArgumentException("Only pending applications can be reviewed.");
-        }
-
-        if (newStatus == ApplicationStatus.ACCEPTED) {
-            long acceptedCount = applicationRepository.countByJobIdAndStatus(job.getId(), ApplicationStatus.ACCEPTED);
-            if (acceptedCount >= job.getPositions()) {
-                job.setStatus(JobStatus.FILLED);
-                jobRepository.save(job);
-                throw new IllegalArgumentException("This job has already reached its positions limit.");
-            }
-        }
-
-        application.setStatus(newStatus);
+        application.setStatus(status);
         applicationRepository.save(application);
-
-        if (newStatus == ApplicationStatus.ACCEPTED) {
-            long acceptedCount = applicationRepository.countByJobIdAndStatus(job.getId(), ApplicationStatus.ACCEPTED);
-            if (acceptedCount >= job.getPositions()) {
-                job.setStatus(JobStatus.FILLED);
-                jobRepository.save(job);
-            }
-        }
-
-        return application;
-    }
-
-    private String requireText(String value, String fieldName) {
-        if (value == null || value.isBlank()) {
-            throw new IllegalArgumentException(fieldName + " is required.");
-        }
-        return value.trim();
-    }
-
-    private void validateJobIsOpen(Job job) {
-        if (job.getStatus() != JobStatus.OPEN) {
-            throw new IllegalArgumentException("This job is not open for applications.");
-        }
-
-        try {
-            if (LocalDate.parse(job.getDeadline()).isBefore(LocalDate.now())) {
-                throw new IllegalArgumentException("This job has passed its deadline.");
-            }
-        } catch (DateTimeParseException e) {
-            throw new IllegalArgumentException("The job deadline is invalid.");
-        }
     }
 }
