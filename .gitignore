@@ -1,0 +1,5 @@
+out/
+bin/
+.vscode/
+.codex/
+sources.txt

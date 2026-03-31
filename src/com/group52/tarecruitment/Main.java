@@ -9,9 +9,8 @@ import com.group52.tarecruitment.service.AdminService;
 import com.group52.tarecruitment.service.ApplicationService;
 import com.group52.tarecruitment.service.AuthService;
 import com.group52.tarecruitment.service.JobService;
-import com.group52.tarecruitment.service.UserProfileService;
-import com.group52.tarecruitment.ui.GuiApp;
-import java.nio.file.Files;
+import com.group52.tarecruitment.ui.ConsoleApp;
+import com.group52.tarecruitment.ui.SwingApp;
 import java.nio.file.Path;
 
 public class Main {
@@ -30,7 +29,13 @@ public class Main {
         UserProfileService userProfileService = new UserProfileService(userRepository);
         AdminService adminService = new AdminService(userRepository, jobRepository, applicationRepository);
 
-        GuiApp app = new GuiApp(authService, jobService, applicationService, userProfileService, adminService);
+        boolean consoleMode = args.length > 0 && "console".equalsIgnoreCase(args[0]);
+        if (consoleMode) {
+            ConsoleApp app = new ConsoleApp(authService, jobService, applicationService);
+            app.start();
+            return;
+        }
+        SwingApp app = new SwingApp(authService, jobService, applicationService);
         app.start();
     }
 

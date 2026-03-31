@@ -39,7 +39,7 @@ public class JobRepository {
 
     public List<Job> findByPostedByMoId(String moId) {
         return findAll().stream()
-                .filter(job -> job.getPostedByMoId() != null && job.getPostedByMoId().equalsIgnoreCase(moId))
+                .filter(job -> job.getPostedByMoId().equalsIgnoreCase(moId))
                 .toList();
     }
 
@@ -47,6 +47,12 @@ public class JobRepository {
         List<Job> jobs = findAll();
         jobs.removeIf(existing -> existing.getId().equalsIgnoreCase(job.getId()));
         jobs.add(job);
+        writeAll(jobs);
+    }
+
+    public void deleteById(String jobId) {
+        List<Job> jobs = findAll();
+        jobs.removeIf(existing -> existing.getId().equalsIgnoreCase(jobId));
         writeAll(jobs);
     }
 
