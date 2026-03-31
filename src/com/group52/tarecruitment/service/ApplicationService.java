@@ -5,6 +5,8 @@ import com.group52.tarecruitment.model.ApplicationStatus;
 import com.group52.tarecruitment.repository.ApplicationRepository;
 import com.group52.tarecruitment.util.IdGenerator;
 import java.time.LocalDate;
+import java.util.List;
+import java.util.Optional;
 
 public class ApplicationService {
     private final ApplicationRepository applicationRepository;
@@ -32,5 +34,35 @@ public class ApplicationService {
                 LocalDate.now().toString());
         applicationRepository.save(application);
         return application;
+    }
+
+    public List<Application> getAllApplications() {
+        return applicationRepository.findAll();
+    }
+
+    public List<Application> getApplicationsByTaUserId(String taUserId) {
+        return applicationRepository.findByTaUserId(taUserId);
+    }
+
+    public List<Application> getApplicationsByJobId(String jobId) {
+        return applicationRepository.findByJobId(jobId);
+    }
+
+    public Optional<Application> getApplicationById(String applicationId) {
+        return applicationRepository.findById(applicationId);
+    }
+
+    public void updateStatus(String applicationId, ApplicationStatus status) {
+        if (applicationId == null || applicationId.isBlank()) {
+            throw new IllegalArgumentException("Application ID is required.");
+        }
+        if (status == null) {
+            throw new IllegalArgumentException("Application status is required.");
+        }
+        Application application = applicationRepository
+                .findById(applicationId)
+                .orElseThrow(() -> new IllegalArgumentException("Application not found."));
+        application.setStatus(status);
+        applicationRepository.save(application);
     }
 }

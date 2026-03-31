@@ -18,6 +18,10 @@ public class JobService {
         return jobRepository.findAll();
     }
 
+    public List<Job> getJobsByMoId(String moId) {
+        return jobRepository.findByPostedByMoId(moId);
+    }
+
     public Optional<Job> getJobById(String jobId) {
         return jobRepository.findById(jobId);
     }
@@ -44,5 +48,19 @@ public class JobService {
                 JobStatus.OPEN);
         jobRepository.save(job);
         return job;
+    }
+
+    public void updateJob(Job job) {
+        if (job == null) {
+            throw new IllegalArgumentException("Job is required.");
+        }
+        jobRepository.save(job);
+    }
+
+    public void deleteJob(String jobId) {
+        if (jobId == null || jobId.isBlank()) {
+            throw new IllegalArgumentException("Job ID is required.");
+        }
+        jobRepository.deleteById(jobId);
     }
 }
