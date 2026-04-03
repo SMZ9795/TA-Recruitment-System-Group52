@@ -11,12 +11,19 @@ public class User {
     private String skills;
     private int availableHours;
     private boolean active;
+    private String cvFilePath;
 
     public User() {
+        this.cvFilePath = "";
     }
 
     public User(String id, Role role, String name, String email, String password, String programme,
             int yearOfStudy, String skills, int availableHours, boolean active) {
+        this(id, role, name, email, password, programme, yearOfStudy, skills, availableHours, active, "");
+    }
+
+    public User(String id, Role role, String name, String email, String password, String programme,
+            int yearOfStudy, String skills, int availableHours, boolean active, String cvFilePath) {
         this.id = id;
         this.role = role;
         this.name = name;
@@ -27,6 +34,7 @@ public class User {
         this.skills = skills;
         this.availableHours = availableHours;
         this.active = active;
+        this.cvFilePath = cvFilePath == null ? "" : cvFilePath;
     }
 
     public String getId() {
@@ -107,5 +115,13 @@ public class User {
 
     public void setActive(boolean active) {
         this.active = active;
+    }
+
+    public String getCvFilePath() {
+        return cvFilePath;
+    }
+
+    public void setCvFilePath(String cvFilePath) {
+        this.cvFilePath = cvFilePath == null ? "" : cvFilePath;
     }
 }

@@ -11,7 +11,7 @@ import java.util.Optional;
 
 public class UserRepository {
     private static final String HEADER =
-            "id,role,name,email,password,programme,yearOfStudy,skills,availableHours,active";
+            "id,role,name,email,password,programme,yearOfStudy,skills,availableHours,active,cvFilePath";
 
     private final Path filePath;
 
@@ -34,11 +34,15 @@ public class UserRepository {
     }
 
     public Optional<User> findById(String userId) {
-        return findAll().stream().filter(user -> user.getId().equalsIgnoreCase(userId)).findFirst();
+        return findAll().stream()
+                .filter(user -> equalsIgnoreCaseSafe(user.getId(), userId))
+                .findFirst();
     }
 
     public Optional<User> findByEmail(String email) {
-        return findAll().stream().filter(user -> user.getEmail().equalsIgnoreCase(email)).findFirst();
+        return findAll().stream()
+                .filter(user -> equalsIgnoreCaseSafe(user.getEmail(), email))
+                .findFirst();
     }
 
     public void save(User user) {
@@ -62,12 +66,14 @@ public class UserRepository {
                     CsvUtil.escape(String.valueOf(user.getYearOfStudy())),
                     CsvUtil.escape(user.getSkills()),
                     CsvUtil.escape(String.valueOf(user.getAvailableHours())),
-                    CsvUtil.escape(String.valueOf(user.isActive()))));
+                    CsvUtil.escape(String.valueOf(user.isActive())),
+                    CsvUtil.escape(safeText(user.getCvFilePath()))));
         }
         FileUtil.writeAllLines(filePath, lines);
     }
 
     private User toUser(List<String> values) {
+        String cvFilePath = values.size() > 10 ? values.get(10) : "";
         return new User(
                 values.get(0),
                 Role.valueOf(values.get(1)),
@@ -78,7 +84,8 @@ public class UserRepository {
                 parseInt(values.get(6)),
                 values.get(7),
                 parseInt(values.get(8)),
-                Boolean.parseBoolean(values.get(9)));
+                Boolean.parseBoolean(values.get(9)),
+                cvFilePath);
     }
 
     private int parseInt(String value) {
@@ -86,5 +93,13 @@ public class UserRepository {
             return 0;
         }
         return Integer.parseInt(value.trim());
+    }
+
+    private String safeText(String value) {
+        return value == null ? "" : value;
+    }
+
+    private boolean equalsIgnoreCaseSafe(String left, String right) {
+        return left != null && right != null && left.equalsIgnoreCase(right);
     }
 }
