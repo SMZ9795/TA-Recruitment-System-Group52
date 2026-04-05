@@ -9,8 +9,10 @@ import com.group52.tarecruitment.service.AdminService;
 import com.group52.tarecruitment.service.ApplicationService;
 import com.group52.tarecruitment.service.AuthService;
 import com.group52.tarecruitment.service.JobService;
+import com.group52.tarecruitment.service.UserProfileService;
 import com.group52.tarecruitment.ui.ConsoleApp;
 import com.group52.tarecruitment.ui.SwingApp;
+import java.nio.file.Files;
 import java.nio.file.Path;
 
 public class Main {
@@ -35,7 +37,7 @@ public class Main {
             app.start();
             return;
         }
-        SwingApp app = new SwingApp(authService, jobService, applicationService);
+        SwingApp app = new SwingApp(authService, jobService, applicationService, dataDirectory);
         app.start();
     }
 

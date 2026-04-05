@@ -18,7 +18,12 @@ import java.awt.GridBagLayout;
 import java.awt.GridBagConstraints;
 import java.awt.Color;
 import java.awt.Font;
+import java.awt.Desktop;
 import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
@@ -52,6 +57,7 @@ public class SwingApp {
     private final AuthService authService;
     private final JobService jobService;
     private final ApplicationService applicationService;
+    private final Path dataDirectory;
 
     private JFrame frame;
     private CardLayout rootLayout;
@@ -62,9 +68,14 @@ public class SwingApp {
     private AdminPanel adminPanel;
 
     public SwingApp(AuthService authService, JobService jobService, ApplicationService applicationService) {
+        this(authService, jobService, applicationService, null);
+    }
+
+    public SwingApp(AuthService authService, JobService jobService, ApplicationService applicationService, Path dataDirectory) {
         this.authService = authService;
         this.jobService = jobService;
         this.applicationService = applicationService;
+        this.dataDirectory = dataDirectory;
     }
 
     public void start() {
@@ -264,6 +275,27 @@ public class SwingApp {
 
     private String safeText(String value) {
         return value == null ? "" : value;
+    }
+
+    private void openCvFile(String cvPath) {
+        if (cvPath == null || cvPath.isBlank()) {
+            JOptionPane.showMessageDialog(frame, "No CV uploaded yet.");
+            return;
+        }
+        File file = new File(cvPath);
+        if (!file.exists()) {
+            JOptionPane.showMessageDialog(frame, "CV file not found:\n" + cvPath);
+            return;
+        }
+        if (!Desktop.isDesktopSupported() || !Desktop.getDesktop().isSupported(Desktop.Action.OPEN)) {
+            JOptionPane.showMessageDialog(frame, "Cannot open file automatically on this system.\nFile path: " + cvPath);
+            return;
+        }
+        try {
+            Desktop.getDesktop().open(file);
+        } catch (IOException ex) {
+            JOptionPane.showMessageDialog(frame, "Failed to open CV: " + ex.getMessage());
+        }
     }
 
     private class LoginPanel extends JPanel {
@@ -543,7 +575,10 @@ public class SwingApp {
             JPanel cvPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
             JButton cvButton = new JButton("Choose File");
             cvButton.addActionListener(e -> chooseCvFile());
+            JButton viewCvButton = new JButton("View CV");
+            viewCvButton.addActionListener(e -> viewMyCv());
             cvPanel.add(cvButton);
+            cvPanel.add(viewCvButton);
             cvPanel.add(cvLabel);
             form.add(cvPanel);
 
@@ -722,10 +757,41 @@ public class SwingApp {
                     JOptionPane.showMessageDialog(frame, "CV file is too large. Please choose a file <= 5 MB.");
                     return;
                 }
-                selectedCvPath = selectedFile.getAbsolutePath();
+                String savedPath = saveCvFile(selectedFile, user.getId());
+                if (savedPath == null) {
+                    return;
+                }
+                selectedCvPath = savedPath;
                 selectedCvName = selectedFile.getName();
                 cvLabel.setText(selectedCvName);
             }
+        }
+
+        private String saveCvFile(File sourceFile, String userId) {
+            try {
+                Path cvsDir;
+                if (dataDirectory != null) {
+                    cvsDir = dataDirectory.resolve("cvs");
+                } else {
+                    cvsDir = Path.of(System.getProperty("user.dir")).resolve("data").resolve("cvs");
+                }
+                Files.createDirectories(cvsDir);
+                String ext = sourceFile.getName().contains(".")
+                        ? sourceFile.getName().substring(sourceFile.getName().lastIndexOf('.'))
+                        : "";
+                String destName = userId + "_" + System.currentTimeMillis() + ext;
+                Path destPath = cvsDir.resolve(destName);
+                Files.copy(sourceFile.toPath(), destPath, StandardCopyOption.REPLACE_EXISTING);
+                return destPath.toAbsolutePath().toString();
+            } catch (IOException ex) {
+                JOptionPane.showMessageDialog(frame, "Failed to save CV file: " + ex.getMessage());
+                return null;
+            }
+        }
+
+        private void viewMyCv() {
+            String cvPath = selectedCvPath.isBlank() ? safeText(user.getCvFilePath()) : selectedCvPath;
+            openCvFile(cvPath);
         }
     }
 
@@ -824,10 +890,13 @@ public class SwingApp {
             acceptButton.addActionListener(e -> updateApplicantStatus(ApplicationStatus.ACCEPTED));
             JButton rejectButton = new JButton("Reject");
             rejectButton.addActionListener(e -> updateApplicantStatus(ApplicationStatus.REJECTED));
+            JButton viewCvButton = new JButton("View Applicant CV");
+            viewCvButton.addActionListener(e -> viewSelectedApplicantCv());
             JButton refreshApplicantsButton = new JButton("Refresh");
             refreshApplicantsButton.addActionListener(e -> refreshApplicants());
             applicantActions.add(acceptButton);
             applicantActions.add(rejectButton);
+            applicantActions.add(viewCvButton);
             applicantActions.add(refreshApplicantsButton);
             applicantsPanel.add(applicantActions, BorderLayout.SOUTH);
 
@@ -1004,6 +1073,26 @@ public class SwingApp {
             applicationService.updateStatus(appId, status);
             refreshApplicants();
             refreshJobs();
+        }
+
+        private void viewSelectedApplicantCv() {
+            int row = applicantsTable.getSelectedRow();
+            if (row < 0) {
+                JOptionPane.showMessageDialog(frame, "Please select an applicant first.");
+                return;
+            }
+            String appId = String.valueOf(applicantsModel.getValueAt(row, 0));
+            Optional<Application> application = applicationService.getApplicationById(appId);
+            if (application.isEmpty()) {
+                JOptionPane.showMessageDialog(frame, "Application not found.");
+                return;
+            }
+            User ta = findUserById(application.get().getTaUserId()).orElse(null);
+            if (ta == null) {
+                JOptionPane.showMessageDialog(frame, "Applicant not found.");
+                return;
+            }
+            openCvFile(ta.getCvFilePath());
         }
 
         private void loadProfile() {

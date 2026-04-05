@@ -71,4 +71,17 @@ public class ApplicationService {
         application.setStatus(status);
         applicationRepository.save(application);
     }
+
+    private String requireText(String value, String fieldName) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException(fieldName + " is required.");
+        }
+        return value.trim();
+    }
+
+    private void validateJobIsOpen(Job job) {
+        if (job.getStatus() != JobStatus.OPEN) {
+            throw new IllegalArgumentException("This job is not open for applications.");
+        }
+    }
 }
