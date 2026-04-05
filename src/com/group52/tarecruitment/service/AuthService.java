@@ -53,42 +53,6 @@ public class AuthService {
     }
 
     public User registerTa(String name, String email, String password) {
-        if (name == null || name.isBlank()) {
-            throw new IllegalArgumentException("Name is required.");
-        }
-        if (password == null || password.length() < 8) {
-            throw new IllegalArgumentException("Password must be at least 8 characters.");
-        }
-
-        // Check student ID uniqueness
-        String taId = "TA" + normalizedStudentId;
-        if (userRepository.findById(taId).isPresent()) {
-            throw new IllegalArgumentException("This student ID is already registered.");
-        }
-        // Check email uniqueness
-        if (userRepository.findByEmail(normalizedEmail).isPresent()) {
-            throw new IllegalArgumentException("Email is already registered.");
-        }
-
-        User user = new User(
-                taId,
-                Role.TA,
-                normalizedName,
-                normalizedEmail,
-                password,
-                "",
-                0,
-                "",
-                0,
-                true);
-        userRepository.save(user);
-        return user;
-    }
-
-    /**
-     * Backward-compatible TA registration without student ID (generates random ID).
-     */
-    public User registerTa(String name, String email, String password) {
         String normalizedName = requireText(name, "Name");
         String normalizedEmail = requireText(email, "Email");
 
