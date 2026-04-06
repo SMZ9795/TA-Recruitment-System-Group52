@@ -33,11 +33,11 @@ public class Main {
 
         boolean consoleMode = args.length > 0 && "console".equalsIgnoreCase(args[0]);
         if (consoleMode) {
-            ConsoleApp app = new ConsoleApp(authService, jobService, applicationService);
+            ConsoleApp app = new ConsoleApp(authService, jobService, applicationService, userProfileService, adminService);
             app.start();
             return;
         }
-        SwingApp app = new SwingApp(authService, jobService, applicationService, dataDirectory);
+        SwingApp app = new SwingApp(authService, jobService, applicationService, userProfileService, dataDirectory);
         app.start();
     }
 

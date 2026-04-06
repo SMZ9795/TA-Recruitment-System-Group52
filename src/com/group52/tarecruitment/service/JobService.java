@@ -21,18 +21,14 @@ public class JobService {
     }
 
     public List<Job> getJobsByMoId(String moId) {
-        return jobRepository.findByPostedByMoId(moId);
-    }
-
-    public Optional<Job> getJobById(String jobId) {
-        return jobRepository.findById(jobId);
-    }
-
-    public List<Job> getJobsByMoId(String moId) {
         if (moId == null || moId.isBlank()) {
             throw new IllegalArgumentException("MO ID is required.");
         }
         return jobRepository.findByPostedByMoId(moId.trim());
+    }
+
+    public Optional<Job> getJobById(String jobId) {
+        return jobRepository.findById(jobId);
     }
 
     public Job createJob(String moduleCode, String moduleName, String description, String requiredSkills,
@@ -80,5 +76,20 @@ public class JobService {
             throw new IllegalArgumentException("Job ID is required.");
         }
         jobRepository.deleteById(jobId);
+    }
+
+    private String requireText(String value, String fieldName) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException(fieldName + " is required.");
+        }
+        return value.trim();
+    }
+
+    private void validateDeadline(String deadline) {
+        try {
+            LocalDate.parse(deadline);
+        } catch (DateTimeParseException ex) {
+            throw new IllegalArgumentException("Deadline must be in YYYY-MM-DD format.");
+        }
     }
 }
