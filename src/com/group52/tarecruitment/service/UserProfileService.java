@@ -3,7 +3,6 @@ package com.group52.tarecruitment.service;
 import com.group52.tarecruitment.model.Role;
 import com.group52.tarecruitment.model.User;
 import com.group52.tarecruitment.repository.UserRepository;
-import java.io.File;
 
 public class UserProfileService {
     private final UserRepository userRepository;
@@ -35,15 +34,6 @@ public class UserProfileService {
                 + "Available hours: " + formatNumber(user.getAvailableHours());
     }
 
-    public String formatApplicantProfile(User user) {
-        return "Name: " + formatValue(user.getName()) + System.lineSeparator()
-                + "Year of study: " + formatNumber(user.getYearOfStudy()) + System.lineSeparator()
-                + "Programme: " + formatValue(user.getProgramme()) + System.lineSeparator()
-                + "Skills: " + formatValue(user.getSkills()) + System.lineSeparator()
-                + "Available hours: " + formatNumber(user.getAvailableHours()) + System.lineSeparator()
-                + "CV file: " + formatCvFile(user.getCvFilePath());
-    }
-
     private String requireText(String value, String fieldName) {
         if (value == null || value.isBlank()) {
             throw new IllegalArgumentException(fieldName + " is required.");
@@ -70,12 +60,5 @@ public class UserProfileService {
             return "Not set";
         }
         return String.valueOf(value);
-    }
-
-    private String formatCvFile(String cvFilePath) {
-        if (cvFilePath == null || cvFilePath.isBlank()) {
-            return "Not uploaded";
-        }
-        return new File(cvFilePath).getName();
     }
 }
