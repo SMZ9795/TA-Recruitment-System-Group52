@@ -9,13 +9,14 @@ import com.group52.tarecruitment.model.User;
 import com.group52.tarecruitment.service.ApplicationService;
 import com.group52.tarecruitment.service.AuthService;
 import com.group52.tarecruitment.service.JobService;
-import com.group52.tarecruitment.service.UserProfileService;
 import java.awt.BorderLayout;
 import java.awt.CardLayout;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.GridLayout;
 import java.awt.GridBagLayout;
+import java.awt.GridBagConstraints;
+import java.awt.Color;
 import java.awt.Font;
 import java.awt.Desktop;
 import java.io.File;
@@ -56,7 +57,6 @@ public class SwingApp {
     private final AuthService authService;
     private final JobService jobService;
     private final ApplicationService applicationService;
-    private final UserProfileService userProfileService;
     private final Path dataDirectory;
 
     private JFrame frame;
@@ -68,24 +68,13 @@ public class SwingApp {
     private AdminPanel adminPanel;
 
     public SwingApp(AuthService authService, JobService jobService, ApplicationService applicationService) {
-        this(authService, jobService, applicationService, null, null);
-    }
-
-    public SwingApp(AuthService authService, JobService jobService, ApplicationService applicationService,
-            UserProfileService userProfileService) {
-        this(authService, jobService, applicationService, userProfileService, null);
+        this(authService, jobService, applicationService, null);
     }
 
     public SwingApp(AuthService authService, JobService jobService, ApplicationService applicationService, Path dataDirectory) {
-        this(authService, jobService, applicationService, null, dataDirectory);
-    }
-
-    public SwingApp(AuthService authService, JobService jobService, ApplicationService applicationService,
-            UserProfileService userProfileService, Path dataDirectory) {
         this.authService = authService;
         this.jobService = jobService;
         this.applicationService = applicationService;
-        this.userProfileService = userProfileService;
         this.dataDirectory = dataDirectory;
     }
 
@@ -429,13 +418,10 @@ public class SwingApp {
         }
 
         private void registerTa() {
-            JTextField studentIdField = new JTextField();
             JTextField nameField = new JTextField();
             JTextField emailField = new JTextField();
             JPasswordField passwordField = new JPasswordField();
             JPanel panel = new JPanel(new GridLayout(0, 1, 5, 5));
-            panel.add(new JLabel("Student ID (9-12 digits)"));
-            panel.add(studentIdField);
             panel.add(new JLabel("Name"));
             panel.add(nameField);
             panel.add(new JLabel("Email"));
@@ -449,7 +435,6 @@ public class SwingApp {
             }
             try {
                 User ta = authService.registerTa(
-                        studentIdField.getText().trim(),
                         nameField.getText().trim(),
                         emailField.getText().trim(),
                         new String(passwordField.getPassword()));
@@ -473,10 +458,6 @@ public class SwingApp {
         private final JTable applicationTable;
         private final JTable jobTable;
         private final JTextField searchField;
-        private final JTextField skillsFilterField;
-        private final JTextField hoursFilterField;
-        private final JTextField moFilterField;
-        private final JComboBox<String> statusFilterBox;
         private final JTextField profileNameField;
         private final JTextField profileYearField;
         private final JTextField profileProgrammeField;
@@ -546,50 +527,19 @@ public class SwingApp {
             jobTable = new JTable(jobModel);
             JPanel jobBoardPanel = new JPanel(new BorderLayout(10, 10));
             jobBoardPanel.setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 12));
-            JPanel searchPanel = new JPanel(new GridLayout(0, 4, 10, 8));
-            JPanel keywordPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
-            keywordPanel.add(new JLabel("Search"));
+            JPanel searchPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+            searchPanel.add(new JLabel("Search"));
             searchField = new JTextField(24);
-            keywordPanel.add(searchField);
-            JPanel skillsPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
-            skillsPanel.add(new JLabel("Skill"));
-            skillsFilterField = new JTextField(14);
-            skillsPanel.add(skillsFilterField);
-            JPanel hoursPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
-            hoursPanel.add(new JLabel("Max Hours"));
-            hoursFilterField = new JTextField(8);
-            hoursPanel.add(hoursFilterField);
-            JPanel moPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
-            moPanel.add(new JLabel("MO"));
-            moFilterField = new JTextField(14);
-            moPanel.add(moFilterField);
-            JPanel statusPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
-            statusPanel.add(new JLabel("Status"));
-            statusFilterBox = new JComboBox<>(new String[] {"OPEN", "ALL", "CLOSED", "FILLED"});
-            statusPanel.add(statusFilterBox);
+            searchPanel.add(searchField);
             JButton searchButton = new JButton("Apply Filter");
             searchButton.addActionListener(e -> refreshJobs());
             JButton clearButton = new JButton("Clear");
             clearButton.addActionListener(e -> {
                 searchField.setText("");
-                skillsFilterField.setText("");
-                hoursFilterField.setText("");
-                moFilterField.setText("");
-                statusFilterBox.setSelectedItem("OPEN");
                 refreshJobs();
             });
-            JButton refreshJobsButton = new JButton("Refresh");
-            refreshJobsButton.addActionListener(e -> refreshJobs());
-            JPanel filterActionsPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
-            filterActionsPanel.add(searchButton);
-            filterActionsPanel.add(clearButton);
-            filterActionsPanel.add(refreshJobsButton);
-            searchPanel.add(keywordPanel);
-            searchPanel.add(skillsPanel);
-            searchPanel.add(hoursPanel);
-            searchPanel.add(moPanel);
-            searchPanel.add(statusPanel);
-            searchPanel.add(filterActionsPanel);
+            searchPanel.add(searchButton);
+            searchPanel.add(clearButton);
             jobBoardPanel.add(searchPanel, BorderLayout.NORTH);
             jobBoardPanel.add(new JScrollPane(jobTable), BorderLayout.CENTER);
             JPanel jobActions = new JPanel(new FlowLayout(FlowLayout.LEFT));
@@ -678,31 +628,20 @@ public class SwingApp {
         private void refreshJobs() {
             jobModel.setRowCount(0);
             String query = searchField.getText().trim().toLowerCase();
-            String skillQuery = skillsFilterField.getText().trim().toLowerCase();
-            String moQuery = moFilterField.getText().trim().toLowerCase();
-            String statusValue = String.valueOf(statusFilterBox.getSelectedItem());
-            Integer maxHours = parseHoursFilter();
-            if (maxHours != null && maxHours < 0) {
-                return;
-            }
             for (Job job : jobService.getAllJobs()) {
+                if (job.getStatus() != JobStatus.OPEN) {
+                    continue;
+                }
                 String moduleCode = safeText(job.getModuleCode());
                 String moduleName = safeText(job.getModuleName());
                 String requiredSkills = safeText(job.getRequiredSkills());
                 String moName = safeText(moNameForJob(job));
-                boolean matchedKeyword = query.isBlank()
+                boolean matched = query.isBlank()
                         || moduleCode.toLowerCase().contains(query)
                         || moduleName.toLowerCase().contains(query)
                         || requiredSkills.toLowerCase().contains(query)
                         || moName.toLowerCase().contains(query);
-                boolean matchedSkill = skillQuery.isBlank() || requiredSkills.toLowerCase().contains(skillQuery);
-                boolean matchedMo = moQuery.isBlank()
-                        || moName.toLowerCase().contains(moQuery)
-                        || safeText(job.getPostedByMoId()).toLowerCase().contains(moQuery);
-                boolean matchedStatus = "ALL".equalsIgnoreCase(statusValue)
-                        || job.getStatus().name().equalsIgnoreCase(statusValue);
-                boolean matchedHours = maxHours == null || job.getHoursPerWeek() <= maxHours;
-                if (!matchedKeyword || !matchedSkill || !matchedMo || !matchedStatus || !matchedHours) {
+                if (!matched) {
                     continue;
                 }
                 jobModel.addRow(new Object[] {
@@ -713,24 +652,6 @@ public class SwingApp {
                     safeText(job.getDeadline()),
                     job.getStatus().name()
                 });
-            }
-        }
-
-        private Integer parseHoursFilter() {
-            String hoursText = hoursFilterField.getText().trim();
-            if (hoursText.isBlank()) {
-                return null;
-            }
-            try {
-                int maxHours = Integer.parseInt(hoursText);
-                if (maxHours <= 0) {
-                    JOptionPane.showMessageDialog(frame, "Max hours filter must be greater than 0.");
-                    return -1;
-                }
-                return maxHours;
-            } catch (NumberFormatException ex) {
-                JOptionPane.showMessageDialog(frame, "Max hours filter must be a whole number.");
-                return -1;
             }
         }
 
@@ -969,15 +890,12 @@ public class SwingApp {
             acceptButton.addActionListener(e -> updateApplicantStatus(ApplicationStatus.ACCEPTED));
             JButton rejectButton = new JButton("Reject");
             rejectButton.addActionListener(e -> updateApplicantStatus(ApplicationStatus.REJECTED));
-            JButton viewProfileButton = new JButton("View Profile");
-            viewProfileButton.addActionListener(e -> viewSelectedApplicantProfile());
             JButton viewCvButton = new JButton("View Applicant CV");
             viewCvButton.addActionListener(e -> viewSelectedApplicantCv());
             JButton refreshApplicantsButton = new JButton("Refresh");
             refreshApplicantsButton.addActionListener(e -> refreshApplicants());
             applicantActions.add(acceptButton);
             applicantActions.add(rejectButton);
-            applicantActions.add(viewProfileButton);
             applicantActions.add(viewCvButton);
             applicantActions.add(refreshApplicantsButton);
             applicantsPanel.add(applicantActions, BorderLayout.SOUTH);
@@ -1157,101 +1075,24 @@ public class SwingApp {
             refreshJobs();
         }
 
-        private void viewSelectedApplicantProfile() {
-            Optional<User> ta = findSelectedApplicant();
-            if (ta.isEmpty()) {
-                return;
-            }
-            showApplicantProfileDialog(ta.get());
-        }
-
         private void viewSelectedApplicantCv() {
-            Optional<User> ta = findSelectedApplicant();
-            if (ta.isEmpty()) {
-                return;
-            }
-            openCvFile(ta.get().getCvFilePath());
-        }
-
-        private Optional<User> findSelectedApplicant() {
-            Optional<Application> application = findSelectedApplication();
-            if (application.isEmpty()) {
-                return Optional.empty();
-            }
-            User ta = findUserById(application.get().getTaUserId()).orElse(null);
-            if (ta == null) {
-                JOptionPane.showMessageDialog(frame, "Applicant not found.");
-                return Optional.empty();
-            }
-            return Optional.of(ta);
-        }
-
-        private Optional<Application> findSelectedApplication() {
             int row = applicantsTable.getSelectedRow();
             if (row < 0) {
                 JOptionPane.showMessageDialog(frame, "Please select an applicant first.");
-                return Optional.empty();
+                return;
             }
             String appId = String.valueOf(applicantsModel.getValueAt(row, 0));
             Optional<Application> application = applicationService.getApplicationById(appId);
             if (application.isEmpty()) {
                 JOptionPane.showMessageDialog(frame, "Application not found.");
-                return Optional.empty();
+                return;
             }
-            return application;
-        }
-
-        private void showApplicantProfileDialog(User ta) {
-            JTextArea profileArea = new JTextArea(buildApplicantProfileText(ta));
-            profileArea.setEditable(false);
-            profileArea.setLineWrap(true);
-            profileArea.setWrapStyleWord(true);
-            profileArea.setFont(new Font("Segoe UI", Font.PLAIN, 14));
-
-            JScrollPane scrollPane = new JScrollPane(profileArea);
-            scrollPane.setPreferredSize(new Dimension(420, 220));
-
-            boolean hasCv = ta.getCvFilePath() != null && !ta.getCvFilePath().isBlank();
-            Object[] options = hasCv ? new Object[] {"Open CV", "Close"} : new Object[] {"Close"};
-            int choice = JOptionPane.showOptionDialog(
-                    frame,
-                    scrollPane,
-                    "Applicant Profile - " + safeText(ta.getName()),
-                    JOptionPane.DEFAULT_OPTION,
-                    JOptionPane.INFORMATION_MESSAGE,
-                    null,
-                    options,
-                    options[options.length - 1]);
-            if (hasCv && choice == 0) {
-                openCvFile(ta.getCvFilePath());
+            User ta = findUserById(application.get().getTaUserId()).orElse(null);
+            if (ta == null) {
+                JOptionPane.showMessageDialog(frame, "Applicant not found.");
+                return;
             }
-        }
-
-        private String buildApplicantProfileText(User ta) {
-            if (userProfileService != null) {
-                return userProfileService.formatApplicantProfile(ta);
-            }
-            return "Name: " + safeText(ta.getName()) + System.lineSeparator()
-                    + "Year of study: " + formatNumberForDisplay(ta.getYearOfStudy()) + System.lineSeparator()
-                    + "Programme: " + defaultDisplayValue(ta.getProgramme()) + System.lineSeparator()
-                    + "Skills: " + defaultDisplayValue(ta.getSkills()) + System.lineSeparator()
-                    + "Available hours: " + formatNumberForDisplay(ta.getAvailableHours()) + System.lineSeparator()
-                    + "CV file: " + formatCvFileName(ta.getCvFilePath());
-        }
-
-        private String defaultDisplayValue(String value) {
-            return value == null || value.isBlank() ? "Not set" : value;
-        }
-
-        private String formatNumberForDisplay(int value) {
-            return value > 0 ? String.valueOf(value) : "Not set";
-        }
-
-        private String formatCvFileName(String cvFilePath) {
-            if (cvFilePath == null || cvFilePath.isBlank()) {
-                return "Not uploaded";
-            }
-            return new File(cvFilePath).getName();
+            openCvFile(ta.getCvFilePath());
         }
 
         private void loadProfile() {

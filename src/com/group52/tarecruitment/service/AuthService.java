@@ -52,36 +52,19 @@ public class AuthService {
         return userRepository.findById(userId);
     }
 
-    // Registers a TA with a generated system ID for simple UI flows.
     public User registerTa(String name, String email, String password) {
-        return registerTaInternal(IdGenerator.nextId("TA"), name, email, password, false);
-    }
-
-    // Registers a TA using the supplied student ID as the login ID.
-    public User registerTa(String studentId, String name, String email, String password) {
-        String normalizedStudentId = requireText(studentId, "Student ID");
-        if (!normalizedStudentId.matches("\\d{9,12}")) {
-            throw new IllegalArgumentException("Student ID must be 9 to 12 digits.");
-        }
-        return registerTaInternal(normalizedStudentId, name, email, password, true);
-    }
-
-    private User registerTaInternal(String userId, String name, String email, String password, boolean enforceUniqueId) {
         String normalizedName = requireText(name, "Name");
         String normalizedEmail = requireText(email, "Email");
 
         if (password == null || password.length() < 8) {
             throw new IllegalArgumentException("Password must be at least 8 characters.");
         }
-        if (enforceUniqueId && userRepository.findById(userId).isPresent()) {
-            throw new IllegalArgumentException("Student ID is already registered.");
-        }
         if (userRepository.findByEmail(normalizedEmail).isPresent()) {
             throw new IllegalArgumentException("Email is already registered.");
         }
 
         User user = new User(
-                userId,
+                IdGenerator.nextId("TA"),
                 Role.TA,
                 normalizedName,
                 normalizedEmail,
@@ -144,12 +127,5 @@ public class AuthService {
         User user = userRepository.findById(userId).orElseThrow(() -> new IllegalArgumentException("User not found."));
         user.setActive(active);
         userRepository.save(user);
-    }
-
-    private String requireText(String value, String fieldName) {
-        if (value == null || value.isBlank()) {
-            throw new IllegalArgumentException(fieldName + " is required.");
-        }
-        return value.trim();
     }
 }
