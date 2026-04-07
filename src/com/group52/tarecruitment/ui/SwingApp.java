@@ -473,10 +473,6 @@ public class SwingApp {
         private final JTable applicationTable;
         private final JTable jobTable;
         private final JTextField searchField;
-        private final JTextField skillsFilterField;
-        private final JTextField hoursFilterField;
-        private final JTextField moFilterField;
-        private final JComboBox<String> statusFilterBox;
         private final JTextField profileNameField;
         private final JTextField profileYearField;
         private final JTextField profileProgrammeField;
@@ -546,50 +542,19 @@ public class SwingApp {
             jobTable = new JTable(jobModel);
             JPanel jobBoardPanel = new JPanel(new BorderLayout(10, 10));
             jobBoardPanel.setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 12));
-            JPanel searchPanel = new JPanel(new GridLayout(0, 4, 10, 8));
-            JPanel keywordPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
-            keywordPanel.add(new JLabel("Search"));
+            JPanel searchPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+            searchPanel.add(new JLabel("Search"));
             searchField = new JTextField(24);
-            keywordPanel.add(searchField);
-            JPanel skillsPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
-            skillsPanel.add(new JLabel("Skill"));
-            skillsFilterField = new JTextField(14);
-            skillsPanel.add(skillsFilterField);
-            JPanel hoursPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
-            hoursPanel.add(new JLabel("Max Hours"));
-            hoursFilterField = new JTextField(8);
-            hoursPanel.add(hoursFilterField);
-            JPanel moPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
-            moPanel.add(new JLabel("MO"));
-            moFilterField = new JTextField(14);
-            moPanel.add(moFilterField);
-            JPanel statusPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
-            statusPanel.add(new JLabel("Status"));
-            statusFilterBox = new JComboBox<>(new String[] {"OPEN", "ALL", "CLOSED", "FILLED"});
-            statusPanel.add(statusFilterBox);
+            searchPanel.add(searchField);
             JButton searchButton = new JButton("Apply Filter");
             searchButton.addActionListener(e -> refreshJobs());
             JButton clearButton = new JButton("Clear");
             clearButton.addActionListener(e -> {
                 searchField.setText("");
-                skillsFilterField.setText("");
-                hoursFilterField.setText("");
-                moFilterField.setText("");
-                statusFilterBox.setSelectedItem("OPEN");
                 refreshJobs();
             });
-            JButton refreshJobsButton = new JButton("Refresh");
-            refreshJobsButton.addActionListener(e -> refreshJobs());
-            JPanel filterActionsPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
-            filterActionsPanel.add(searchButton);
-            filterActionsPanel.add(clearButton);
-            filterActionsPanel.add(refreshJobsButton);
-            searchPanel.add(keywordPanel);
-            searchPanel.add(skillsPanel);
-            searchPanel.add(hoursPanel);
-            searchPanel.add(moPanel);
-            searchPanel.add(statusPanel);
-            searchPanel.add(filterActionsPanel);
+            searchPanel.add(searchButton);
+            searchPanel.add(clearButton);
             jobBoardPanel.add(searchPanel, BorderLayout.NORTH);
             jobBoardPanel.add(new JScrollPane(jobTable), BorderLayout.CENTER);
             JPanel jobActions = new JPanel(new FlowLayout(FlowLayout.LEFT));
@@ -678,31 +643,20 @@ public class SwingApp {
         private void refreshJobs() {
             jobModel.setRowCount(0);
             String query = searchField.getText().trim().toLowerCase();
-            String skillQuery = skillsFilterField.getText().trim().toLowerCase();
-            String moQuery = moFilterField.getText().trim().toLowerCase();
-            String statusValue = String.valueOf(statusFilterBox.getSelectedItem());
-            Integer maxHours = parseHoursFilter();
-            if (maxHours != null && maxHours < 0) {
-                return;
-            }
             for (Job job : jobService.getAllJobs()) {
+                if (job.getStatus() != JobStatus.OPEN) {
+                    continue;
+                }
                 String moduleCode = safeText(job.getModuleCode());
                 String moduleName = safeText(job.getModuleName());
                 String requiredSkills = safeText(job.getRequiredSkills());
                 String moName = safeText(moNameForJob(job));
-                boolean matchedKeyword = query.isBlank()
+                boolean matched = query.isBlank()
                         || moduleCode.toLowerCase().contains(query)
                         || moduleName.toLowerCase().contains(query)
                         || requiredSkills.toLowerCase().contains(query)
                         || moName.toLowerCase().contains(query);
-                boolean matchedSkill = skillQuery.isBlank() || requiredSkills.toLowerCase().contains(skillQuery);
-                boolean matchedMo = moQuery.isBlank()
-                        || moName.toLowerCase().contains(moQuery)
-                        || safeText(job.getPostedByMoId()).toLowerCase().contains(moQuery);
-                boolean matchedStatus = "ALL".equalsIgnoreCase(statusValue)
-                        || job.getStatus().name().equalsIgnoreCase(statusValue);
-                boolean matchedHours = maxHours == null || job.getHoursPerWeek() <= maxHours;
-                if (!matchedKeyword || !matchedSkill || !matchedMo || !matchedStatus || !matchedHours) {
+                if (!matched) {
                     continue;
                 }
                 jobModel.addRow(new Object[] {
@@ -713,24 +667,6 @@ public class SwingApp {
                     safeText(job.getDeadline()),
                     job.getStatus().name()
                 });
-            }
-        }
-
-        private Integer parseHoursFilter() {
-            String hoursText = hoursFilterField.getText().trim();
-            if (hoursText.isBlank()) {
-                return null;
-            }
-            try {
-                int maxHours = Integer.parseInt(hoursText);
-                if (maxHours <= 0) {
-                    JOptionPane.showMessageDialog(frame, "Max hours filter must be greater than 0.");
-                    return -1;
-                }
-                return maxHours;
-            } catch (NumberFormatException ex) {
-                JOptionPane.showMessageDialog(frame, "Max hours filter must be a whole number.");
-                return -1;
             }
         }
 
