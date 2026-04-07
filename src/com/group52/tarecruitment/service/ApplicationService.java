@@ -8,10 +8,8 @@ import com.group52.tarecruitment.repository.ApplicationRepository;
 import com.group52.tarecruitment.repository.JobRepository;
 import com.group52.tarecruitment.util.IdGenerator;
 import java.time.LocalDate;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
-import java.util.Set;
 
 public class ApplicationService {
     private final ApplicationRepository applicationRepository;
@@ -60,17 +58,6 @@ public class ApplicationService {
         return applicationRepository.findById(applicationId);
     }
 
-    public List<Application> getApplicationsForMo(String moUserId) {
-        String normalizedMoUserId = requireText(moUserId, "MO user ID");
-        Set<String> jobIds = new HashSet<>();
-        for (Job job : jobRepository.findByPostedByMoId(normalizedMoUserId)) {
-            jobIds.add(job.getId());
-        }
-        return applicationRepository.findAll().stream()
-                .filter(application -> jobIds.contains(application.getJobId()))
-                .toList();
-    }
-
     public void updateStatus(String applicationId, ApplicationStatus status) {
         if (applicationId == null || applicationId.isBlank()) {
             throw new IllegalArgumentException("Application ID is required.");
@@ -83,26 +70,6 @@ public class ApplicationService {
                 .orElseThrow(() -> new IllegalArgumentException("Application not found."));
         application.setStatus(status);
         applicationRepository.save(application);
-    }
-
-    public Application updateApplicationStatus(String applicationId, String moUserId, ApplicationStatus status) {
-        String normalizedApplicationId = requireText(applicationId, "Application ID");
-        String normalizedMoUserId = requireText(moUserId, "MO user ID");
-        if (status == null) {
-            throw new IllegalArgumentException("Application status is required.");
-        }
-
-        Application application = applicationRepository.findById(normalizedApplicationId)
-                .orElseThrow(() -> new IllegalArgumentException("Application not found."));
-        Job job = jobRepository.findById(application.getJobId())
-                .orElseThrow(() -> new IllegalArgumentException("Job not found."));
-        if (!job.getPostedByMoId().equalsIgnoreCase(normalizedMoUserId)) {
-            throw new IllegalArgumentException("You can only review applications for your own jobs.");
-        }
-
-        application.setStatus(status);
-        applicationRepository.save(application);
-        return application;
     }
 
     private String requireText(String value, String fieldName) {
