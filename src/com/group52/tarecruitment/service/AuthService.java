@@ -4,7 +4,7 @@ import com.group52.tarecruitment.model.Role;
 import com.group52.tarecruitment.model.User;
 import com.group52.tarecruitment.repository.UserRepository;
 import com.group52.tarecruitment.util.IdGenerator;
-import java.util.List;
+import com.group52.tarecruitment.util.ValidationUtil;
 import java.util.Optional;
 
 /**
@@ -23,42 +23,73 @@ public class AuthService {
      * Unified login: accepts either a user ID or an email address.
      * Automatically detects which format the identifier is in.
      */
-    public Optional<User> login(String identifier, String password) {
-        if (identifier == null || identifier.isBlank()) {
-            return Optional.empty();
+    public User login(String identifier, String password) {
+        String normalizedIdentifier = ValidationUtil.requireText(identifier, "User ID or Email");
+        String normalizedPassword = ValidationUtil.requireText(password, "Password");
+        if (normalizedIdentifier.contains("@")) {
+            ValidationUtil.requireEmail(normalizedIdentifier, "Email");
         }
-        if (password == null || password.isBlank()) {
-            return Optional.empty();
-        }
-
-        String trimmedId = identifier.trim();
-        String trimmedPw = password.trim();
 
         // Try by user ID first, then by email
-        Optional<User> user = userRepository.findById(trimmedId);
+        Optional<User> user = userRepository.findById(normalizedIdentifier);
         if (user.isEmpty()) {
-            user = userRepository.findByEmail(trimmedId);
+            user = userRepository.findByEmail(normalizedIdentifier);
         }
 
-        return user.filter(User::isActive)
-                .filter(u -> u.getPassword().equals(trimmedPw));
+        User matchedUser = user.orElseThrow(
+                () -> new IllegalArgumentException("No account matches the provided user ID or email."));
+        if (!matchedUser.isActive()) {
+            throw new IllegalArgumentException("This account is inactive.");
+        }
+        if (!matchedUser.getPassword().equals(normalizedPassword)) {
+            throw new IllegalArgumentException("Incorrect password.");
+        }
+
+        return matchedUser;
     }
 
-    public List<User> getAllUsers() {
-        return userRepository.findAll();
+    /**
+     * TA self-registration with a student ID.
+     * Student ID format: digits only, 9-12 characters (e.g. 231226244).
+     */
+    public User registerTa(String studentId, String name, String email, String password) {
+        String normalizedStudentId = ValidationUtil.requireStudentId(studentId);
+        String normalizedName = ValidationUtil.requireText(name, "Name");
+        String normalizedEmail = ValidationUtil.requireEmail(email, "Email");
+        String normalizedPassword = ValidationUtil.requirePassword(password);
+
+        // Check student ID uniqueness
+        String taId = "TA" + normalizedStudentId;
+        if (userRepository.findById(taId).isPresent()) {
+            throw new IllegalArgumentException("This student ID is already registered.");
+        }
+        // Check email uniqueness
+        if (userRepository.findByEmail(normalizedEmail).isPresent()) {
+            throw new IllegalArgumentException("Email is already registered.");
+        }
+
+        User user = new User(
+                taId,
+                Role.TA,
+                normalizedName,
+                normalizedEmail,
+                normalizedPassword,
+                "",
+                0,
+                "",
+                0,
+                true);
+        userRepository.save(user);
+        return user;
     }
 
-    public Optional<User> findById(String userId) {
-        return userRepository.findById(userId);
-    }
-
+    /**
+     * Backward-compatible TA registration without student ID (generates random ID).
+     */
     public User registerTa(String name, String email, String password) {
-        String normalizedName = requireText(name, "Name");
-        String normalizedEmail = requireText(email, "Email");
-
-        if (password == null || password.length() < 8) {
-            throw new IllegalArgumentException("Password must be at least 8 characters.");
-        }
+        String normalizedName = ValidationUtil.requireText(name, "Name");
+        String normalizedEmail = ValidationUtil.requireEmail(email, "Email");
+        String normalizedPassword = ValidationUtil.requirePassword(password);
         if (userRepository.findByEmail(normalizedEmail).isPresent()) {
             throw new IllegalArgumentException("Email is already registered.");
         }
@@ -68,7 +99,7 @@ public class AuthService {
                 Role.TA,
                 normalizedName,
                 normalizedEmail,
-                password,
+                normalizedPassword,
                 "",
                 0,
                 "",
@@ -76,56 +107,5 @@ public class AuthService {
                 true);
         userRepository.save(user);
         return user;
-    }
-
-    public User createMoAccount(String name, String email, String password) {
-        if (name == null || name.isBlank()) {
-            throw new IllegalArgumentException("Name is required.");
-        }
-        if (email == null || email.isBlank()) {
-            throw new IllegalArgumentException("Email is required.");
-        }
-        if (password == null || password.length() < 8) {
-            throw new IllegalArgumentException("Password must be at least 8 characters.");
-        }
-        if (userRepository.findByEmail(email).isPresent()) {
-            throw new IllegalArgumentException("Email is already registered.");
-        }
-
-        User user = new User(
-                IdGenerator.nextId("MO"),
-                Role.MO,
-                name,
-                email,
-                password,
-                "",
-                0,
-                "",
-                0,
-                true);
-        userRepository.save(user);
-        return user;
-    }
-
-    public void updateUser(User user) {
-        if (user == null) {
-            throw new IllegalArgumentException("User is required.");
-        }
-        userRepository.save(user);
-    }
-
-    public void updatePassword(String userId, String newPassword) {
-        if (newPassword == null || newPassword.length() < 8) {
-            throw new IllegalArgumentException("Password must be at least 8 characters.");
-        }
-        User user = userRepository.findById(userId).orElseThrow(() -> new IllegalArgumentException("User not found."));
-        user.setPassword(newPassword);
-        userRepository.save(user);
-    }
-
-    public void setUserActive(String userId, boolean active) {
-        User user = userRepository.findById(userId).orElseThrow(() -> new IllegalArgumentException("User not found."));
-        user.setActive(active);
-        userRepository.save(user);
     }
 }
