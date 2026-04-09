@@ -24,11 +24,19 @@ public class UserRepository {
         List<String> lines = FileUtil.readAllLines(filePath);
         List<User> users = new ArrayList<>();
         for (int i = 1; i < lines.size(); i++) {
-            List<String> values = CsvUtil.parseLine(lines.get(i));
-            if (values.size() < 10) {
+            String line = lines.get(i);
+            if (line == null || line.isBlank()) {
                 continue;
             }
-            users.add(toUser(values));
+            List<String> values = CsvUtil.parseLine(line);
+            if (values.size() != 10) {
+                throw invalidRecord(i + 1, null);
+            }
+            try {
+                users.add(toUser(values));
+            } catch (RuntimeException e) {
+                throw invalidRecord(i + 1, e);
+            }
         }
         return users;
     }
@@ -86,5 +94,10 @@ public class UserRepository {
             return 0;
         }
         return Integer.parseInt(value.trim());
+    }
+
+    private IllegalStateException invalidRecord(int lineNumber, RuntimeException cause) {
+        String message = "Invalid user data in " + filePath.getFileName() + " at line " + lineNumber + ".";
+        return cause == null ? new IllegalStateException(message) : new IllegalStateException(message, cause);
     }
 }

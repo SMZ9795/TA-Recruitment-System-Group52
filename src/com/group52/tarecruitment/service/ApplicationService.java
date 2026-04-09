@@ -7,6 +7,7 @@ import com.group52.tarecruitment.model.JobStatus;
 import com.group52.tarecruitment.repository.ApplicationRepository;
 import com.group52.tarecruitment.repository.JobRepository;
 import com.group52.tarecruitment.util.IdGenerator;
+import com.group52.tarecruitment.util.ValidationUtil;
 import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
 import java.util.List;
@@ -21,12 +22,13 @@ public class ApplicationService {
     }
 
     public Application applyForJob(String jobId, String taUserId) {
-        String normalizedJobId = requireText(jobId, "Job ID");
-        String normalizedTaUserId = requireText(taUserId, "TA user ID");
+        String normalizedJobId = ValidationUtil.requireText(jobId, "Job ID");
+        String normalizedTaUserId = ValidationUtil.requireText(taUserId, "TA user ID");
 
         Job job = jobRepository.findById(normalizedJobId)
                 .orElseThrow(() -> new IllegalArgumentException("Job not found."));
         validateJobIsOpen(job);
+        validateJobHasCapacity(job);
 
         if (applicationRepository.existsByJobIdAndTaUserId(normalizedJobId, normalizedTaUserId)) {
             throw new IllegalArgumentException("This TA has already applied for the job.");
@@ -43,19 +45,19 @@ public class ApplicationService {
     }
 
     public List<Application> getApplicationsByTaUserId(String taUserId) {
-        return applicationRepository.findByTaUserId(requireText(taUserId, "TA user ID"));
+        return applicationRepository.findByTaUserId(ValidationUtil.requireText(taUserId, "TA user ID"));
     }
 
     public List<Application> getApplicationsForMo(String moId) {
-        String normalizedMoId = requireText(moId, "MO ID");
+        String normalizedMoId = ValidationUtil.requireText(moId, "MO ID");
         return jobRepository.findByPostedByMoId(normalizedMoId).stream()
                 .flatMap(job -> applicationRepository.findByJobId(job.getId()).stream())
                 .toList();
     }
 
     public Application updateApplicationStatus(String applicationId, String moId, ApplicationStatus newStatus) {
-        String normalizedApplicationId = requireText(applicationId, "Application ID");
-        String normalizedMoId = requireText(moId, "MO ID");
+        String normalizedApplicationId = ValidationUtil.requireText(applicationId, "Application ID");
+        String normalizedMoId = ValidationUtil.requireText(moId, "MO ID");
         if (newStatus == null) {
             throw new IllegalArgumentException("Application status is required.");
         }
@@ -98,13 +100,6 @@ public class ApplicationService {
         return application;
     }
 
-    private String requireText(String value, String fieldName) {
-        if (value == null || value.isBlank()) {
-            throw new IllegalArgumentException(fieldName + " is required.");
-        }
-        return value.trim();
-    }
-
     private void validateJobIsOpen(Job job) {
         if (job.getStatus() != JobStatus.OPEN) {
             throw new IllegalArgumentException("This job is not open for applications.");
@@ -116,6 +111,17 @@ public class ApplicationService {
             }
         } catch (DateTimeParseException e) {
             throw new IllegalArgumentException("The job deadline is invalid.");
+        }
+    }
+
+    private void validateJobHasCapacity(Job job) {
+        long acceptedCount = applicationRepository.countByJobIdAndStatus(job.getId(), ApplicationStatus.ACCEPTED);
+        if (acceptedCount >= job.getPositions()) {
+            if (job.getStatus() != JobStatus.FILLED) {
+                job.setStatus(JobStatus.FILLED);
+                jobRepository.save(job);
+            }
+            throw new IllegalArgumentException("This job has already reached its positions limit.");
         }
     }
 }

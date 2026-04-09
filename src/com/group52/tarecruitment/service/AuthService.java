@@ -4,6 +4,7 @@ import com.group52.tarecruitment.model.Role;
 import com.group52.tarecruitment.model.User;
 import com.group52.tarecruitment.repository.UserRepository;
 import com.group52.tarecruitment.util.IdGenerator;
+import com.group52.tarecruitment.util.ValidationUtil;
 import java.util.Optional;
 
 /**
@@ -22,25 +23,29 @@ public class AuthService {
      * Unified login: accepts either a user ID or an email address.
      * Automatically detects which format the identifier is in.
      */
-    public Optional<User> login(String identifier, String password) {
-        if (identifier == null || identifier.isBlank()) {
-            return Optional.empty();
+    public User login(String identifier, String password) {
+        String normalizedIdentifier = ValidationUtil.requireText(identifier, "User ID or Email");
+        String normalizedPassword = ValidationUtil.requireText(password, "Password");
+        if (normalizedIdentifier.contains("@")) {
+            ValidationUtil.requireEmail(normalizedIdentifier, "Email");
         }
-        if (password == null || password.isBlank()) {
-            return Optional.empty();
-        }
-
-        String trimmedId = identifier.trim();
-        String trimmedPw = password.trim();
 
         // Try by user ID first, then by email
-        Optional<User> user = userRepository.findById(trimmedId);
+        Optional<User> user = userRepository.findById(normalizedIdentifier);
         if (user.isEmpty()) {
-            user = userRepository.findByEmail(trimmedId);
+            user = userRepository.findByEmail(normalizedIdentifier);
         }
 
-        return user.filter(User::isActive)
-                .filter(u -> u.getPassword().equals(trimmedPw));
+        User matchedUser = user.orElseThrow(
+                () -> new IllegalArgumentException("No account matches the provided user ID or email."));
+        if (!matchedUser.isActive()) {
+            throw new IllegalArgumentException("This account is inactive.");
+        }
+        if (!matchedUser.getPassword().equals(normalizedPassword)) {
+            throw new IllegalArgumentException("Incorrect password.");
+        }
+
+        return matchedUser;
     }
 
     /**
@@ -48,16 +53,10 @@ public class AuthService {
      * Student ID format: digits only, 9-12 characters (e.g. 231226244).
      */
     public User registerTa(String studentId, String name, String email, String password) {
-        String normalizedStudentId = requireText(studentId, "Student ID");
-        String normalizedName = requireText(name, "Name");
-        String normalizedEmail = requireText(email, "Email");
-
-        if (!normalizedStudentId.matches("\\d{9,12}")) {
-            throw new IllegalArgumentException("Student ID must be 9-12 digits.");
-        }
-        if (password == null || password.length() < 8) {
-            throw new IllegalArgumentException("Password must be at least 8 characters.");
-        }
+        String normalizedStudentId = ValidationUtil.requireStudentId(studentId);
+        String normalizedName = ValidationUtil.requireText(name, "Name");
+        String normalizedEmail = ValidationUtil.requireEmail(email, "Email");
+        String normalizedPassword = ValidationUtil.requirePassword(password);
 
         // Check student ID uniqueness
         String taId = "TA" + normalizedStudentId;
@@ -74,7 +73,7 @@ public class AuthService {
                 Role.TA,
                 normalizedName,
                 normalizedEmail,
-                password,
+                normalizedPassword,
                 "",
                 0,
                 "",
@@ -88,12 +87,9 @@ public class AuthService {
      * Backward-compatible TA registration without student ID (generates random ID).
      */
     public User registerTa(String name, String email, String password) {
-        String normalizedName = requireText(name, "Name");
-        String normalizedEmail = requireText(email, "Email");
-
-        if (password == null || password.length() < 8) {
-            throw new IllegalArgumentException("Password must be at least 8 characters.");
-        }
+        String normalizedName = ValidationUtil.requireText(name, "Name");
+        String normalizedEmail = ValidationUtil.requireEmail(email, "Email");
+        String normalizedPassword = ValidationUtil.requirePassword(password);
         if (userRepository.findByEmail(normalizedEmail).isPresent()) {
             throw new IllegalArgumentException("Email is already registered.");
         }
@@ -103,7 +99,7 @@ public class AuthService {
                 Role.TA,
                 normalizedName,
                 normalizedEmail,
-                password,
+                normalizedPassword,
                 "",
                 0,
                 "",
@@ -111,12 +107,5 @@ public class AuthService {
                 true);
         userRepository.save(user);
         return user;
-    }
-
-    private String requireText(String value, String fieldName) {
-        if (value == null || value.isBlank()) {
-            throw new IllegalArgumentException(fieldName + " is required.");
-        }
-        return value.trim();
     }
 }

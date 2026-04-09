@@ -1,0 +1,12 @@
+# 编译产物
+out/
+*.class
+
+# 临时文件
+sources.txt
+
+# VSCode配置
+.vscode/
+
+# 可选：如果你不想提交测试数据（推荐）
+# data/

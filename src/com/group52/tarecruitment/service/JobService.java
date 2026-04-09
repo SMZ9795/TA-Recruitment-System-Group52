@@ -2,18 +2,21 @@ package com.group52.tarecruitment.service;
 
 import com.group52.tarecruitment.model.Job;
 import com.group52.tarecruitment.model.JobStatus;
+import com.group52.tarecruitment.model.ApplicationStatus;
+import com.group52.tarecruitment.repository.ApplicationRepository;
 import com.group52.tarecruitment.repository.JobRepository;
 import com.group52.tarecruitment.util.IdGenerator;
-import java.time.LocalDate;
-import java.time.format.DateTimeParseException;
+import com.group52.tarecruitment.util.ValidationUtil;
 import java.util.List;
 import java.util.Optional;
 
 public class JobService {
     private final JobRepository jobRepository;
+    private final ApplicationRepository applicationRepository;
 
-    public JobService(JobRepository jobRepository) {
+    public JobService(JobRepository jobRepository, ApplicationRepository applicationRepository) {
         this.jobRepository = jobRepository;
+        this.applicationRepository = applicationRepository;
     }
 
     public List<Job> getAllJobs() {
@@ -25,29 +28,19 @@ public class JobService {
     }
 
     public List<Job> getJobsByMoId(String moId) {
-        if (moId == null || moId.isBlank()) {
-            throw new IllegalArgumentException("MO ID is required.");
-        }
-        return jobRepository.findByPostedByMoId(moId.trim());
+        return jobRepository.findByPostedByMoId(ValidationUtil.requireText(moId, "MO ID"));
     }
 
     public Job createJob(String moduleCode, String moduleName, String description, String requiredSkills,
-            int hoursPerWeek, int positions, String deadline, String postedByMoId) {
-        String normalizedModuleCode = requireText(moduleCode, "Module code");
-        String normalizedModuleName = requireText(moduleName, "Module name");
-        String normalizedDescription = requireText(description, "Description");
-        String normalizedRequiredSkills = requireText(requiredSkills, "Required skills");
-        String normalizedDeadline = requireText(deadline, "Deadline");
-        String normalizedPostedByMoId = requireText(postedByMoId, "Posted by MO ID");
-
-        if (hoursPerWeek <= 0) {
-            throw new IllegalArgumentException("Hours per week must be greater than 0.");
-        }
-        if (positions <= 0) {
-            throw new IllegalArgumentException("Positions must be greater than 0.");
-        }
-
-        validateDeadline(normalizedDeadline);
+            String hoursPerWeek, String positions, String deadline, String postedByMoId) {
+        String normalizedModuleCode = ValidationUtil.requireText(moduleCode, "Module code");
+        String normalizedModuleName = ValidationUtil.requireText(moduleName, "Module name");
+        String normalizedDescription = ValidationUtil.requireText(description, "Description");
+        String normalizedRequiredSkills = ValidationUtil.requireText(requiredSkills, "Required skills");
+        int normalizedHoursPerWeek = ValidationUtil.parseIntInRange(hoursPerWeek, "Hours per week", 1, 168);
+        int normalizedPositions = ValidationUtil.parsePositiveInt(positions, "Positions");
+        String normalizedDeadline = ValidationUtil.requireTodayOrFutureDate(deadline, "Deadline");
+        String normalizedPostedByMoId = ValidationUtil.requireText(postedByMoId, "Posted by MO ID");
 
         Job job = new Job(
                 IdGenerator.nextId("JOB"),
@@ -55,8 +48,8 @@ public class JobService {
                 normalizedModuleName,
                 normalizedDescription,
                 normalizedRequiredSkills,
-                hoursPerWeek,
-                positions,
+                normalizedHoursPerWeek,
+                normalizedPositions,
                 normalizedDeadline,
                 normalizedPostedByMoId,
                 JobStatus.OPEN);
@@ -64,18 +57,38 @@ public class JobService {
         return job;
     }
 
-    private String requireText(String value, String fieldName) {
-        if (value == null || value.isBlank()) {
-            throw new IllegalArgumentException(fieldName + " is required.");
+    public Job getJobForMo(String jobId, String moId) {
+        String normalizedJobId = ValidationUtil.requireText(jobId, "Job ID");
+        String normalizedMoId = ValidationUtil.requireText(moId, "MO ID");
+
+        Job job = jobRepository.findById(normalizedJobId)
+                .orElseThrow(() -> new IllegalArgumentException("Job not found."));
+        if (!job.getPostedByMoId().equalsIgnoreCase(normalizedMoId)) {
+            throw new IllegalArgumentException("You can only edit jobs that you posted.");
         }
-        return value.trim();
+        return job;
     }
 
-    private void validateDeadline(String deadline) {
-        try {
-            LocalDate.parse(deadline);
-        } catch (DateTimeParseException e) {
-            throw new IllegalArgumentException("Deadline must use YYYY-MM-DD format.");
+    public Job updateJob(String jobId, String moId, String moduleCode, String moduleName, String description,
+            String requiredSkills, String hoursPerWeek, String positions, String deadline) {
+        Job job = getJobForMo(jobId, moId);
+        long acceptedCount = applicationRepository.countByJobIdAndStatus(job.getId(), ApplicationStatus.ACCEPTED);
+
+        int normalizedPositions = ValidationUtil.parsePositiveInt(positions, "Positions");
+        if (normalizedPositions < acceptedCount) {
+            throw new IllegalArgumentException(
+                    "Positions cannot be less than the number of accepted applications (" + acceptedCount + ").");
         }
+
+        job.setModuleCode(ValidationUtil.requireText(moduleCode, "Module code"));
+        job.setModuleName(ValidationUtil.requireText(moduleName, "Module name"));
+        job.setDescription(ValidationUtil.requireText(description, "Description"));
+        job.setRequiredSkills(ValidationUtil.requireText(requiredSkills, "Required skills"));
+        job.setHoursPerWeek(ValidationUtil.parseIntInRange(hoursPerWeek, "Hours per week", 1, 168));
+        job.setPositions(normalizedPositions);
+        job.setDeadline(ValidationUtil.requireTodayOrFutureDate(deadline, "Deadline"));
+        job.setStatus(acceptedCount >= normalizedPositions ? JobStatus.FILLED : JobStatus.OPEN);
+        jobRepository.save(job);
+        return job;
     }
 }

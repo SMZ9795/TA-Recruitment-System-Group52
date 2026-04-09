@@ -21,7 +21,7 @@ public class Main {
                 new ApplicationRepository(dataDirectory.resolve("applications.csv"));
 
         AuthService authService = new AuthService(userRepository);
-        JobService jobService = new JobService(jobRepository);
+        JobService jobService = new JobService(jobRepository, applicationRepository);
         ApplicationService applicationService = new ApplicationService(applicationRepository, jobRepository);
         UserProfileService userProfileService = new UserProfileService(userRepository);
         AdminService adminService = new AdminService(userRepository, jobRepository, applicationRepository);
