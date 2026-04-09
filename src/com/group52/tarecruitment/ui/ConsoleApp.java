@@ -11,7 +11,6 @@ import com.group52.tarecruitment.service.AuthService;
 import com.group52.tarecruitment.service.JobService;
 import com.group52.tarecruitment.service.UserProfileService;
 import java.util.List;
-import java.util.Optional;
 import java.util.Scanner;
 
 public class ConsoleApp {
@@ -37,19 +36,23 @@ public class ConsoleApp {
         while (running) {
             printMainMenu();
             String choice = scanner.nextLine().trim();
-            switch (choice) {
-                case "1":
-                    registerTa();
-                    break;
-                case "2":
-                    login();
-                    break;
-                case "3":
-                    running = false;
-                    System.out.println("Application closed.");
-                    break;
-                default:
-                    System.out.println("Invalid option.");
+            try {
+                switch (choice) {
+                    case "1":
+                        registerTa();
+                        break;
+                    case "2":
+                        login();
+                        break;
+                    case "3":
+                        running = false;
+                        System.out.println("Application closed.");
+                        break;
+                    default:
+                        System.out.println("Invalid option.");
+                }
+            } catch (RuntimeException e) {
+                printUnexpectedFailure(e);
             }
         }
     }
@@ -66,38 +69,38 @@ public class ConsoleApp {
     private void registerTa() {
         try {
             System.out.print("Student ID (9-12 digits): ");
-            String studentId = scanner.nextLine().trim();
+            String studentId = scanner.nextLine();
             System.out.print("Name: ");
-            String name = scanner.nextLine().trim();
+            String name = scanner.nextLine();
             System.out.print("Email: ");
-            String email = scanner.nextLine().trim();
+            String email = scanner.nextLine();
             System.out.print("Password (min 8 characters): ");
-            String password = scanner.nextLine().trim();
+            String password = scanner.nextLine();
             User user = authService.registerTa(studentId, name, email, password);
             System.out.println("TA account created. Your login ID: " + user.getId());
-        } catch (IllegalArgumentException e) {
-            System.out.println("Registration failed: " + e.getMessage());
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            printOperationFailure("Registration failed", e);
         }
     }
 
     private void login() {
-        System.out.print("User ID or Email: ");
-        String identifier = scanner.nextLine().trim();
-        System.out.print("Password: ");
-        String password = scanner.nextLine().trim();
-        Optional<User> user = authService.login(identifier, password);
-        if (user.isEmpty()) {
-            System.out.println("Login failed. Please check your ID/email and password.");
-            return;
-        }
+        try {
+            System.out.print("User ID or Email: ");
+            String identifier = scanner.nextLine();
+            System.out.print("Password: ");
+            String password = scanner.nextLine();
+            User user = authService.login(identifier, password);
 
-        System.out.println("Login successful. Role: " + user.get().getRole());
-        if (user.get().getRole() == Role.TA) {
-            showTaMenu(user.get());
-        } else if (user.get().getRole() == Role.MO) {
-            showMoMenu(user.get());
-        } else {
-            showAdminMenu(user.get());
+            System.out.println("Login successful. Role: " + user.getRole());
+            if (user.getRole() == Role.TA) {
+                showTaMenu(user);
+            } else if (user.getRole() == Role.MO) {
+                showMoMenu(user);
+            } else {
+                showAdminMenu(user);
+            }
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            printOperationFailure("Login failed", e);
         }
     }
 
@@ -115,27 +118,31 @@ public class ConsoleApp {
             System.out.println("6. Logout");
             System.out.print("Choose an option: ");
             String choice = scanner.nextLine().trim();
-            switch (choice) {
-                case "1":
-                    listJobs();
-                    break;
-                case "2":
-                    applyForJob(user);
-                    break;
-                case "3":
-                    listApplicationsByTa(user);
-                    break;
-                case "4":
-                    showTaProfile(user);
-                    break;
-                case "5":
-                    editTaProfile(user);
-                    break;
-                case "6":
-                    running = false;
-                    break;
-                default:
-                    System.out.println("Invalid option.");
+            try {
+                switch (choice) {
+                    case "1":
+                        listJobs();
+                        break;
+                    case "2":
+                        applyForJob(user);
+                        break;
+                    case "3":
+                        listApplicationsByTa(user);
+                        break;
+                    case "4":
+                        showTaProfile(user);
+                        break;
+                    case "5":
+                        editTaProfile(user);
+                        break;
+                    case "6":
+                        running = false;
+                        break;
+                    default:
+                        System.out.println("Invalid option.");
+                }
+            } catch (RuntimeException e) {
+                printUnexpectedFailure(e);
             }
         }
     }
@@ -147,34 +154,42 @@ public class ConsoleApp {
             System.out.println("=== MO Dashboard ===");
             System.out.println("Welcome, " + user.getName());
             System.out.println("1. Post a job");
-            System.out.println("2. View my jobs");
-            System.out.println("3. View applications for my jobs");
-            System.out.println("4. Review an application");
-            System.out.println("5. View all jobs");
-            System.out.println("6. Logout");
+            System.out.println("2. Edit a job");
+            System.out.println("3. View my jobs");
+            System.out.println("4. View applications for my jobs");
+            System.out.println("5. Review an application");
+            System.out.println("6. View all jobs");
+            System.out.println("7. Logout");
             System.out.print("Choose an option: ");
             String choice = scanner.nextLine().trim();
-            switch (choice) {
-                case "1":
-                    createJob(user);
-                    break;
-                case "2":
-                    listJobsByMo(user);
-                    break;
-                case "3":
-                    listApplicationsByMo(user);
-                    break;
-                case "4":
-                    reviewApplication(user);
-                    break;
-                case "5":
-                    listJobs();
-                    break;
-                case "6":
-                    running = false;
-                    break;
-                default:
-                    System.out.println("Invalid option.");
+            try {
+                switch (choice) {
+                    case "1":
+                        createJob(user);
+                        break;
+                    case "2":
+                        editJob(user);
+                        break;
+                    case "3":
+                        listJobsByMo(user);
+                        break;
+                    case "4":
+                        listApplicationsByMo(user);
+                        break;
+                    case "5":
+                        reviewApplication(user);
+                        break;
+                    case "6":
+                        listJobs();
+                        break;
+                    case "7":
+                        running = false;
+                        break;
+                    default:
+                        System.out.println("Invalid option.");
+                }
+            } catch (RuntimeException e) {
+                printUnexpectedFailure(e);
             }
         }
     }
@@ -193,27 +208,31 @@ public class ConsoleApp {
             System.out.println("6. Logout");
             System.out.print("Choose an option: ");
             String choice = scanner.nextLine().trim();
-            switch (choice) {
-                case "1":
-                    viewAllTAWorkloads();
-                    break;
-                case "2":
-                    viewSpecificTAWorkload();
-                    break;
-                case "3":
-                    viewRecruitmentSummary();
-                    break;
-                case "4":
-                    listAllTAs();
-                    break;
-                case "5":
-                    listJobs();
-                    break;
-                case "6":
-                    running = false;
-                    break;
-                default:
-                    System.out.println("Invalid option.");
+            try {
+                switch (choice) {
+                    case "1":
+                        viewAllTAWorkloads();
+                        break;
+                    case "2":
+                        viewSpecificTAWorkload();
+                        break;
+                    case "3":
+                        viewRecruitmentSummary();
+                        break;
+                    case "4":
+                        listAllTAs();
+                        break;
+                    case "5":
+                        listJobs();
+                        break;
+                    case "6":
+                        running = false;
+                        break;
+                    default:
+                        System.out.println("Invalid option.");
+                }
+            } catch (RuntimeException e) {
+                printUnexpectedFailure(e);
             }
         }
     }
@@ -239,8 +258,7 @@ public class ConsoleApp {
     private void printJobs(List<Job> jobs) {
         System.out.println();
         for (Job job : jobs) {
-            System.out.println(job.getId() + " | " + job.getModuleCode() + " | " + job.getModuleName()
-                    + " | " + job.getStatus());
+            System.out.println(formatJob(job));
         }
     }
 
@@ -286,67 +304,93 @@ public class ConsoleApp {
     private void editTaProfile(User user) {
         try {
             System.out.print("Programme: ");
-            String programme = scanner.nextLine().trim();
+            String programme = scanner.nextLine();
             System.out.print("Year of study: ");
-            int yearOfStudy = Integer.parseInt(scanner.nextLine().trim());
+            String yearOfStudy = scanner.nextLine();
             System.out.print("Skills: ");
-            String skills = scanner.nextLine().trim();
+            String skills = scanner.nextLine();
             System.out.print("Available hours: ");
-            int availableHours = Integer.parseInt(scanner.nextLine().trim());
+            String availableHours = scanner.nextLine();
 
             User updatedUser = userProfileService.updateTaProfile(
                     user.getId(), programme, yearOfStudy, skills, availableHours);
             syncUserProfile(user, updatedUser);
             System.out.println("Profile updated.");
-        } catch (NumberFormatException e) {
-            System.out.println("Profile update failed: Year of study and available hours must be whole numbers.");
-        } catch (IllegalArgumentException e) {
-            System.out.println("Profile update failed: " + e.getMessage());
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            printOperationFailure("Profile update failed", e);
         }
     }
 
     private void createJob(User user) {
         try {
             System.out.print("Module code: ");
-            String moduleCode = scanner.nextLine().trim();
+            String moduleCode = scanner.nextLine();
             System.out.print("Module name: ");
-            String moduleName = scanner.nextLine().trim();
+            String moduleName = scanner.nextLine();
             System.out.print("Description: ");
-            String description = scanner.nextLine().trim();
+            String description = scanner.nextLine();
             System.out.print("Required skills: ");
-            String requiredSkills = scanner.nextLine().trim();
+            String requiredSkills = scanner.nextLine();
             System.out.print("Hours per week: ");
-            int hours = Integer.parseInt(scanner.nextLine().trim());
+            String hours = scanner.nextLine();
             System.out.print("Positions: ");
-            int positions = Integer.parseInt(scanner.nextLine().trim());
+            String positions = scanner.nextLine();
             System.out.print("Deadline (YYYY-MM-DD): ");
-            String deadline = scanner.nextLine().trim();
+            String deadline = scanner.nextLine();
 
             Job job = jobService.createJob(
                     moduleCode, moduleName, description, requiredSkills, hours, positions, deadline, user.getId());
             System.out.println("Job created: " + job.getId());
-        } catch (NumberFormatException e) {
-            System.out.println("Job creation failed: Hours per week and positions must be whole numbers.");
-        } catch (IllegalArgumentException e) {
-            System.out.println("Job creation failed: " + e.getMessage());
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            printOperationFailure("Job creation failed", e);
+        }
+    }
+
+    private void editJob(User user) {
+        try {
+            System.out.print("Enter job ID to edit: ");
+            String jobId = scanner.nextLine();
+            Job currentJob = jobService.getJobForMo(jobId, user.getId());
+
+            System.out.println("Current job: " + formatJob(currentJob));
+            System.out.print("New module code: ");
+            String moduleCode = scanner.nextLine();
+            System.out.print("New module name: ");
+            String moduleName = scanner.nextLine();
+            System.out.print("New description: ");
+            String description = scanner.nextLine();
+            System.out.print("New required skills: ");
+            String requiredSkills = scanner.nextLine();
+            System.out.print("New hours per week: ");
+            String hours = scanner.nextLine();
+            System.out.print("New positions: ");
+            String positions = scanner.nextLine();
+            System.out.print("New deadline (YYYY-MM-DD): ");
+            String deadline = scanner.nextLine();
+
+            Job updatedJob = jobService.updateJob(
+                    jobId, user.getId(), moduleCode, moduleName, description, requiredSkills, hours, positions, deadline);
+            System.out.println("Job updated: " + updatedJob.getId());
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            printOperationFailure("Job update failed", e);
         }
     }
 
     private void applyForJob(User user) {
         try {
             System.out.print("Enter job ID: ");
-            String jobId = scanner.nextLine().trim();
-            applicationService.applyForJob(jobId, user.getId());
-            System.out.println("Application submitted.");
-        } catch (IllegalArgumentException e) {
-            System.out.println("Application failed: " + e.getMessage());
+            String jobId = scanner.nextLine();
+            Application application = applicationService.applyForJob(jobId, user.getId());
+            System.out.println("Application submitted: " + application.getId());
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            printOperationFailure("Application failed", e);
         }
     }
 
     private void reviewApplication(User user) {
         try {
             System.out.print("Enter application ID: ");
-            String applicationId = scanner.nextLine().trim();
+            String applicationId = scanner.nextLine();
             System.out.print("Action (A=accept, R=reject): ");
             String action = scanner.nextLine().trim();
 
@@ -362,8 +406,8 @@ public class ConsoleApp {
 
             Application application = applicationService.updateApplicationStatus(applicationId, user.getId(), newStatus);
             System.out.println("Application updated: " + application.getId() + " -> " + application.getStatus());
-        } catch (IllegalArgumentException e) {
-            System.out.println("Review failed: " + e.getMessage());
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            printOperationFailure("Review failed", e);
         }
     }
 
@@ -418,8 +462,8 @@ public class ConsoleApp {
                     System.out.println("  -> " + desc);
                 }
             }
-        } catch (IllegalArgumentException e) {
-            System.out.println("Error: " + e.getMessage());
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            printOperationFailure("Error", e);
         }
     }
 
@@ -443,5 +487,27 @@ public class ConsoleApp {
                     + " | year=" + (ta.getYearOfStudy() == 0 ? "N/A" : ta.getYearOfStudy())
                     + " | hours=" + ta.getAvailableHours());
         }
+    }
+
+    private String formatJob(Job job) {
+        return job.getId()
+                + " | " + job.getModuleCode()
+                + " | " + job.getModuleName()
+                + " | hours=" + job.getHoursPerWeek()
+                + " | positions=" + job.getPositions()
+                + " | deadline=" + job.getDeadline()
+                + " | status=" + job.getStatus();
+    }
+
+    private void printOperationFailure(String prefix, Exception e) {
+        System.out.println(prefix + ": " + e.getMessage());
+    }
+
+    private void printUnexpectedFailure(RuntimeException e) {
+        if (e instanceof IllegalArgumentException || e instanceof IllegalStateException) {
+            System.out.println("Operation failed: " + e.getMessage());
+            return;
+        }
+        System.out.println("Operation failed due to an unexpected error. Please try again.");
     }
 }
