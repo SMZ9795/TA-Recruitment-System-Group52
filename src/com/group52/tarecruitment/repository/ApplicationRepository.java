@@ -41,59 +41,67 @@ public class ApplicationRepository {
     }
 
     public Optional<Application> findById(String applicationId) {
+        if (applicationId == null || applicationId.isBlank()) {
+            return Optional.empty();
+        }
+        String normalizedId = applicationId.trim();
         return findAll().stream()
-                .filter(application -> application.getId().equalsIgnoreCase(applicationId))
+                .filter(application -> application.getId().equalsIgnoreCase(normalizedId))
                 .findFirst();
     }
 
     public List<Application> findByJobId(String jobId) {
-        return findAll().stream()
-                .filter(application -> application.getJobId().equalsIgnoreCase(jobId))
-                .toList();
+        if (jobId == null || jobId.isBlank()) {
+            return new ArrayList<>();
+        }
+        String normalizedJobId = jobId.trim();
+        return new ArrayList<>(findAll().stream()
+                .filter(application -> application.getJobId().equalsIgnoreCase(normalizedJobId))
+                .toList());
     }
 
     public List<Application> findByTaUserId(String taUserId) {
-        return findAll().stream()
-                .filter(application -> application.getTaUserId().equalsIgnoreCase(taUserId))
-                .toList();
+        if (taUserId == null || taUserId.isBlank()) {
+            return new ArrayList<>();
+        }
+        String normalizedTaUserId = taUserId.trim();
+        return new ArrayList<>(findAll().stream()
+                .filter(application -> application.getTaUserId().equalsIgnoreCase(normalizedTaUserId))
+                .toList());
     }
 
     public long countByJobIdAndStatus(String jobId, ApplicationStatus status) {
+        if (jobId == null || jobId.isBlank() || status == null) {
+            return 0;
+        }
+        String normalizedJobId = jobId.trim();
         return findAll().stream()
-                .filter(application -> application.getJobId().equalsIgnoreCase(jobId))
+                .filter(application -> application.getJobId().equalsIgnoreCase(normalizedJobId))
                 .filter(application -> application.getStatus() == status)
                 .count();
     }
 
     public void save(Application application) {
+        if (application == null || application.getId() == null || application.getId().isBlank()) {
+            throw new IllegalArgumentException("Application ID is required.");
+        }
+        String normalizedId = application.getId().trim();
+        application.setId(normalizedId);
         List<Application> applications = findAll();
-        applications.removeIf(existing -> existing.getId().equalsIgnoreCase(application.getId()));
+        applications.removeIf(existing -> existing.getId().equalsIgnoreCase(normalizedId));
         applications.add(application);
         writeAll(applications);
     }
 
-    public Optional<Application> findById(String applicationId) {
-        return findAll().stream()
-                .filter(application -> application.getId().equalsIgnoreCase(applicationId))
-                .findFirst();
-    }
-
-    public List<Application> findByTaUserId(String taUserId) {
-        return findAll().stream()
-                .filter(application -> application.getTaUserId().equalsIgnoreCase(taUserId))
-                .toList();
-    }
-
-    public List<Application> findByJobId(String jobId) {
-        return findAll().stream()
-                .filter(application -> application.getJobId().equalsIgnoreCase(jobId))
-                .toList();
-    }
-
     public boolean existsByJobIdAndTaUserId(String jobId, String taUserId) {
+        if (jobId == null || jobId.isBlank() || taUserId == null || taUserId.isBlank()) {
+            return false;
+        }
+        String normalizedJobId = jobId.trim();
+        String normalizedTaUserId = taUserId.trim();
         return findAll().stream().anyMatch(application ->
-                application.getJobId().equalsIgnoreCase(jobId)
-                        && application.getTaUserId().equalsIgnoreCase(taUserId));
+                application.getJobId().equalsIgnoreCase(normalizedJobId)
+                        && application.getTaUserId().equalsIgnoreCase(normalizedTaUserId));
     }
 
     private void writeAll(List<Application> applications) {
