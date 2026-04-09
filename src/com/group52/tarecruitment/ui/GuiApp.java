@@ -20,7 +20,6 @@ import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
 import java.util.List;
-import java.util.Optional;
 import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
@@ -288,15 +287,13 @@ public class GuiApp {
     }
 
     private void handleLogin(String identifier, String password) {
-        Optional<User> user = authService.login(identifier, password);
-        if (user.isEmpty()) {
-            showError("Login failed. Check your ID/email and password.");
-            return;
+        try {
+            currentUser = authService.login(identifier, password);
+            renderDashboard();
+            cardLayout.show(rootPanel, CARD_DASHBOARD);
+        } catch (IllegalArgumentException ex) {
+            showError("Login failed: " + ex.getMessage());
         }
-
-        currentUser = user.get();
-        renderDashboard();
-        cardLayout.show(rootPanel, CARD_DASHBOARD);
     }
 
     private void renderDashboard() {
@@ -474,9 +471,9 @@ public class GuiApp {
                 User updated = userProfileService.updateTaProfile(
                         currentUser.getId(),
                         programmeField.getText(),
-                        year,
+                        String.valueOf(year),
                         skillsField.getText(),
-                        hours);
+                        String.valueOf(hours));
                 currentUser = updated;
                 showInfo("Profile updated.");
             } catch (NumberFormatException ex) {
@@ -609,8 +606,8 @@ public class GuiApp {
                         moduleNameField.getText(),
                         descriptionArea.getText(),
                         requiredSkillsField.getText(),
-                        hours,
-                        positions,
+                        String.valueOf(hours),
+                        String.valueOf(positions),
                         deadlineField.getText(),
                         currentUser.getId());
                 showInfo("Job created: " + job.getId());
