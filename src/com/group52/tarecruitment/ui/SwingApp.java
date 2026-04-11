@@ -9,6 +9,9 @@ import com.group52.tarecruitment.model.User;
 import com.group52.tarecruitment.service.ApplicationService;
 import com.group52.tarecruitment.service.AuthService;
 import com.group52.tarecruitment.service.JobService;
+import com.group52.tarecruitment.util.CvValidationUtil;
+import com.group52.tarecruitment.util.JobFilterUtil;
+import com.group52.tarecruitment.util.ValidationUtil;
 import java.awt.BorderLayout;
 import java.awt.CardLayout;
 import java.awt.Dimension;
@@ -191,13 +194,6 @@ public class SwingApp {
             nav.add(Box.createVerticalStrut(12));
         }
         return nav;
-    }
-
-    private int parseIntOrZero(String value) {
-        if (value == null || value.isBlank()) {
-            return 0;
-        }
-        return Integer.parseInt(value.trim());
     }
 
     private Optional<User> findUserById(String userId) {
@@ -397,15 +393,10 @@ public class SwingApp {
                     statusLabel.setText("Please fill in email and password.");
                     return;
                 }
-                Optional<User> loginUser = authService.login(email, password);
-                if (loginUser.isEmpty()) {
-                    JOptionPane.showMessageDialog(frame, "Login failed. Check credentials or account status.");
-                    statusLabel.setText("Login failed.");
-                    return;
-                }
-                roleCombo.setSelectedItem(loginUser.get().getRole());
+                User loginUser = authService.login(email, password);
+                roleCombo.setSelectedItem(loginUser.getRole());
                 statusLabel.setText("Login success.");
-                onLoginSuccess(loginUser.get());
+                onLoginSuccess(loginUser);
             } catch (RuntimeException ex) {
                 ex.printStackTrace();
                 String detail = ex.getClass().getSimpleName();
@@ -662,9 +653,9 @@ public class SwingApp {
 
         private void refreshJobs() {
             jobModel.setRowCount(0);
-            String query = searchField.getText().trim().toLowerCase();
-            String skillQuery = skillsFilterField.getText().trim().toLowerCase();
-            String moQuery = moFilterField.getText().trim().toLowerCase();
+            String query = searchField.getText();
+            String skillQuery = skillsFilterField.getText();
+            String moQuery = moFilterField.getText();
             String statusValue = String.valueOf(statusFilterBox.getSelectedItem());
             Integer maxHours = parseHoursFilter();
             if (maxHours != null && maxHours < 0) {
@@ -673,21 +664,8 @@ public class SwingApp {
             for (Job job : jobService.getAllJobs()) {
                 String moduleCode = safeText(job.getModuleCode());
                 String moduleName = safeText(job.getModuleName());
-                String requiredSkills = safeText(job.getRequiredSkills());
                 String moName = safeText(moNameForJob(job));
-                boolean matchedKeyword = query.isBlank()
-                        || moduleCode.toLowerCase().contains(query)
-                        || moduleName.toLowerCase().contains(query)
-                        || requiredSkills.toLowerCase().contains(query)
-                        || moName.toLowerCase().contains(query);
-                boolean matchedSkill = skillQuery.isBlank() || requiredSkills.toLowerCase().contains(skillQuery);
-                boolean matchedMo = moQuery.isBlank()
-                        || moName.toLowerCase().contains(moQuery)
-                        || safeText(job.getPostedByMoId()).toLowerCase().contains(moQuery);
-                boolean matchedStatus = "ALL".equalsIgnoreCase(statusValue)
-                        || job.getStatus().name().equalsIgnoreCase(statusValue);
-                boolean matchedHours = maxHours == null || job.getHoursPerWeek() <= maxHours;
-                if (!matchedKeyword || !matchedSkill || !matchedMo || !matchedStatus || !matchedHours) {
+                if (!JobFilterUtil.matches(job, query, skillQuery, maxHours, moQuery, statusValue, moName)) {
                     continue;
                 }
                 jobModel.addRow(new Object[] {
@@ -776,7 +754,11 @@ public class SwingApp {
                 JOptionPane.showMessageDialog(frame, "Only pending applications can be withdrawn.");
                 return;
             }
-            applicationService.updateStatus(applicationId, ApplicationStatus.WITHDRAWN);
+            if (!application.get().getTaUserId().equalsIgnoreCase(user.getId())) {
+                JOptionPane.showMessageDialog(frame, "You can only withdraw your own applications.");
+                return;
+            }
+            applicationService.updateStatus(applicationId, user.getId(), ApplicationStatus.WITHDRAWN);
             refreshApplications();
         }
 
@@ -794,10 +776,10 @@ public class SwingApp {
         private void saveProfile() {
             try {
                 user.setName(profileNameField.getText().trim());
-                user.setYearOfStudy(parseIntOrZero(profileYearField.getText()));
+                user.setYearOfStudy(ValidationUtil.parseIntInRange(profileYearField.getText(), "Year of study", 1, 12));
                 user.setProgramme(profileProgrammeField.getText().trim());
                 user.setSkills(profileSkillsArea.getText().trim());
-                user.setAvailableHours(parseIntOrZero(profileHoursField.getText()));
+                user.setAvailableHours(ValidationUtil.parseIntInRange(profileHoursField.getText(), "Available hours", 1, 168));
                 user.setCvFilePath(selectedCvPath);
                 authService.updateUser(user);
                 JOptionPane.showMessageDialog(frame, "Profile saved.");
@@ -811,14 +793,10 @@ public class SwingApp {
             int result = chooser.showOpenDialog(frame);
             if (result == JFileChooser.APPROVE_OPTION && chooser.getSelectedFile() != null) {
                 File selectedFile = chooser.getSelectedFile();
-                String lowerName = selectedFile.getName().toLowerCase();
-                if (!lowerName.endsWith(".pdf") && !lowerName.endsWith(".txt")) {
-                    JOptionPane.showMessageDialog(frame, "Only .pdf or .txt CV files are supported.");
-                    return;
-                }
-                long maxSizeBytes = 5L * 1024 * 1024;
-                if (selectedFile.length() > maxSizeBytes) {
-                    JOptionPane.showMessageDialog(frame, "CV file is too large. Please choose a file <= 5 MB.");
+                try {
+                    CvValidationUtil.validate(selectedFile.getName(), selectedFile.length());
+                } catch (IllegalArgumentException ex) {
+                    JOptionPane.showMessageDialog(frame, ex.getMessage());
                     return;
                 }
                 String savedPath = saveCvFile(selectedFile, user.getId());
@@ -954,12 +932,15 @@ public class SwingApp {
             acceptButton.addActionListener(e -> updateApplicantStatus(ApplicationStatus.ACCEPTED));
             JButton rejectButton = new JButton("Reject");
             rejectButton.addActionListener(e -> updateApplicantStatus(ApplicationStatus.REJECTED));
+            JButton viewProfileButton = new JButton("View Applicant Details");
+            viewProfileButton.addActionListener(e -> viewSelectedApplicantProfile());
             JButton viewCvButton = new JButton("View Applicant CV");
             viewCvButton.addActionListener(e -> viewSelectedApplicantCv());
             JButton refreshApplicantsButton = new JButton("Refresh");
             refreshApplicantsButton.addActionListener(e -> refreshApplicants());
             applicantActions.add(acceptButton);
             applicantActions.add(rejectButton);
+            applicantActions.add(viewProfileButton);
             applicantActions.add(viewCvButton);
             applicantActions.add(refreshApplicantsButton);
             applicantsPanel.add(applicantActions, BorderLayout.SOUTH);
@@ -1134,9 +1115,13 @@ public class SwingApp {
                 return;
             }
             String appId = String.valueOf(applicantsModel.getValueAt(row, 0));
-            applicationService.updateStatus(appId, status);
-            refreshApplicants();
-            refreshJobs();
+            try {
+                applicationService.updateApplicationStatus(appId, user.getId(), status);
+                refreshApplicants();
+                refreshJobs();
+            } catch (IllegalArgumentException ex) {
+                JOptionPane.showMessageDialog(frame, ex.getMessage());
+            }
         }
 
         private void viewSelectedApplicantCv() {
@@ -1159,6 +1144,36 @@ public class SwingApp {
             openCvFile(ta.getCvFilePath());
         }
 
+        private void viewSelectedApplicantProfile() {
+            int row = applicantsTable.getSelectedRow();
+            if (row < 0) {
+                JOptionPane.showMessageDialog(frame, "Please select an applicant first.");
+                return;
+            }
+            String appId = String.valueOf(applicantsModel.getValueAt(row, 0));
+            Optional<Application> application = applicationService.getApplicationById(appId);
+            if (application.isEmpty()) {
+                JOptionPane.showMessageDialog(frame, "Application not found.");
+                return;
+            }
+            User ta = findUserById(application.get().getTaUserId()).orElse(null);
+            if (ta == null) {
+                JOptionPane.showMessageDialog(frame, "Applicant not found.");
+                return;
+            }
+
+            String cvDisplay = safeText(ta.getCvFilePath()).isBlank()
+                    ? "Not uploaded"
+                    : new File(ta.getCvFilePath()).getName();
+            String message = "Name: " + safeText(ta.getName()) + "\n"
+                    + "Year of Study: " + ta.getYearOfStudy() + "\n"
+                    + "Programme: " + safeText(ta.getProgramme()) + "\n"
+                    + "Skills: " + safeText(ta.getSkills()) + "\n"
+                    + "Available Hours/Week: " + ta.getAvailableHours() + "\n"
+                    + "CV: " + cvDisplay;
+            JOptionPane.showMessageDialog(frame, message, "Applicant Details", JOptionPane.INFORMATION_MESSAGE);
+        }
+
         private void loadProfile() {
             profileNameField.setText(user.getName());
             profileProgrammeField.setText(user.getProgramme());
@@ -1167,12 +1182,16 @@ public class SwingApp {
         }
 
         private void saveProfile() {
-            user.setName(profileNameField.getText().trim());
-            user.setProgramme(profileProgrammeField.getText().trim());
-            user.setEmail(profileEmailField.getText().trim());
-            user.setAvailableHours(parseIntOrZero(profileHoursField.getText()));
-            authService.updateUser(user);
-            JOptionPane.showMessageDialog(frame, "Profile saved.");
+            try {
+                user.setName(profileNameField.getText().trim());
+                user.setProgramme(profileProgrammeField.getText().trim());
+                user.setEmail(profileEmailField.getText().trim());
+                user.setAvailableHours(ValidationUtil.parseIntInRange(profileHoursField.getText(), "Available hours", 1, 168));
+                authService.updateUser(user);
+                JOptionPane.showMessageDialog(frame, "Profile saved.");
+            } catch (IllegalArgumentException ex) {
+                JOptionPane.showMessageDialog(frame, ex.getMessage());
+            }
         }
 
         private JobInput promptForJobInput(Job existing) {
