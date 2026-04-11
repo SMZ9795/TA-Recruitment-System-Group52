@@ -42,25 +42,42 @@ public class JobRepository {
     }
 
     public Optional<Job> findById(String jobId) {
-        return findAll().stream().filter(job -> job.getId().equalsIgnoreCase(jobId)).findFirst();
+        if (jobId == null || jobId.isBlank()) {
+            return Optional.empty();
+        }
+        String normalizedJobId = jobId.trim();
+        return findAll().stream().filter(job -> job.getId().equalsIgnoreCase(normalizedJobId)).findFirst();
     }
 
     public List<Job> findByPostedByMoId(String moId) {
-        return findAll().stream()
-                .filter(job -> job.getPostedByMoId().equalsIgnoreCase(moId))
-                .toList();
+        if (moId == null || moId.isBlank()) {
+            return new ArrayList<>();
+        }
+        String normalizedMoId = moId.trim();
+        return new ArrayList<>(findAll().stream()
+                .filter(job -> job.getPostedByMoId().equalsIgnoreCase(normalizedMoId))
+                .toList());
     }
 
     public void save(Job job) {
+        if (job == null || job.getId() == null || job.getId().isBlank()) {
+            throw new IllegalArgumentException("Job ID is required.");
+        }
+        String normalizedJobId = job.getId().trim();
+        job.setId(normalizedJobId);
         List<Job> jobs = findAll();
-        jobs.removeIf(existing -> existing.getId().equalsIgnoreCase(job.getId()));
+        jobs.removeIf(existing -> existing.getId().equalsIgnoreCase(normalizedJobId));
         jobs.add(job);
         writeAll(jobs);
     }
 
     public void deleteById(String jobId) {
+        if (jobId == null || jobId.isBlank()) {
+            return;
+        }
+        String normalizedJobId = jobId.trim();
         List<Job> jobs = findAll();
-        jobs.removeIf(existing -> existing.getId().equalsIgnoreCase(jobId));
+        jobs.removeIf(existing -> existing.getId().equalsIgnoreCase(normalizedJobId));
         writeAll(jobs);
     }
 

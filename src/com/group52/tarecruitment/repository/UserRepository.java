@@ -11,7 +11,7 @@ import java.util.Optional;
 
 public class UserRepository {
     private static final String HEADER =
-            "id,role,name,email,password,programme,yearOfStudy,skills,availableHours,active";
+            "id,role,name,email,password,programme,yearOfStudy,skills,availableHours,active,cvFilePath";
 
     private final Path filePath;
 
@@ -29,7 +29,7 @@ public class UserRepository {
                 continue;
             }
             List<String> values = CsvUtil.parseLine(line);
-            if (values.size() != 10) {
+            if (values.size() != 10 && values.size() != 11) {
                 throw invalidRecord(i + 1, null);
             }
             try {
@@ -42,16 +42,29 @@ public class UserRepository {
     }
 
     public Optional<User> findById(String userId) {
-        return findAll().stream().filter(user -> user.getId().equalsIgnoreCase(userId)).findFirst();
+        if (userId == null || userId.isBlank()) {
+            return Optional.empty();
+        }
+        String normalizedUserId = userId.trim();
+        return findAll().stream().filter(user -> user.getId().equalsIgnoreCase(normalizedUserId)).findFirst();
     }
 
     public Optional<User> findByEmail(String email) {
-        return findAll().stream().filter(user -> user.getEmail().equalsIgnoreCase(email)).findFirst();
+        if (email == null || email.isBlank()) {
+            return Optional.empty();
+        }
+        String normalizedEmail = email.trim();
+        return findAll().stream().filter(user -> user.getEmail().equalsIgnoreCase(normalizedEmail)).findFirst();
     }
 
     public void save(User user) {
+        if (user == null || user.getId() == null || user.getId().isBlank()) {
+            throw new IllegalArgumentException("User ID is required.");
+        }
+        String normalizedUserId = user.getId().trim();
+        user.setId(normalizedUserId);
         List<User> users = findAll();
-        users.removeIf(existing -> existing.getId().equalsIgnoreCase(user.getId()));
+        users.removeIf(existing -> existing.getId().equalsIgnoreCase(normalizedUserId));
         users.add(user);
         writeAll(users);
     }
@@ -70,12 +83,14 @@ public class UserRepository {
                     CsvUtil.escape(String.valueOf(user.getYearOfStudy())),
                     CsvUtil.escape(user.getSkills()),
                     CsvUtil.escape(String.valueOf(user.getAvailableHours())),
-                    CsvUtil.escape(String.valueOf(user.isActive()))));
+                    CsvUtil.escape(String.valueOf(user.isActive())),
+                    CsvUtil.escape(user.getCvFilePath())));
         }
         FileUtil.writeAllLines(filePath, lines);
     }
 
     private User toUser(List<String> values) {
+        String cvFilePath = values.size() >= 11 ? values.get(10) : "";
         return new User(
                 values.get(0),
                 Role.valueOf(values.get(1)),
@@ -86,7 +101,8 @@ public class UserRepository {
                 parseInt(values.get(6)),
                 values.get(7),
                 parseInt(values.get(8)),
-                Boolean.parseBoolean(values.get(9)));
+                Boolean.parseBoolean(values.get(9)),
+                cvFilePath);
     }
 
     private int parseInt(String value) {

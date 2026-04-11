@@ -57,6 +57,20 @@ public class JobService {
         return job;
     }
 
+    // Compatibility overload for Swing UI flows.
+    public Job createJob(String moduleCode, String moduleName, String description, String requiredSkills,
+            int hoursPerWeek, int positions, String deadline, String postedByMoId) {
+        return createJob(
+                moduleCode,
+                moduleName,
+                description,
+                requiredSkills,
+                String.valueOf(hoursPerWeek),
+                String.valueOf(positions),
+                deadline,
+                postedByMoId);
+    }
+
     public Job getJobForMo(String jobId, String moId) {
         String normalizedJobId = ValidationUtil.requireText(jobId, "Job ID");
         String normalizedMoId = ValidationUtil.requireText(moId, "MO ID");
@@ -90,5 +104,30 @@ public class JobService {
         job.setStatus(acceptedCount >= normalizedPositions ? JobStatus.FILLED : JobStatus.OPEN);
         jobRepository.save(job);
         return job;
+    }
+
+    // Compatibility overload for Swing UI flows.
+    public Job updateJob(Job updatedJob) {
+        if (updatedJob == null) {
+            throw new IllegalArgumentException("Job is required.");
+        }
+        return updateJob(
+                updatedJob.getId(),
+                updatedJob.getPostedByMoId(),
+                updatedJob.getModuleCode(),
+                updatedJob.getModuleName(),
+                updatedJob.getDescription(),
+                updatedJob.getRequiredSkills(),
+                String.valueOf(updatedJob.getHoursPerWeek()),
+                String.valueOf(updatedJob.getPositions()),
+                updatedJob.getDeadline());
+    }
+
+    public void deleteJob(String jobId) {
+        String normalizedJobId = ValidationUtil.requireText(jobId, "Job ID");
+        if (!applicationRepository.findByJobId(normalizedJobId).isEmpty()) {
+            throw new IllegalArgumentException("Cannot delete a job that has related applications.");
+        }
+        jobRepository.deleteById(normalizedJobId);
     }
 }

@@ -10,7 +10,9 @@ import com.group52.tarecruitment.util.IdGenerator;
 import com.group52.tarecruitment.util.ValidationUtil;
 import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 public class ApplicationService {
     private final ApplicationRepository applicationRepository;
@@ -45,7 +47,8 @@ public class ApplicationService {
     }
 
     public List<Application> getApplicationsByTaUserId(String taUserId) {
-        return applicationRepository.findByTaUserId(ValidationUtil.requireText(taUserId, "TA user ID"));
+        return new ArrayList<>(applicationRepository.findByTaUserId(
+                ValidationUtil.requireText(taUserId, "TA user ID")));
     }
 
     public List<Application> getApplicationsForMo(String moId) {
@@ -53,6 +56,59 @@ public class ApplicationService {
         return jobRepository.findByPostedByMoId(normalizedMoId).stream()
                 .flatMap(job -> applicationRepository.findByJobId(job.getId()).stream())
                 .toList();
+    }
+
+    // Compatibility APIs for Swing UI flows.
+    public Optional<Application> getApplicationById(String applicationId) {
+        if (applicationId == null || applicationId.isBlank()) {
+            return Optional.empty();
+        }
+        return applicationRepository.findById(applicationId.trim());
+    }
+
+    public List<Application> getApplicationsByJobId(String jobId) {
+        if (jobId == null || jobId.isBlank()) {
+            return List.of();
+        }
+        return new ArrayList<>(applicationRepository.findByJobId(jobId.trim()));
+    }
+
+    public Application updateStatus(String applicationId, ApplicationStatus newStatus) {
+        throw new IllegalArgumentException("Use updateStatus(applicationId, operatorUserId, newStatus).");
+    }
+
+    public Application updateStatus(String applicationId, String operatorUserId, ApplicationStatus newStatus) {
+        String normalizedApplicationId = ValidationUtil.requireText(applicationId, "Application ID");
+        String normalizedOperatorUserId = ValidationUtil.requireText(operatorUserId, "Operator user ID");
+        if (newStatus == null) {
+            throw new IllegalArgumentException("Application status is required.");
+        }
+
+        Application application = applicationRepository.findById(normalizedApplicationId)
+                .orElseThrow(() -> new IllegalArgumentException("Application not found."));
+        Job job = jobRepository.findById(application.getJobId())
+                .orElseThrow(() -> new IllegalArgumentException("Job not found for the application."));
+        if (newStatus != ApplicationStatus.WITHDRAWN) {
+            throw new IllegalArgumentException("Use MO review flow to set this status.");
+        }
+        if (!application.getTaUserId().equalsIgnoreCase(normalizedOperatorUserId)) {
+            throw new IllegalArgumentException("You can only withdraw your own application.");
+        }
+        if (application.getStatus() != ApplicationStatus.PENDING) {
+            throw new IllegalArgumentException("Only pending applications can be withdrawn.");
+        }
+
+        application.setStatus(newStatus);
+        applicationRepository.save(application);
+
+        long acceptedCount = applicationRepository.countByJobIdAndStatus(job.getId(), ApplicationStatus.ACCEPTED);
+        if (acceptedCount >= job.getPositions()) {
+            job.setStatus(JobStatus.FILLED);
+        } else if (job.getStatus() == JobStatus.FILLED) {
+            job.setStatus(JobStatus.OPEN);
+        }
+        jobRepository.save(job);
+        return application;
     }
 
     public Application updateApplicationStatus(String applicationId, String moId, ApplicationStatus newStatus) {
