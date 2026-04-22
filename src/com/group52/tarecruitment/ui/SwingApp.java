@@ -11,14 +11,19 @@ import com.group52.tarecruitment.service.AuthService;
 import com.group52.tarecruitment.service.JobService;
 import java.awt.BorderLayout;
 import java.awt.CardLayout;
+import java.awt.Component;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
-import java.awt.GridLayout;
+import java.awt.Font;
+import java.awt.Graphics;
+import java.awt.Graphics2D;
 import java.awt.GridBagLayout;
 import java.awt.GridBagConstraints;
+import java.awt.GridLayout;
+import java.awt.RenderingHints;
 import java.awt.Color;
-import java.awt.Font;
 import java.awt.Desktop;
+import java.awt.GradientPaint;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -54,6 +59,20 @@ public class SwingApp {
     private static final String PAGE_MO = "mo";
     private static final String PAGE_ADMIN = "admin";
 
+    // 现代配色方案
+    private static final Color PRIMARY_COLOR = new Color(44, 62, 80);
+    private static final Color SECONDARY_COLOR = new Color(52, 152, 219);
+    private static final Color ACCENT_COLOR = new Color(231, 76, 60);
+    private static final Color SUCCESS_COLOR = new Color(46, 204, 113);
+    private static final Color WARNING_COLOR = new Color(241, 196, 15);
+    private static final Color LIGHT_BACKGROUND = new Color(248, 249, 250);
+    private static final Color CARD_BACKGROUND = new Color(255, 255, 255);
+    private static final Color TEXT_PRIMARY = new Color(51, 51, 51);
+    private static final Color TEXT_SECONDARY = new Color(102, 102, 102);
+    private static final Color BORDER_COLOR = new Color(204, 204, 204);
+    private static final Color PRIMARY_DARK = new Color(30, 41, 59);
+    private static final Color SHADOW_COLOR = new Color(0, 0, 0, 20);
+
     private final AuthService authService;
     private final JobService jobService;
     private final ApplicationService applicationService;
@@ -82,12 +101,51 @@ public class SwingApp {
         SwingUtilities.invokeLater(this::initAndShow);
     }
 
+    // 添加阴影效果
+    private void addShadow(JPanel panel) {
+        panel.setBorder(BorderFactory.createCompoundBorder(
+            BorderFactory.createEmptyBorder(10, 10, 10, 10),
+            BorderFactory.createLineBorder(SHADOW_COLOR, 1)
+        ));
+        panel.setBackground(CARD_BACKGROUND);
+    }
+
+    // 渐变面板
+    private class GradientPanel extends JPanel {
+        private final Color startColor;
+        private final Color endColor;
+
+        public GradientPanel(Color startColor, Color endColor) {
+            this.startColor = startColor;
+            this.endColor = endColor;
+            setOpaque(false);
+        }
+
+        @Override
+        protected void paintComponent(Graphics g) {
+            super.paintComponent(g);
+            Graphics2D g2d = (Graphics2D) g;
+            g2d.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+            int width = getWidth();
+            int height = getHeight();
+            GradientPaint gp = new GradientPaint(0, 0, startColor, width, height, endColor);
+            g2d.setPaint(gp);
+            g2d.fillRect(0, 0, width, height);
+        }
+    }
+
     private void initAndShow() {
         try {
             javax.swing.UIManager.setLookAndFeel(javax.swing.UIManager.getSystemLookAndFeelClassName());
+            // 全局字体设置
             javax.swing.UIManager.put("Table.rowHeight", 30);
-            javax.swing.UIManager.put("Table.font", new java.awt.Font("Segoe UI", java.awt.Font.PLAIN, 14));
-            javax.swing.UIManager.put("TableHeader.font", new java.awt.Font("Segoe UI", java.awt.Font.BOLD, 14));
+            javax.swing.UIManager.put("Table.font", new Font("Segoe UI", Font.PLAIN, 14));
+            javax.swing.UIManager.put("TableHeader.font", new Font("Segoe UI", Font.BOLD, 14));
+            javax.swing.UIManager.put("Label.font", new Font("Segoe UI", Font.PLAIN, 14));
+            javax.swing.UIManager.put("Button.font", new Font("Segoe UI", Font.PLAIN, 14));
+            javax.swing.UIManager.put("TextField.font", new Font("Segoe UI", Font.PLAIN, 14));
+            javax.swing.UIManager.put("TextArea.font", new Font("Segoe UI", Font.PLAIN, 14));
+            javax.swing.UIManager.put("ComboBox.font", new Font("Segoe UI", Font.PLAIN, 14));
         } catch (Exception e) {
             // Ignore if L&F fails
         }
@@ -143,20 +201,20 @@ public class SwingApp {
     }
 
     private JPanel buildTopBar(String title, Runnable logoutAction) {
-        JPanel bar = new JPanel(new BorderLayout());
-        bar.setBackground(new java.awt.Color(0, 80, 158));
+        JPanel bar = new GradientPanel(PRIMARY_COLOR, PRIMARY_DARK);
+        bar.setLayout(new BorderLayout());
         bar.setBorder(BorderFactory.createEmptyBorder(15, 20, 15, 20));
         JLabel titleLabel = new JLabel(title);
-        titleLabel.setForeground(java.awt.Color.WHITE);
-        titleLabel.setFont(new java.awt.Font("Segoe UI", java.awt.Font.BOLD, 22));
+        titleLabel.setForeground(Color.WHITE);
+        titleLabel.setFont(new Font("Segoe UI", Font.BOLD, 22));
         bar.add(titleLabel, BorderLayout.WEST);
         
         if (logoutAction != null) {
             JButton logoutButton = new JButton("Logout");
             logoutButton.setFocusPainted(false);
-            logoutButton.setBackground(new java.awt.Color(220, 53, 69));
-            logoutButton.setForeground(java.awt.Color.WHITE);
-            logoutButton.setFont(new java.awt.Font("Segoe UI", java.awt.Font.BOLD, 14));
+            logoutButton.setBackground(ACCENT_COLOR);
+            logoutButton.setForeground(Color.WHITE);
+            logoutButton.setFont(new Font("Segoe UI", Font.BOLD, 14));
             logoutButton.addActionListener(e -> logoutAction.run());
             bar.add(logoutButton, BorderLayout.EAST);
         }
@@ -165,15 +223,15 @@ public class SwingApp {
 
     private JPanel buildNavigationPanel(String[] labels, Runnable[] actions) {
         JPanel nav = new JPanel();
-        nav.setBackground(new java.awt.Color(240, 242, 245));
+        nav.setBackground(LIGHT_BACKGROUND);
         nav.setBorder(BorderFactory.createEmptyBorder(20, 15, 20, 15));
         nav.setLayout(new BoxLayout(nav, BoxLayout.Y_AXIS));
         nav.setPreferredSize(new Dimension(220, 0));
 
         JLabel menuLabel = new JLabel("Menu");
-        menuLabel.setFont(new java.awt.Font("Segoe UI", java.awt.Font.BOLD, 18));
-        menuLabel.setForeground(java.awt.Color.DARK_GRAY);
-        menuLabel.setAlignmentX(java.awt.Component.CENTER_ALIGNMENT);
+        menuLabel.setFont(new Font("Segoe UI", Font.BOLD, 18));
+        menuLabel.setForeground(TEXT_PRIMARY);
+        menuLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
         nav.add(menuLabel);
         nav.add(Box.createVerticalStrut(20));
 
@@ -182,9 +240,15 @@ public class SwingApp {
             button.setMaximumSize(new Dimension(190, 45));
             button.setPreferredSize(new Dimension(190, 45));
             button.setFocusPainted(false);
-            button.setFont(new java.awt.Font("Segoe UI", java.awt.Font.PLAIN, 15));
-            button.setBackground(java.awt.Color.WHITE);
-            button.setAlignmentX(java.awt.Component.CENTER_ALIGNMENT);
+            button.setFont(new Font("Segoe UI", Font.PLAIN, 15));
+            button.setBackground(CARD_BACKGROUND);
+            button.setForeground(TEXT_PRIMARY);
+            button.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(BORDER_COLOR, 1),
+                BorderFactory.createEmptyBorder(10, 15, 10, 15)
+            ));
+            button.setAlignmentX(Component.CENTER_ALIGNMENT);
+            button.setCursor(new java.awt.Cursor(java.awt.Cursor.HAND_CURSOR));
             final int actionIndex = i;
             button.addActionListener(e -> actions[actionIndex].run());
             nav.add(button);
@@ -197,7 +261,11 @@ public class SwingApp {
         if (value == null || value.isBlank()) {
             return 0;
         }
-        return Integer.parseInt(value.trim());
+        try {
+            return Integer.parseInt(value.trim());
+        } catch (NumberFormatException e) {
+            return 0;
+        }
     }
 
     private Optional<User> findUserById(String userId) {
@@ -232,32 +300,104 @@ public class SwingApp {
         return count;
     }
 
+    // 技能相关性映射，用于更智能的技能匹配
+    private static final java.util.Map<String, java.util.Set<String>> SKILL_SYNONYMS = new java.util.HashMap<>();
+    static {
+        // 编程语言相关
+        SKILL_SYNONYMS.put("java", java.util.Set.of("jvm", "spring", "maven", "gradle"));
+        SKILL_SYNONYMS.put("python", java.util.Set.of("django", "flask", "pandas", "numpy"));
+        SKILL_SYNONYMS.put("c++", java.util.Set.of("cpp", "cplusplus"));
+        SKILL_SYNONYMS.put("javascript", java.util.Set.of("js", "node", "react", "angular", "vue"));
+        // 数据库相关
+        SKILL_SYNONYMS.put("sql", java.util.Set.of("mysql", "postgres", "oracle", "sqlserver"));
+        SKILL_SYNONYMS.put("nosql", java.util.Set.of("mongodb", "redis", "cassandra"));
+        // 其他技能
+        SKILL_SYNONYMS.put("linux", java.util.Set.of("unix", "bash", "shell"));
+        SKILL_SYNONYMS.put("git", java.util.Set.of("github", "gitlab"));
+        SKILL_SYNONYMS.put("algorithm", java.util.Set.of("data structures", "leetcode"));
+    }
+
+    // 增强的技能匹配算法，考虑技能相关性和权重
     private int calculateMatchScore(String taSkillsText, String requiredSkillsText) {
         Set<String> taSkills = normalizeSkills(taSkillsText);
         Set<String> requiredSkills = normalizeSkills(requiredSkillsText);
         if (requiredSkills.isEmpty()) {
             return 100;
         }
-        int matches = 0;
+        
+        int totalScore = 0;
+        int maxPossibleScore = requiredSkills.size() * 100;
+        
         for (String required : requiredSkills) {
+            // 完全匹配得100分
             if (taSkills.contains(required)) {
-                matches++;
+                totalScore += 100;
+            } else {
+                // 部分匹配或相关技能得50分
+                for (String taSkill : taSkills) {
+                    if (isSkillRelated(taSkill, required)) {
+                        totalScore += 50;
+                        break;
+                    }
+                }
             }
         }
-        return (int) Math.round((matches * 100.0) / requiredSkills.size());
+        
+        return Math.min(100, (int) Math.round((totalScore * 100.0) / maxPossibleScore));
     }
 
+    // 检查技能是否相关
+    private boolean isSkillRelated(String skill1, String skill2) {
+        // 检查直接同义词
+        if (SKILL_SYNONYMS.containsKey(skill1) && SKILL_SYNONYMS.get(skill1).contains(skill2)) {
+            return true;
+        }
+        if (SKILL_SYNONYMS.containsKey(skill2) && SKILL_SYNONYMS.get(skill2).contains(skill1)) {
+            return true;
+        }
+        // 检查技能名称的部分匹配
+        return skill1.contains(skill2) || skill2.contains(skill1);
+    }
+
+    // 增强的技能缺失识别，提供更具体的建议
     private String listMissingSkills(String taSkillsText, String requiredSkillsText) {
         Set<String> taSkills = normalizeSkills(taSkillsText);
+        Set<String> requiredSkills = normalizeSkills(requiredSkillsText);
         List<String> missing = new ArrayList<>();
-        for (String required : normalizeSkills(requiredSkillsText)) {
-            if (!taSkills.contains(required)) {
-                missing.add(required);
+        List<String> related = new ArrayList<>();
+        
+        for (String required : requiredSkills) {
+            boolean found = taSkills.contains(required);
+            if (!found) {
+                // 检查是否有相关技能
+                boolean hasRelated = false;
+                for (String taSkill : taSkills) {
+                    if (isSkillRelated(taSkill, required)) {
+                        related.add(required + " (related: " + taSkill + ")");
+                        hasRelated = true;
+                        break;
+                    }
+                }
+                if (!hasRelated) {
+                    missing.add(required);
+                }
             }
         }
-        return missing.isEmpty() ? "None" : String.join(", ", missing);
+        
+        StringBuilder result = new StringBuilder();
+        if (!missing.isEmpty()) {
+            result.append("Missing: " + String.join(", ", missing));
+        }
+        if (!related.isEmpty()) {
+            if (result.length() > 0) {
+                result.append("; ");
+            }
+            result.append("Related: " + String.join(", ", related));
+        }
+        return result.length() > 0 ? result.toString() : "None";
     }
 
+    // 标准化技能名称
     private Set<String> normalizeSkills(String rawSkills) {
         Set<String> skills = new HashSet<>();
         if (rawSkills == null || rawSkills.isBlank()) {
@@ -271,6 +411,27 @@ public class SwingApp {
             }
         }
         return skills;
+    }
+
+    // 工作量平衡建议
+    private String getWorkloadBalanceSuggestion(String taUserId) {
+        int currentHours = acceptedHoursForTa(taUserId);
+        User ta = findUserById(taUserId).orElse(null);
+        if (ta == null) {
+            return "User not found";
+        }
+        int availableHours = ta.getAvailableHours();
+        int remainingHours = availableHours - currentHours;
+        
+        if (remainingHours < 0) {
+            return "Warning: You are overloaded by " + Math.abs(remainingHours) + " hours per week. Consider reducing your workload.";
+        } else if (remainingHours == 0) {
+            return "You are fully allocated. No additional hours available.";
+        } else if (remainingHours < 5) {
+            return "You have " + remainingHours + " hours remaining. Consider part-time opportunities.";
+        } else {
+            return "You have " + remainingHours + " hours available. You can take on additional responsibilities.";
+        }
     }
 
     private String safeText(String value) {
@@ -313,52 +474,60 @@ public class SwingApp {
             JPanel form = new JPanel(new GridLayout(0, 2, 15, 14));
             form.setPreferredSize(new Dimension(450, 250));
             form.setBorder(BorderFactory.createCompoundBorder(
-                    BorderFactory.createLineBorder(new java.awt.Color(200, 200, 200), 1, true),
+                    BorderFactory.createLineBorder(BORDER_COLOR, 1, true),
                     BorderFactory.createEmptyBorder(30, 30, 30, 30)
             ));
-            form.setBackground(java.awt.Color.WHITE);
+            form.setBackground(CARD_BACKGROUND);
             form.setOpaque(true);
+            addShadow(form);
 
             JLabel roleLabel = new JLabel("Role:");
-            roleLabel.setFont(new java.awt.Font("Segoe UI", java.awt.Font.BOLD, 14));
+            roleLabel.setFont(new Font("Segoe UI", Font.BOLD, 14));
+            roleLabel.setForeground(TEXT_PRIMARY);
             form.add(roleLabel);
             roleCombo = new JComboBox<>(new Role[] {Role.TA, Role.MO, Role.ADMIN});
-            roleCombo.setFont(new java.awt.Font("Segoe UI", java.awt.Font.PLAIN, 14));
+            roleCombo.setFont(new Font("Segoe UI", Font.PLAIN, 14));
             form.add(roleCombo);
 
             JLabel emailLabel = new JLabel("Email:");
-            emailLabel.setFont(new java.awt.Font("Segoe UI", java.awt.Font.BOLD, 14));
+            emailLabel.setFont(new Font("Segoe UI", Font.BOLD, 14));
+            emailLabel.setForeground(TEXT_PRIMARY);
             form.add(emailLabel);
             emailField = new JTextField();
-            emailField.setFont(new java.awt.Font("Segoe UI", java.awt.Font.PLAIN, 14));
+            emailField.setFont(new Font("Segoe UI", Font.PLAIN, 14));
             form.add(emailField);
 
             JLabel pwdLabel = new JLabel("Password:");
-            pwdLabel.setFont(new java.awt.Font("Segoe UI", java.awt.Font.BOLD, 14));
+            pwdLabel.setFont(new Font("Segoe UI", Font.BOLD, 14));
+            pwdLabel.setForeground(TEXT_PRIMARY);
             form.add(pwdLabel);
             passwordField = new JPasswordField();
-            passwordField.setFont(new java.awt.Font("Segoe UI", java.awt.Font.PLAIN, 14));
+            passwordField.setFont(new Font("Segoe UI", Font.PLAIN, 14));
             form.add(passwordField);
 
             loginButton = new JButton("Login");
-            loginButton.setFont(new java.awt.Font("Segoe UI", java.awt.Font.BOLD, 14));
-            loginButton.setBackground(new java.awt.Color(0, 123, 255));
-            loginButton.setForeground(java.awt.Color.WHITE);
+            loginButton.setFont(new Font("Segoe UI", Font.BOLD, 14));
+            loginButton.setBackground(SECONDARY_COLOR);
+            loginButton.setForeground(Color.WHITE);
             loginButton.setFocusPainted(false);
+            loginButton.setBorder(BorderFactory.createEmptyBorder(10, 15, 10, 15));
+            loginButton.setCursor(new java.awt.Cursor(java.awt.Cursor.HAND_CURSOR));
             loginButton.addActionListener(e -> login());
             form.add(loginButton);
 
             registerButton = new JButton("Register as TA");
-            registerButton.setFont(new java.awt.Font("Segoe UI", java.awt.Font.BOLD, 14));
-            registerButton.setBackground(new java.awt.Color(108, 117, 125));
-            registerButton.setForeground(java.awt.Color.WHITE);
+            registerButton.setFont(new Font("Segoe UI", Font.BOLD, 14));
+            registerButton.setBackground(TEXT_SECONDARY);
+            registerButton.setForeground(Color.WHITE);
             registerButton.setFocusPainted(false);
+            registerButton.setBorder(BorderFactory.createEmptyBorder(10, 15, 10, 15));
+            registerButton.setCursor(new java.awt.Cursor(java.awt.Cursor.HAND_CURSOR));
             registerButton.addActionListener(e -> registerTa());
             form.add(registerButton);
 
             statusLabel = new JLabel(" ");
-            statusLabel.setFont(new java.awt.Font("Segoe UI", java.awt.Font.PLAIN, 12));
-            statusLabel.setForeground(new java.awt.Color(100, 100, 100));
+            statusLabel.setFont(new Font("Segoe UI", Font.PLAIN, 12));
+            statusLabel.setForeground(TEXT_SECONDARY);
 
             JPanel centerContainer = new JPanel(new BorderLayout());
             centerContainer.setOpaque(false);
@@ -366,8 +535,12 @@ public class SwingApp {
             centerContainer.add(statusLabel, BorderLayout.SOUTH);
             centerWrapper.add(centerContainer);
 
-            add(buildTopBar("BUPT International School TA Recruitment System", null), BorderLayout.NORTH);
-            add(centerWrapper, BorderLayout.CENTER);
+            // 添加渐变背景
+            GradientPanel backgroundPanel = new GradientPanel(LIGHT_BACKGROUND, CARD_BACKGROUND);
+            backgroundPanel.setLayout(new BorderLayout());
+            backgroundPanel.add(buildTopBar("BUPT International School TA Recruitment System", null), BorderLayout.NORTH);
+            backgroundPanel.add(centerWrapper, BorderLayout.CENTER);
+            add(backgroundPanel, BorderLayout.CENTER);
             frameSetDefaultButton();
         }
 
@@ -390,21 +563,28 @@ public class SwingApp {
         private void login() {
             try {
                 statusLabel.setText("Logging in...");
+                loginButton.setEnabled(false);
+                registerButton.setEnabled(false);
+                
                 String email = emailField.getText().trim();
                 String password = new String(passwordField.getPassword());
+                
                 if (email.isBlank() || password.isBlank()) {
-                    JOptionPane.showMessageDialog(frame, "Please enter both email and password.");
+                    JOptionPane.showMessageDialog(frame, "Please enter both email and password.", "Input Error", JOptionPane.WARNING_MESSAGE);
                     statusLabel.setText("Please fill in email and password.");
                     return;
                 }
+                
                 Optional<User> loginUser = authService.login(email, password);
                 if (loginUser.isEmpty()) {
-                    JOptionPane.showMessageDialog(frame, "Login failed. Check credentials or account status.");
+                    JOptionPane.showMessageDialog(frame, "Login failed. Check credentials or account status.", "Login Failed", JOptionPane.ERROR_MESSAGE);
                     statusLabel.setText("Login failed.");
                     return;
                 }
+                
                 roleCombo.setSelectedItem(loginUser.get().getRole());
                 statusLabel.setText("Login success.");
+                JOptionPane.showMessageDialog(frame, "Welcome back, " + loginUser.get().getName() + "!", "Login Success", JOptionPane.INFORMATION_MESSAGE);
                 onLoginSuccess(loginUser.get());
             } catch (RuntimeException ex) {
                 ex.printStackTrace();
@@ -412,8 +592,11 @@ public class SwingApp {
                 if (ex.getMessage() != null && !ex.getMessage().isBlank()) {
                     detail += ": " + ex.getMessage();
                 }
-                JOptionPane.showMessageDialog(frame, "Login error: " + detail);
+                JOptionPane.showMessageDialog(frame, "Login error: " + detail, "Error", JOptionPane.ERROR_MESSAGE);
                 statusLabel.setText("Login error.");
+            } finally {
+                loginButton.setEnabled(true);
+                registerButton.setEnabled(true);
             }
         }
 
@@ -434,13 +617,44 @@ public class SwingApp {
                 return;
             }
             try {
-                User ta = authService.registerTa(
-                        nameField.getText().trim(),
-                        emailField.getText().trim(),
-                        new String(passwordField.getPassword()));
-                JOptionPane.showMessageDialog(frame, "TA registered: " + ta.getId());
+                statusLabel.setText("Registering...");
+                loginButton.setEnabled(false);
+                registerButton.setEnabled(false);
+                
+                String name = nameField.getText().trim();
+                String email = emailField.getText().trim();
+                String password = new String(passwordField.getPassword());
+                
+                if (name.isBlank() || email.isBlank() || password.isBlank()) {
+                    JOptionPane.showMessageDialog(frame, "Please fill in all required fields.", "Input Error", JOptionPane.WARNING_MESSAGE);
+                    statusLabel.setText("Registration failed: missing fields.");
+                    return;
+                }
+                
+                if (password.length() < 8) {
+                    JOptionPane.showMessageDialog(frame, "Password must be at least 8 characters long.", "Input Error", JOptionPane.WARNING_MESSAGE);
+                    statusLabel.setText("Registration failed: password too short.");
+                    return;
+                }
+                
+                User ta = authService.registerTa(name, email, password);
+                JOptionPane.showMessageDialog(frame, "TA registered: " + ta.getId(), "Success", JOptionPane.INFORMATION_MESSAGE);
+                statusLabel.setText("Registration successful.");
             } catch (IllegalArgumentException ex) {
-                JOptionPane.showMessageDialog(frame, ex.getMessage());
+                JOptionPane.showMessageDialog(frame, ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+                statusLabel.setText("Registration error: " + ex.getMessage());
+            } catch (RuntimeException ex) {
+                ex.printStackTrace();
+                String detail = ex.getClass().getSimpleName();
+                if (ex.getMessage() != null && !ex.getMessage().isBlank()) {
+                    detail += ": " + ex.getMessage();
+                }
+                JOptionPane.showMessageDialog(frame, "Registration error: " + detail, "Error", JOptionPane.ERROR_MESSAGE);
+                statusLabel.setText("Registration error.");
+            } finally {
+                statusLabel.setText("Registration completed.");
+                loginButton.setEnabled(true);
+                registerButton.setEnabled(true);
             }
         }
     }
@@ -482,6 +696,7 @@ public class SwingApp {
 
             contentLayout = new CardLayout();
             contentPanel = new JPanel(contentLayout);
+            contentPanel.setBackground(LIGHT_BACKGROUND);
 
             String[] navLabels = {"Dashboard", "Job Board", "My Profile"};
             Runnable[] navActions = {
@@ -510,16 +725,36 @@ public class SwingApp {
             applicationTable = new JTable(applicationModel);
             JPanel dashboardPanel = new JPanel(new BorderLayout(10, 10));
             dashboardPanel.setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 12));
-            dashboardPanel.add(new JLabel("My Application Status"), BorderLayout.NORTH);
-            dashboardPanel.add(new JScrollPane(applicationTable), BorderLayout.CENTER);
-            JPanel dashboardActions = new JPanel(new FlowLayout(FlowLayout.LEFT));
+            JLabel dashboardTitle = new JLabel("My Application Status");
+            dashboardTitle.setFont(new Font("Segoe UI", Font.BOLD, 16));
+            dashboardTitle.setForeground(TEXT_PRIMARY);
+            dashboardPanel.add(dashboardTitle, BorderLayout.NORTH);
+            JScrollPane scrollPane = new JScrollPane(applicationTable);
+            scrollPane.setBorder(BorderFactory.createLineBorder(BORDER_COLOR, 1));
+            dashboardPanel.add(scrollPane, BorderLayout.CENTER);
+            JPanel dashboardActions = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 10));
             JButton withdrawButton = new JButton("Withdraw Selected");
+            withdrawButton.setFont(new Font("Segoe UI", Font.PLAIN, 14));
+            withdrawButton.setBackground(ACCENT_COLOR);
+            withdrawButton.setForeground(Color.WHITE);
+            withdrawButton.setFocusPainted(false);
+            withdrawButton.setBorder(BorderFactory.createEmptyBorder(8, 16, 8, 16));
+            withdrawButton.setCursor(new java.awt.Cursor(java.awt.Cursor.HAND_CURSOR));
             withdrawButton.addActionListener(e -> withdrawSelected());
+            
             JButton refreshAppsButton = new JButton("Refresh");
+            refreshAppsButton.setFont(new Font("Segoe UI", Font.PLAIN, 14));
+            refreshAppsButton.setBackground(SECONDARY_COLOR);
+            refreshAppsButton.setForeground(Color.WHITE);
+            refreshAppsButton.setFocusPainted(false);
+            refreshAppsButton.setBorder(BorderFactory.createEmptyBorder(8, 16, 8, 16));
+            refreshAppsButton.setCursor(new java.awt.Cursor(java.awt.Cursor.HAND_CURSOR));
             refreshAppsButton.addActionListener(e -> refreshApplications());
+            
             dashboardActions.add(withdrawButton);
             dashboardActions.add(refreshAppsButton);
             dashboardPanel.add(dashboardActions, BorderLayout.SOUTH);
+            addShadow(dashboardPanel);
 
             jobModel = new DefaultTableModel(
                     new Object[] {"Job ID", "Module", "MO", "Hours/Week", "Deadline", "Status"}, 0) {
@@ -531,30 +766,57 @@ public class SwingApp {
             jobTable = new JTable(jobModel);
             JPanel jobBoardPanel = new JPanel(new BorderLayout(10, 10));
             jobBoardPanel.setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 12));
+            
+            // 搜索和筛选面板
             JPanel searchPanel = new JPanel(new GridLayout(0, 4, 10, 8));
+            searchPanel.setBorder(BorderFactory.createEmptyBorder(10, 0, 10, 0));
+            
             JPanel keywordPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
             keywordPanel.add(new JLabel("Search"));
             searchField = new JTextField(24);
+            searchField.setFont(new Font("Segoe UI", Font.PLAIN, 14));
             keywordPanel.add(searchField);
+            
             JPanel skillsPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
             skillsPanel.add(new JLabel("Skill"));
             skillsFilterField = new JTextField(14);
+            skillsFilterField.setFont(new Font("Segoe UI", Font.PLAIN, 14));
             skillsPanel.add(skillsFilterField);
+            
             JPanel hoursPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
             hoursPanel.add(new JLabel("Max Hours"));
             hoursFilterField = new JTextField(8);
+            hoursFilterField.setFont(new Font("Segoe UI", Font.PLAIN, 14));
             hoursPanel.add(hoursFilterField);
+            
             JPanel moPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
             moPanel.add(new JLabel("MO"));
             moFilterField = new JTextField(14);
+            moFilterField.setFont(new Font("Segoe UI", Font.PLAIN, 14));
             moPanel.add(moFilterField);
+            
             JPanel statusPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
             statusPanel.add(new JLabel("Status"));
             statusFilterBox = new JComboBox<>(new String[] {"OPEN", "ALL", "CLOSED", "FILLED"});
+            statusFilterBox.setFont(new Font("Segoe UI", Font.PLAIN, 14));
             statusPanel.add(statusFilterBox);
+            
             JButton searchButton = new JButton("Apply Filter");
+            searchButton.setFont(new Font("Segoe UI", Font.PLAIN, 14));
+            searchButton.setBackground(SECONDARY_COLOR);
+            searchButton.setForeground(Color.WHITE);
+            searchButton.setFocusPainted(false);
+            searchButton.setBorder(BorderFactory.createEmptyBorder(6, 12, 6, 12));
+            searchButton.setCursor(new java.awt.Cursor(java.awt.Cursor.HAND_CURSOR));
             searchButton.addActionListener(e -> refreshJobs());
+            
             JButton clearButton = new JButton("Clear");
+            clearButton.setFont(new Font("Segoe UI", Font.PLAIN, 14));
+            clearButton.setBackground(TEXT_SECONDARY);
+            clearButton.setForeground(Color.WHITE);
+            clearButton.setFocusPainted(false);
+            clearButton.setBorder(BorderFactory.createEmptyBorder(6, 12, 6, 12));
+            clearButton.setCursor(new java.awt.Cursor(java.awt.Cursor.HAND_CURSOR));
             clearButton.addActionListener(e -> {
                 searchField.setText("");
                 skillsFilterField.setText("");
@@ -563,12 +825,21 @@ public class SwingApp {
                 statusFilterBox.setSelectedItem("OPEN");
                 refreshJobs();
             });
+            
             JButton refreshJobsButton = new JButton("Refresh");
+            refreshJobsButton.setFont(new Font("Segoe UI", Font.PLAIN, 14));
+            refreshJobsButton.setBackground(TEXT_SECONDARY);
+            refreshJobsButton.setForeground(Color.WHITE);
+            refreshJobsButton.setFocusPainted(false);
+            refreshJobsButton.setBorder(BorderFactory.createEmptyBorder(6, 12, 6, 12));
+            refreshJobsButton.setCursor(new java.awt.Cursor(java.awt.Cursor.HAND_CURSOR));
             refreshJobsButton.addActionListener(e -> refreshJobs());
+            
             JPanel filterActionsPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
             filterActionsPanel.add(searchButton);
             filterActionsPanel.add(clearButton);
             filterActionsPanel.add(refreshJobsButton);
+            
             searchPanel.add(keywordPanel);
             searchPanel.add(skillsPanel);
             searchPanel.add(hoursPanel);
@@ -576,25 +847,60 @@ public class SwingApp {
             searchPanel.add(statusPanel);
             searchPanel.add(filterActionsPanel);
             jobBoardPanel.add(searchPanel, BorderLayout.NORTH);
-            jobBoardPanel.add(new JScrollPane(jobTable), BorderLayout.CENTER);
-            JPanel jobActions = new JPanel(new FlowLayout(FlowLayout.LEFT));
+            
+            JScrollPane jobScrollPane = new JScrollPane(jobTable);
+            jobScrollPane.setBorder(BorderFactory.createLineBorder(BORDER_COLOR, 1));
+            jobBoardPanel.add(jobScrollPane, BorderLayout.CENTER);
+            
+            JPanel jobActions = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 10));
             JButton detailButton = new JButton("View Details");
+            detailButton.setFont(new Font("Segoe UI", Font.PLAIN, 14));
+            detailButton.setBackground(SECONDARY_COLOR);
+            detailButton.setForeground(Color.WHITE);
+            detailButton.setFocusPainted(false);
+            detailButton.setBorder(BorderFactory.createEmptyBorder(8, 16, 8, 16));
+            detailButton.setCursor(new java.awt.Cursor(java.awt.Cursor.HAND_CURSOR));
             detailButton.addActionListener(e -> showJobDetails());
+            
             JButton applyButton = new JButton("Apply Now");
+            applyButton.setFont(new Font("Segoe UI", Font.PLAIN, 14));
+            applyButton.setBackground(SUCCESS_COLOR);
+            applyButton.setForeground(Color.WHITE);
+            applyButton.setFocusPainted(false);
+            applyButton.setBorder(BorderFactory.createEmptyBorder(8, 16, 8, 16));
+            applyButton.setCursor(new java.awt.Cursor(java.awt.Cursor.HAND_CURSOR));
             applyButton.addActionListener(e -> applySelectedJob());
+            
             jobActions.add(detailButton);
             jobActions.add(applyButton);
             jobBoardPanel.add(jobActions, BorderLayout.SOUTH);
+            addShadow(jobBoardPanel);
 
             JPanel profilePanel = new JPanel(new BorderLayout());
             profilePanel.setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 12));
+            
+            JLabel profileTitle = new JLabel("My Profile");
+            profileTitle.setFont(new Font("Segoe UI", Font.BOLD, 16));
+            profileTitle.setForeground(TEXT_PRIMARY);
+            profilePanel.add(profileTitle, BorderLayout.NORTH);
+            
             JPanel form = new JPanel(new GridLayout(0, 2, 10, 10));
+            form.setBorder(BorderFactory.createEmptyBorder(10, 0, 0, 0));
+            
             profileNameField = new JTextField();
+            profileNameField.setFont(new Font("Segoe UI", Font.PLAIN, 14));
             profileYearField = new JTextField();
+            profileYearField.setFont(new Font("Segoe UI", Font.PLAIN, 14));
             profileProgrammeField = new JTextField();
+            profileProgrammeField.setFont(new Font("Segoe UI", Font.PLAIN, 14));
             profileSkillsArea = new JTextArea(4, 20);
+            profileSkillsArea.setFont(new Font("Segoe UI", Font.PLAIN, 14));
+            profileSkillsArea.setBorder(BorderFactory.createLineBorder(BORDER_COLOR, 1));
             profileHoursField = new JTextField();
+            profileHoursField.setFont(new Font("Segoe UI", Font.PLAIN, 14));
             cvLabel = new JLabel("No CV uploaded");
+            cvLabel.setFont(new Font("Segoe UI", Font.PLAIN, 14));
+            cvLabel.setForeground(TEXT_SECONDARY);
 
             form.add(new JLabel("Name"));
             form.add(profileNameField);
@@ -607,22 +913,45 @@ public class SwingApp {
             form.add(new JLabel("Available Hours/Week"));
             form.add(profileHoursField);
             form.add(new JLabel("Upload CV (.pdf/.txt)"));
-            JPanel cvPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+            
+            JPanel cvPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 5));
             JButton cvButton = new JButton("Choose File");
+            cvButton.setFont(new Font("Segoe UI", Font.PLAIN, 14));
+            cvButton.setBackground(SECONDARY_COLOR);
+            cvButton.setForeground(Color.WHITE);
+            cvButton.setFocusPainted(false);
+            cvButton.setBorder(BorderFactory.createEmptyBorder(6, 12, 6, 12));
+            cvButton.setCursor(new java.awt.Cursor(java.awt.Cursor.HAND_CURSOR));
             cvButton.addActionListener(e -> chooseCvFile());
+            
             JButton viewCvButton = new JButton("View CV");
+            viewCvButton.setFont(new Font("Segoe UI", Font.PLAIN, 14));
+            viewCvButton.setBackground(TEXT_SECONDARY);
+            viewCvButton.setForeground(Color.WHITE);
+            viewCvButton.setFocusPainted(false);
+            viewCvButton.setBorder(BorderFactory.createEmptyBorder(6, 12, 6, 12));
+            viewCvButton.setCursor(new java.awt.Cursor(java.awt.Cursor.HAND_CURSOR));
             viewCvButton.addActionListener(e -> viewMyCv());
+            
             cvPanel.add(cvButton);
             cvPanel.add(viewCvButton);
             cvPanel.add(cvLabel);
             form.add(cvPanel);
 
             profilePanel.add(form, BorderLayout.CENTER);
-            JPanel profileActions = new JPanel(new FlowLayout(FlowLayout.LEFT));
+            JPanel profileActions = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 10));
             JButton saveButton = new JButton("Save Profile");
+            saveButton.setFont(new Font("Segoe UI", Font.BOLD, 14));
+            saveButton.setBackground(SUCCESS_COLOR);
+            saveButton.setForeground(Color.WHITE);
+            saveButton.setFocusPainted(false);
+            saveButton.setBorder(BorderFactory.createEmptyBorder(10, 20, 10, 20));
+            saveButton.setCursor(new java.awt.Cursor(java.awt.Cursor.HAND_CURSOR));
             saveButton.addActionListener(e -> saveProfile());
             profileActions.add(saveButton);
             profilePanel.add(profileActions, BorderLayout.SOUTH);
+            
+            addShadow(profilePanel);
 
             contentPanel.add(dashboardPanel, TAB_DASHBOARD);
             contentPanel.add(jobBoardPanel, TAB_JOB_BOARD);
@@ -749,6 +1078,7 @@ public class SwingApp {
             }
             int score = calculateMatchScore(user.getSkills(), job.getRequiredSkills());
             String missingSkills = listMissingSkills(user.getSkills(), job.getRequiredSkills());
+            String workloadSuggestion = getWorkloadBalanceSuggestion(user.getId());
             String message = "Module: " + safeText(job.getModuleCode()) + " - " + safeText(job.getModuleName()) + "\n"
                     + "MO: " + moNameForJob(job) + "\n"
                     + "Required Skills: " + safeText(job.getRequiredSkills()) + "\n"
@@ -756,7 +1086,8 @@ public class SwingApp {
                     + "Deadline: " + safeText(job.getDeadline()) + "\n\n"
                     + "Description: " + safeText(job.getDescription()) + "\n\n"
                     + "Match Score: " + score + "%\n"
-                    + "Missing Skills: " + missingSkills;
+                    + "Missing Skills: " + missingSkills + "\n\n"
+                    + "Workload Balance: " + workloadSuggestion;
             JOptionPane.showMessageDialog(frame, message, "Job Details", JOptionPane.INFORMATION_MESSAGE);
         }
 
@@ -832,6 +1163,14 @@ public class SwingApp {
         }
 
         private String saveCvFile(File sourceFile, String userId) {
+            if (sourceFile == null || !sourceFile.exists()) {
+                JOptionPane.showMessageDialog(frame, "Selected file does not exist.");
+                return null;
+            }
+            if (userId == null || userId.isBlank()) {
+                JOptionPane.showMessageDialog(frame, "User ID is required.");
+                return null;
+            }
             try {
                 Path cvsDir;
                 if (dataDirectory != null) {
@@ -839,16 +1178,29 @@ public class SwingApp {
                 } else {
                     cvsDir = Path.of(System.getProperty("user.dir")).resolve("data").resolve("cvs");
                 }
+                // 确保目录存在
                 Files.createDirectories(cvsDir);
+                // 提取文件扩展名
                 String ext = sourceFile.getName().contains(".")
                         ? sourceFile.getName().substring(sourceFile.getName().lastIndexOf('.'))
                         : "";
+                // 生成唯一文件名
                 String destName = userId + "_" + System.currentTimeMillis() + ext;
                 Path destPath = cvsDir.resolve(destName);
+                // 复制文件
                 Files.copy(sourceFile.toPath(), destPath, StandardCopyOption.REPLACE_EXISTING);
                 return destPath.toAbsolutePath().toString();
             } catch (IOException ex) {
+                ex.printStackTrace();
                 JOptionPane.showMessageDialog(frame, "Failed to save CV file: " + ex.getMessage());
+                return null;
+            } catch (SecurityException ex) {
+                ex.printStackTrace();
+                JOptionPane.showMessageDialog(frame, "Permission denied: Cannot save CV file.");
+                return null;
+            } catch (Exception ex) {
+                ex.printStackTrace();
+                JOptionPane.showMessageDialog(frame, "Error saving CV file: " + ex.getMessage());
                 return null;
             }
         }

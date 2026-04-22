@@ -52,6 +52,13 @@ public class AuthService {
         return userRepository.findById(userId);
     }
 
+    private String requireText(String value, String fieldName) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException(fieldName + " is required.");
+        }
+        return value.trim();
+    }
+
     public User registerTa(String name, String email, String password) {
         String normalizedName = requireText(name, "Name");
         String normalizedEmail = requireText(email, "Email");

@@ -10,7 +10,6 @@ import com.group52.tarecruitment.service.ApplicationService;
 import com.group52.tarecruitment.service.AuthService;
 import com.group52.tarecruitment.service.JobService;
 import com.group52.tarecruitment.service.UserProfileService;
-import com.group52.tarecruitment.ui.ConsoleApp;
 import com.group52.tarecruitment.ui.SwingApp;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -31,12 +30,7 @@ public class Main {
         UserProfileService userProfileService = new UserProfileService(userRepository);
         AdminService adminService = new AdminService(userRepository, jobRepository, applicationRepository);
 
-        boolean consoleMode = args.length > 0 && "console".equalsIgnoreCase(args[0]);
-        if (consoleMode) {
-            ConsoleApp app = new ConsoleApp(authService, jobService, applicationService);
-            app.start();
-            return;
-        }
+        // 直接运行SwingApp，跳过ConsoleApp
         SwingApp app = new SwingApp(authService, jobService, applicationService, dataDirectory);
         app.start();
     }
