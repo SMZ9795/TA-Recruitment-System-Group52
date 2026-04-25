@@ -440,19 +440,26 @@ public class SwingApp {
         private static final String TAB_DASHBOARD = "dashboard";
         private static final String TAB_JOB_BOARD = "jobBoard";
         private static final String TAB_PROFILE = "profile";
+        private static final String TAB_NOTIFICATIONS = "notifications";
 
         private final JLabel titleLabel;
         private final CardLayout contentLayout;
         private final JPanel contentPanel;
         private final DefaultTableModel applicationModel;
         private final DefaultTableModel jobModel;
+        private final DefaultTableModel notificationModel;
         private final JTable applicationTable;
         private final JTable jobTable;
+        private final JTable notificationTable;
         private final JTextField searchField;
         private final JTextField skillsFilterField;
         private final JTextField hoursFilterField;
         private final JTextField moFilterField;
         private final JComboBox<String> statusFilterBox;
+        private final JComboBox<String> notificationFilterBox;
+        private final JLabel unreadCountLabel;
+        private final JLabel notificationEmptyLabel;
+        private final JLabel dashboardNotificationLabel;
         private final JTextField profileNameField;
         private final JTextField profileYearField;
         private final JTextField profileProgrammeField;
@@ -463,6 +470,7 @@ public class SwingApp {
         private User user;
         private String selectedCvPath = "";
         private String selectedCvName = "";
+        private final Set<String> readNotificationIds = new HashSet<>();
 
         private TaPanel() {
             setLayout(new BorderLayout());
@@ -474,15 +482,20 @@ public class SwingApp {
             contentLayout = new CardLayout();
             contentPanel = new JPanel(contentLayout);
 
-            String[] navLabels = {"Dashboard", "Job Board", "My Profile"};
+            String[] navLabels = {"Dashboard", "Job Board", "Notifications", "My Profile"};
             Runnable[] navActions = {
                 () -> {
                     refreshApplications();
+                    refreshNotifications();
                     contentLayout.show(contentPanel, TAB_DASHBOARD);
                 },
                 () -> {
                     refreshJobs();
                     contentLayout.show(contentPanel, TAB_JOB_BOARD);
+                },
+                () -> {
+                    refreshNotifications();
+                    contentLayout.show(contentPanel, TAB_NOTIFICATIONS);
                 },
                 () -> {
                     loadProfile();
@@ -501,7 +514,11 @@ public class SwingApp {
             applicationTable = new JTable(applicationModel);
             JPanel dashboardPanel = new JPanel(new BorderLayout(10, 10));
             dashboardPanel.setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 12));
-            dashboardPanel.add(new JLabel("My Application Status"), BorderLayout.NORTH);
+            JPanel dashboardHeader = new JPanel(new GridLayout(0, 1, 4, 4));
+            dashboardHeader.add(new JLabel("My Application Status"));
+            dashboardNotificationLabel = new JLabel("No notifications yet.");
+            dashboardHeader.add(dashboardNotificationLabel);
+            dashboardPanel.add(dashboardHeader, BorderLayout.NORTH);
             dashboardPanel.add(new JScrollPane(applicationTable), BorderLayout.CENTER);
             JPanel dashboardActions = new JPanel(new FlowLayout(FlowLayout.LEFT));
             JButton withdrawButton = new JButton("Withdraw Selected");
@@ -615,8 +632,46 @@ public class SwingApp {
             profileActions.add(saveButton);
             profilePanel.add(profileActions, BorderLayout.SOUTH);
 
+            notificationModel = new DefaultTableModel(
+                    new Object[] {"ID", "Read", "Type", "Message", "Date"}, 0) {
+                @Override
+                public boolean isCellEditable(int row, int column) {
+                    return false;
+                }
+            };
+            notificationTable = new JTable(notificationModel);
+            notificationTable.getColumnModel().getColumn(0).setMinWidth(0);
+            notificationTable.getColumnModel().getColumn(0).setMaxWidth(0);
+            notificationTable.getColumnModel().getColumn(0).setPreferredWidth(0);
+            JPanel notificationsPanel = new JPanel(new BorderLayout(10, 10));
+            notificationsPanel.setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 12));
+            JPanel notificationTopPanel = new JPanel(new BorderLayout(10, 10));
+            notificationTopPanel.add(new JLabel("Notification Center"), BorderLayout.WEST);
+            JPanel notificationControls = new JPanel(new FlowLayout(FlowLayout.RIGHT));
+            unreadCountLabel = new JLabel("Unread: 0");
+            notificationFilterBox = new JComboBox<>(new String[] {"All", "Unread", "Read"});
+            notificationFilterBox.addActionListener(e -> refreshNotifications());
+            JButton refreshNotificationsButton = new JButton("Refresh");
+            refreshNotificationsButton.addActionListener(e -> refreshNotifications());
+            JButton markReadButton = new JButton("Mark Read");
+            markReadButton.addActionListener(e -> setSelectedNotificationRead(true));
+            JButton markUnreadButton = new JButton("Mark Unread");
+            markUnreadButton.addActionListener(e -> setSelectedNotificationRead(false));
+            notificationControls.add(unreadCountLabel);
+            notificationControls.add(new JLabel("Show"));
+            notificationControls.add(notificationFilterBox);
+            notificationControls.add(refreshNotificationsButton);
+            notificationControls.add(markReadButton);
+            notificationControls.add(markUnreadButton);
+            notificationTopPanel.add(notificationControls, BorderLayout.EAST);
+            notificationEmptyLabel = new JLabel("No notifications to show for this filter.");
+            notificationsPanel.add(notificationTopPanel, BorderLayout.NORTH);
+            notificationsPanel.add(new JScrollPane(notificationTable), BorderLayout.CENTER);
+            notificationsPanel.add(notificationEmptyLabel, BorderLayout.SOUTH);
+
             contentPanel.add(dashboardPanel, TAB_DASHBOARD);
             contentPanel.add(jobBoardPanel, TAB_JOB_BOARD);
+            contentPanel.add(notificationsPanel, TAB_NOTIFICATIONS);
             contentPanel.add(profilePanel, TAB_PROFILE);
             add(contentPanel, BorderLayout.CENTER);
         }
@@ -625,6 +680,7 @@ public class SwingApp {
             this.user = user;
             refreshApplications();
             refreshJobs();
+            refreshNotifications();
             loadProfile();
             contentLayout.show(contentPanel, TAB_DASHBOARD);
         }
@@ -649,6 +705,113 @@ public class SwingApp {
                     safeText(application.getAppliedDate())
                 });
             }
+            refreshNotifications();
+        }
+
+        private void refreshNotifications() {
+            notificationModel.setRowCount(0);
+            List<TaNotificationEntry> notifications = buildTaNotifications();
+            int unreadCount = 0;
+            for (TaNotificationEntry notification : notifications) {
+                if (!readNotificationIds.contains(notification.id)) {
+                    unreadCount++;
+                }
+            }
+            unreadCountLabel.setText("Unread: " + unreadCount);
+            updateDashboardNotificationSummary(notifications, unreadCount);
+
+            String filter = String.valueOf(notificationFilterBox.getSelectedItem());
+            for (TaNotificationEntry notification : notifications) {
+                boolean isRead = readNotificationIds.contains(notification.id);
+                if ("Unread".equals(filter) && isRead) {
+                    continue;
+                }
+                if ("Read".equals(filter) && !isRead) {
+                    continue;
+                }
+                notificationModel.addRow(new Object[] {
+                    notification.id,
+                    isRead ? "Read" : "Unread",
+                    notification.type,
+                    notification.message,
+                    notification.date
+                });
+            }
+            notificationEmptyLabel.setVisible(notificationModel.getRowCount() == 0);
+        }
+
+        private List<TaNotificationEntry> buildTaNotifications() {
+            List<Application> applications = applicationService.getApplicationsByTaUserId(user.getId());
+            applications.sort(Comparator.comparing(
+                            Application::getAppliedDate,
+                            Comparator.nullsLast(String::compareTo))
+                    .reversed());
+            List<TaNotificationEntry> notifications = new ArrayList<>();
+            for (Application application : applications) {
+                Job job = findJobById(application.getJobId()).orElse(null);
+                String jobName = job == null
+                        ? "Job " + safeText(application.getJobId())
+                        : safeText(job.getModuleCode()) + " - " + safeText(job.getModuleName());
+                notifications.add(notificationForApplication(application, jobName));
+                if (job != null && job.getStatus() == JobStatus.CLOSED
+                        && application.getStatus() == ApplicationStatus.PENDING) {
+                    notifications.add(new TaNotificationEntry(
+                            "JOB_CLOSED:" + job.getId() + ":" + application.getId(),
+                            "Job Closed",
+                            jobName + " is now closed. This pending application may no longer move forward.",
+                            safeText(application.getAppliedDate())));
+                }
+            }
+            return notifications;
+        }
+
+        private TaNotificationEntry notificationForApplication(Application application, String jobName) {
+            ApplicationStatus status = application.getStatus();
+            String type = "Application Update";
+            String message = "Your application for " + jobName + " has been updated.";
+            if (status == ApplicationStatus.PENDING) {
+                type = "Application Submitted";
+                message = "Your application for " + jobName + " is waiting for MO review.";
+            } else if (status == ApplicationStatus.ACCEPTED) {
+                type = "Application Accepted";
+                message = "Your application for " + jobName + " has been accepted.";
+            } else if (status == ApplicationStatus.REJECTED) {
+                type = "Application Rejected";
+                message = "Your application for " + jobName + " has been rejected.";
+            } else if (status == ApplicationStatus.WITHDRAWN) {
+                type = "Application Withdrawn";
+                message = "Your application for " + jobName + " was withdrawn successfully.";
+            }
+            return new TaNotificationEntry(
+                    "APP:" + application.getId() + ":" + (status == null ? "UNKNOWN" : status.name()),
+                    type,
+                    message,
+                    safeText(application.getAppliedDate()));
+        }
+
+        private void updateDashboardNotificationSummary(List<TaNotificationEntry> notifications, int unreadCount) {
+            if (notifications.isEmpty()) {
+                dashboardNotificationLabel.setText("No notifications yet.");
+                return;
+            }
+            TaNotificationEntry latest = notifications.get(0);
+            dashboardNotificationLabel.setText(
+                    "Notifications: " + unreadCount + " unread. Latest update: " + latest.type + ".");
+        }
+
+        private void setSelectedNotificationRead(boolean read) {
+            int selected = notificationTable.getSelectedRow();
+            if (selected < 0) {
+                JOptionPane.showMessageDialog(frame, "Please select a notification first.");
+                return;
+            }
+            String notificationId = String.valueOf(notificationModel.getValueAt(selected, 0));
+            if (read) {
+                readNotificationIds.add(notificationId);
+            } else {
+                readNotificationIds.remove(notificationId);
+            }
+            refreshNotifications();
         }
 
         private void refreshJobs() {
@@ -1494,6 +1657,20 @@ public class SwingApp {
             this.positions = positions;
             this.deadline = deadline;
             this.status = status;
+        }
+    }
+
+    private static class TaNotificationEntry {
+        private final String id;
+        private final String type;
+        private final String message;
+        private final String date;
+
+        private TaNotificationEntry(String id, String type, String message, String date) {
+            this.id = id;
+            this.type = type;
+            this.message = message;
+            this.date = date;
         }
     }
 }
