@@ -7,6 +7,7 @@ import com.group52.tarecruitment.model.JobStatus;
 import com.group52.tarecruitment.model.Role;
 import com.group52.tarecruitment.model.User;
 import com.group52.tarecruitment.service.ApplicationService;
+import com.group52.tarecruitment.service.AiMatchingService;
 import com.group52.tarecruitment.service.AuthService;
 import com.group52.tarecruitment.service.JobService;
 import com.group52.tarecruitment.util.CvValidationUtil;
@@ -60,6 +61,7 @@ public class SwingApp {
     private final AuthService authService;
     private final JobService jobService;
     private final ApplicationService applicationService;
+    private final AiMatchingService aiMatchingService;
     private final Path dataDirectory;
 
     private JFrame frame;
@@ -78,6 +80,7 @@ public class SwingApp {
         this.authService = authService;
         this.jobService = jobService;
         this.applicationService = applicationService;
+        this.aiMatchingService = new AiMatchingService();
         this.dataDirectory = dataDirectory;
     }
 
@@ -226,47 +229,6 @@ public class SwingApp {
             }
         }
         return count;
-    }
-
-    private int calculateMatchScore(String taSkillsText, String requiredSkillsText) {
-        Set<String> taSkills = normalizeSkills(taSkillsText);
-        Set<String> requiredSkills = normalizeSkills(requiredSkillsText);
-        if (requiredSkills.isEmpty()) {
-            return 100;
-        }
-        int matches = 0;
-        for (String required : requiredSkills) {
-            if (taSkills.contains(required)) {
-                matches++;
-            }
-        }
-        return (int) Math.round((matches * 100.0) / requiredSkills.size());
-    }
-
-    private String listMissingSkills(String taSkillsText, String requiredSkillsText) {
-        Set<String> taSkills = normalizeSkills(taSkillsText);
-        List<String> missing = new ArrayList<>();
-        for (String required : normalizeSkills(requiredSkillsText)) {
-            if (!taSkills.contains(required)) {
-                missing.add(required);
-            }
-        }
-        return missing.isEmpty() ? "None" : String.join(", ", missing);
-    }
-
-    private Set<String> normalizeSkills(String rawSkills) {
-        Set<String> skills = new HashSet<>();
-        if (rawSkills == null || rawSkills.isBlank()) {
-            return skills;
-        }
-        String[] parts = rawSkills.split("[,;|/]");
-        for (String part : parts) {
-            String cleaned = part.trim().toLowerCase();
-            if (!cleaned.isEmpty()) {
-                skills.add(cleaned);
-            }
-        }
-        return skills;
     }
 
     private String safeText(String value) {
@@ -925,16 +887,24 @@ public class SwingApp {
                 JOptionPane.showMessageDialog(frame, "Job not found.");
                 return;
             }
-            int score = calculateMatchScore(user.getSkills(), job.getRequiredSkills());
-            String missingSkills = listMissingSkills(user.getSkills(), job.getRequiredSkills());
+            AiMatchingService.MatchResult matchResult =
+                    aiMatchingService.analyzeSkills(user.getSkills(), job.getRequiredSkills());
+            String matchedSkills = matchResult.getMatchedSkills().isEmpty()
+                    ? "None"
+                    : String.join(", ", matchResult.getMatchedSkills());
+            String missingSkills = matchResult.getMissingSkills().isEmpty()
+                    ? "None"
+                    : String.join(", ", matchResult.getMissingSkills());
             String message = "Module: " + safeText(job.getModuleCode()) + " - " + safeText(job.getModuleName()) + "\n"
                     + "MO: " + moNameForJob(job) + "\n"
                     + "Required Skills: " + safeText(job.getRequiredSkills()) + "\n"
                     + "Weekly Hours: " + job.getHoursPerWeek() + "\n"
                     + "Deadline: " + safeText(job.getDeadline()) + "\n\n"
                     + "Description: " + safeText(job.getDescription()) + "\n\n"
-                    + "Match Score: " + score + "%\n"
-                    + "Missing Skills: " + missingSkills;
+                    + "Match Score: " + matchResult.getScore() + "%\n"
+                    + "Matched Skills: " + matchedSkills + "\n"
+                    + "Missing Skills: " + missingSkills + "\n"
+                    + "Reason: " + matchResult.getReason();
             JOptionPane.showMessageDialog(frame, message, "Job Details", JOptionPane.INFORMATION_MESSAGE);
         }
 
@@ -1301,12 +1271,16 @@ public class SwingApp {
                 if (ta == null) {
                     continue;
                 }
-                int score = calculateMatchScore(ta.getSkills(), selectedJob.getRequiredSkills());
+                AiMatchingService.MatchResult matchResult =
+                        aiMatchingService.analyzeSkills(ta.getSkills(), selectedJob.getRequiredSkills());
+                String missingSkills = matchResult.getMissingSkills().isEmpty()
+                        ? "None"
+                        : String.join(", ", matchResult.getMissingSkills());
                 applicantsModel.addRow(new Object[] {
                     application.getId(),
                     ta.getName(),
                     ta.getYearOfStudy(),
-                    score + "%",
+                    matchResult.getScore() + "% (" + missingSkills + ")",
                     acceptedHoursForTa(ta.getId()) + "h/week",
                     application.getStatus().name()
                 });

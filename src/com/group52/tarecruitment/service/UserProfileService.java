@@ -14,6 +14,11 @@ public class UserProfileService {
 
     public User updateTaProfile(String userId, String programme, String yearOfStudy, String skills,
             String availableHours) {
+        return updateTaProfile(userId, programme, yearOfStudy, skills, availableHours, "");
+    }
+
+    public User updateTaProfile(String userId, String programme, String yearOfStudy, String skills,
+            String availableHours, String cvFilePath) {
         User user = userRepository.findById(ValidationUtil.requireText(userId, "User ID"))
                 .orElseThrow(() -> new IllegalArgumentException("User not found."));
 
@@ -25,6 +30,9 @@ public class UserProfileService {
         user.setYearOfStudy(ValidationUtil.parseIntInRange(yearOfStudy, "Year of study", 1, 12));
         user.setSkills(ValidationUtil.requireText(skills, "Skills"));
         user.setAvailableHours(ValidationUtil.parseIntInRange(availableHours, "Available hours", 1, 168));
+        if (cvFilePath != null && !cvFilePath.isBlank()) {
+            user.setCvFilePath(cvFilePath.trim());
+        }
         userRepository.save(user);
         return user;
     }
@@ -33,7 +41,8 @@ public class UserProfileService {
         return "Programme: " + formatValue(user.getProgramme()) + System.lineSeparator()
                 + "Year of study: " + formatNumber(user.getYearOfStudy()) + System.lineSeparator()
                 + "Skills: " + formatValue(user.getSkills()) + System.lineSeparator()
-                + "Available hours: " + formatNumber(user.getAvailableHours());
+                + "Available hours: " + formatNumber(user.getAvailableHours()) + System.lineSeparator()
+                + "CV path: " + formatValue(user.getCvFilePath());
     }
 
     private String formatValue(String value) {

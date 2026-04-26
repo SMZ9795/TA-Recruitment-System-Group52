@@ -311,9 +311,11 @@ public class ConsoleApp {
             String skills = scanner.nextLine();
             System.out.print("Available hours: ");
             String availableHours = scanner.nextLine();
+            System.out.print("CV file path (optional): ");
+            String cvFilePath = scanner.nextLine();
 
             User updatedUser = userProfileService.updateTaProfile(
-                    user.getId(), programme, yearOfStudy, skills, availableHours);
+                    user.getId(), programme, yearOfStudy, skills, availableHours, cvFilePath);
             syncUserProfile(user, updatedUser);
             System.out.println("Profile updated.");
         } catch (IllegalArgumentException | IllegalStateException e) {
@@ -416,6 +418,7 @@ public class ConsoleApp {
         currentUser.setYearOfStudy(updatedUser.getYearOfStudy());
         currentUser.setSkills(updatedUser.getSkills());
         currentUser.setAvailableHours(updatedUser.getAvailableHours());
+        currentUser.setCvFilePath(updatedUser.getCvFilePath());
     }
 
     // ==================== Admin Methods ====================
