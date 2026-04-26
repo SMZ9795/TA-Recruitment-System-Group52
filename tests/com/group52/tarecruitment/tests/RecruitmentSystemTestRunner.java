@@ -11,6 +11,7 @@ import com.group52.tarecruitment.repository.JobRepository;
 import com.group52.tarecruitment.repository.UserRepository;
 import com.group52.tarecruitment.service.AdminService;
 import com.group52.tarecruitment.service.ApplicationService;
+import com.group52.tarecruitment.service.AiMatchingService;
 import com.group52.tarecruitment.service.AuthService;
 import com.group52.tarecruitment.service.JobService;
 import com.group52.tarecruitment.util.CvValidationUtil;
@@ -43,6 +44,9 @@ public final class RecruitmentSystemTestRunner {
         runCase("Application authorization and state transition rules", this::testApplicationAuthorizationAndTransitions);
         runCase("Job deletion is blocked when applications exist", this::testDeleteJobGuard);
         runCase("End-to-end integration: TA profile data visible to MO and admin workload", this::testEndToEndIntegrationFlow);
+        runCase("AI matching returns 100 for complete matches", this::testAiMatchingCompleteMatch);
+        runCase("AI matching returns partial score with missing skills", this::testAiMatchingPartialMatch);
+        runCase("AI matching handles empty and invalid input", this::testAiMatchingEmptyAndInvalidInput);
 
         System.out.println();
         System.out.println("==== TEST SUMMARY ====");
@@ -389,6 +393,38 @@ public final class RecruitmentSystemTestRunner {
             assertEquals(1, summary.getAcceptedJobCount(), "Admin workload should include accepted position.");
             assertEquals(10, summary.getTotalAssignedHours(), "Assigned hours should match accepted job hours.");
         }
+    }
+
+    private void testAiMatchingCompleteMatch() {
+        AiMatchingService service = new AiMatchingService();
+        AiMatchingService.MatchResult result = service.analyzeSkills("Java, Python, SQL", "python;java");
+        assertEquals(100, result.getScore(), "Complete match should return 100.");
+        assertEquals(2, result.getMatchedSkills().size(), "Matched skills should include all required.");
+        assertEquals(0, result.getMissingSkills().size(), "Missing skills should be empty.");
+        assertTrue(
+                result.getReason().contains("Matched 2 of 2"),
+                "Reason should contain explainable matched-count details.");
+    }
+
+    private void testAiMatchingPartialMatch() {
+        AiMatchingService service = new AiMatchingService();
+        AiMatchingService.MatchResult result = service.analyzeSkills("Java", "Java, Python, SQL");
+        assertEquals(33, result.getScore(), "Partial match should return rounded percentage.");
+        assertEquals(List.of("java"), result.getMatchedSkills(), "Matched skills should be normalized and deterministic.");
+        assertEquals(List.of("python", "sql"), result.getMissingSkills(), "Missing skills should be returned.");
+    }
+
+    private void testAiMatchingEmptyAndInvalidInput() {
+        AiMatchingService service = new AiMatchingService();
+        AiMatchingService.MatchResult emptyResult = service.analyzeSkills(null, " ");
+        assertEquals(100, emptyResult.getScore(), "No required skills should default to 100.");
+        assertEquals(0, emptyResult.getMatchedSkills().size(), "No required skills means no matched list.");
+        assertEquals(0, emptyResult.getMissingSkills().size(), "No required skills means no missing list.");
+
+        assertThrowsContains(
+                "Match score must be between 0 and 100.",
+                () -> new AiMatchingService.MatchResult(120, List.of("java"), List.of(), "invalid"),
+                "Out-of-range score should be rejected.");
     }
 
     private void runCase(String caseName, ThrowingRunnable testCase) throws Exception {

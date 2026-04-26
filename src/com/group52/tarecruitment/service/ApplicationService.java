@@ -17,10 +17,17 @@ import java.util.Optional;
 public class ApplicationService {
     private final ApplicationRepository applicationRepository;
     private final JobRepository jobRepository;
+    private final WorkloadService workloadService;
 
     public ApplicationService(ApplicationRepository applicationRepository, JobRepository jobRepository) {
+        this(applicationRepository, jobRepository, null);
+    }
+
+    public ApplicationService(ApplicationRepository applicationRepository, JobRepository jobRepository,
+            WorkloadService workloadService) {
         this.applicationRepository = applicationRepository;
         this.jobRepository = jobRepository;
+        this.workloadService = workloadService;
     }
 
     public Application applyForJob(String jobId, String taUserId) {
@@ -94,7 +101,7 @@ public class ApplicationService {
         if (!application.getTaUserId().equalsIgnoreCase(normalizedOperatorUserId)) {
             throw new IllegalArgumentException("You can only withdraw your own application.");
         }
-        if (application.getStatus() != ApplicationStatus.PENDING) {
+        if (!isReviewableStatus(application.getStatus())) {
             throw new IllegalArgumentException("Only pending applications can be withdrawn.");
         }
 
@@ -129,7 +136,7 @@ public class ApplicationService {
         if (!job.getPostedByMoId().equalsIgnoreCase(normalizedMoId)) {
             throw new IllegalArgumentException("You can only review applications for your own jobs.");
         }
-        if (application.getStatus() != ApplicationStatus.PENDING) {
+        if (!isReviewableStatus(application.getStatus())) {
             throw new IllegalArgumentException("Only pending applications can be reviewed.");
         }
 
@@ -144,6 +151,13 @@ public class ApplicationService {
 
         application.setStatus(newStatus);
         applicationRepository.save(application);
+        if (workloadService != null) {
+            if (newStatus == ApplicationStatus.ACCEPTED) {
+                workloadService.assignJob(application.getTaUserId(), application.getJobId());
+            } else if (newStatus == ApplicationStatus.REJECTED) {
+                workloadService.unassignJob(application.getTaUserId(), application.getJobId());
+            }
+        }
 
         if (newStatus == ApplicationStatus.ACCEPTED) {
             long acceptedCount = applicationRepository.countByJobIdAndStatus(job.getId(), ApplicationStatus.ACCEPTED);
@@ -179,5 +193,11 @@ public class ApplicationService {
             }
             throw new IllegalArgumentException("This job has already reached its positions limit.");
         }
+    }
+
+    private boolean isReviewableStatus(ApplicationStatus status) {
+        return status == ApplicationStatus.APPLIED
+                || status == ApplicationStatus.REVIEWING
+                || status == ApplicationStatus.PENDING;
     }
 }
