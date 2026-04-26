@@ -459,7 +459,9 @@ public class SwingApp {
         private final JComboBox<String> notificationFilterBox;
         private final JLabel unreadCountLabel;
         private final JLabel notificationEmptyLabel;
+        private final JLabel applicationSummaryLabel;
         private final JLabel dashboardNotificationLabel;
+        private final JLabel dashboardActionLabel;
         private final JTextField profileNameField;
         private final JTextField profileYearField;
         private final JTextField profileProgrammeField;
@@ -516,8 +518,12 @@ public class SwingApp {
             dashboardPanel.setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 12));
             JPanel dashboardHeader = new JPanel(new GridLayout(0, 1, 4, 4));
             dashboardHeader.add(new JLabel("My Application Status"));
+            applicationSummaryLabel = new JLabel("Applications: 0 pending, 0 accepted, 0 rejected, 0 withdrawn.");
+            dashboardHeader.add(applicationSummaryLabel);
             dashboardNotificationLabel = new JLabel("No notifications yet.");
             dashboardHeader.add(dashboardNotificationLabel);
+            dashboardActionLabel = new JLabel(" ");
+            dashboardHeader.add(dashboardActionLabel);
             dashboardPanel.add(dashboardHeader, BorderLayout.NORTH);
             dashboardPanel.add(new JScrollPane(applicationTable), BorderLayout.CENTER);
             JPanel dashboardActions = new JPanel(new FlowLayout(FlowLayout.LEFT));
@@ -525,8 +531,14 @@ public class SwingApp {
             withdrawButton.addActionListener(e -> withdrawSelected());
             JButton refreshAppsButton = new JButton("Refresh");
             refreshAppsButton.addActionListener(e -> refreshApplications());
+            JButton viewNotificationsButton = new JButton("View Notifications");
+            viewNotificationsButton.addActionListener(e -> {
+                refreshNotifications();
+                contentLayout.show(contentPanel, TAB_NOTIFICATIONS);
+            });
             dashboardActions.add(withdrawButton);
             dashboardActions.add(refreshAppsButton);
+            dashboardActions.add(viewNotificationsButton);
             dashboardPanel.add(dashboardActions, BorderLayout.SOUTH);
 
             jobModel = new DefaultTableModel(
@@ -705,7 +717,31 @@ public class SwingApp {
                     safeText(application.getAppliedDate())
                 });
             }
+            updateApplicationStatusSummary(applications);
             refreshNotifications();
+        }
+
+        private void updateApplicationStatusSummary(List<Application> applications) {
+            int pending = 0;
+            int accepted = 0;
+            int rejected = 0;
+            int withdrawn = 0;
+            for (Application application : applications) {
+                if (application.getStatus() == ApplicationStatus.PENDING) {
+                    pending++;
+                } else if (application.getStatus() == ApplicationStatus.ACCEPTED) {
+                    accepted++;
+                } else if (application.getStatus() == ApplicationStatus.REJECTED) {
+                    rejected++;
+                } else if (application.getStatus() == ApplicationStatus.WITHDRAWN) {
+                    withdrawn++;
+                }
+            }
+            applicationSummaryLabel.setText("Applications: "
+                    + pending + " pending, "
+                    + accepted + " accepted, "
+                    + rejected + " rejected, "
+                    + withdrawn + " withdrawn.");
         }
 
         private void refreshNotifications() {
@@ -871,6 +907,7 @@ public class SwingApp {
                 applicationService.applyForJob(jobId, user.getId());
                 JOptionPane.showMessageDialog(frame, "Application submitted.");
                 refreshApplications();
+                showDashboardActionFeedback("Application submitted. Notification center has been refreshed.");
             } catch (IllegalArgumentException ex) {
                 JOptionPane.showMessageDialog(frame, ex.getMessage());
             }
@@ -923,6 +960,11 @@ public class SwingApp {
             }
             applicationService.updateStatus(applicationId, user.getId(), ApplicationStatus.WITHDRAWN);
             refreshApplications();
+            showDashboardActionFeedback("Application withdrawn. Notification center has been refreshed.");
+        }
+
+        private void showDashboardActionFeedback(String message) {
+            dashboardActionLabel.setText(message);
         }
 
         private void loadProfile() {
