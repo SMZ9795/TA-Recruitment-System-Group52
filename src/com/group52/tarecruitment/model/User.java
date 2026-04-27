@@ -12,18 +12,26 @@ public class User {
     private int availableHours;
     private boolean active;
     private String cvFilePath;
+    private String avatarFilePath;
 
     public User() {
         this.cvFilePath = "";
+        this.avatarFilePath = "";
     }
 
     public User(String id, Role role, String name, String email, String password, String programme,
             int yearOfStudy, String skills, int availableHours, boolean active) {
-        this(id, role, name, email, password, programme, yearOfStudy, skills, availableHours, active, "");
+        this(id, role, name, email, password, programme, yearOfStudy, skills, availableHours, active, "", "");
     }
 
     public User(String id, Role role, String name, String email, String password, String programme,
             int yearOfStudy, String skills, int availableHours, boolean active, String cvFilePath) {
+        this(id, role, name, email, password, programme, yearOfStudy, skills, availableHours, active, cvFilePath, "");
+    }
+
+    public User(String id, Role role, String name, String email, String password, String programme,
+            int yearOfStudy, String skills, int availableHours, boolean active, String cvFilePath,
+            String avatarFilePath) {
         this.id = id;
         this.role = role;
         this.name = name;
@@ -35,6 +43,7 @@ public class User {
         this.availableHours = availableHours;
         this.active = active;
         this.cvFilePath = cvFilePath == null ? "" : cvFilePath;
+        this.avatarFilePath = avatarFilePath == null ? "" : avatarFilePath;
     }
 
     public String getId() {
@@ -123,5 +132,13 @@ public class User {
 
     public void setCvFilePath(String cvFilePath) {
         this.cvFilePath = cvFilePath == null ? "" : cvFilePath;
+    }
+
+    public String getAvatarFilePath() {
+        return avatarFilePath;
+    }
+
+    public void setAvatarFilePath(String avatarFilePath) {
+        this.avatarFilePath = avatarFilePath == null ? "" : avatarFilePath;
     }
 }
