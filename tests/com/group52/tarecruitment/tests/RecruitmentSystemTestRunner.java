@@ -47,6 +47,8 @@ public final class RecruitmentSystemTestRunner {
         runCase("AI matching returns 100 for complete matches", this::testAiMatchingCompleteMatch);
         runCase("AI matching returns partial score with missing skills", this::testAiMatchingPartialMatch);
         runCase("AI matching handles empty and invalid input", this::testAiMatchingEmptyAndInvalidInput);
+        runCase("AdminService risk level respects TA availableHours, not hardcoded 20h", this::testAdminRiskLevelUsesAvailableHours);
+        runCase("AdminService getRecruitmentSnapshot counts filled jobs and overloaded TAs", this::testRecruitmentSnapshot);
 
         System.out.println();
         System.out.println("==== TEST SUMMARY ====");
@@ -436,6 +438,102 @@ public final class RecruitmentSystemTestRunner {
             failedCount++;
             System.out.println("[FAIL] " + caseName);
             System.out.println("       " + throwable.getClass().getSimpleName() + ": " + throwable.getMessage());
+        }
+    }
+
+    private void testAdminRiskLevelUsesAvailableHours() throws Exception {
+        Path tmp = Files.createTempDirectory("ta-test-risk");
+        try {
+            Path usersPath = tmp.resolve("users.csv");
+            Path jobsPath = tmp.resolve("jobs.csv");
+            Path appsPath = tmp.resolve("applications.csv");
+
+            // TA with availableHours=10, assigned 9h → AT_RISK (90%)
+            Files.writeString(usersPath,
+                "id,role,name,email,password,major,yearOfStudy,skills,availableHours,active,cvFilePath\n"
+                + "ta1,TA,Alice,alice@test.com,pass1234,CS,2,Java,10,true,\n");
+            Files.writeString(jobsPath,
+                "id,moduleCode,moduleName,description,requiredSkills,hoursPerWeek,positions,deadline,postedByMoId,status\n"
+                + "j1,CS101,Intro CS,Desc,Java,9,2,2099-12-31,mo1,OPEN\n");
+            Files.writeString(appsPath,
+                "id,jobId,taUserId,status,appliedDate\n"
+                + "app1,j1,ta1,ACCEPTED,2024-01-01\n");
+
+            UserRepository ur = new UserRepository(usersPath);
+            JobRepository jr = new JobRepository(jobsPath);
+            ApplicationRepository ar = new ApplicationRepository(appsPath);
+            AdminService svc = new AdminService(ur, jr, ar);
+
+            AdminService.TAWorkloadSummary s = svc.getTAWorkload("ta1");
+            assert s.getAvailableHours() == 10 : "availableHours should be 10";
+            assert s.getTotalAssignedHours() == 9 : "assigned should be 9, got " + s.getTotalAssignedHours();
+            assert s.getRemainingHours() == 1 : "remaining should be 1";
+            assert s.getRiskLevel() == AdminService.RiskLevel.AT_RISK
+                : "Expected AT_RISK but got " + s.getRiskLevel();
+            assert !s.isOverloaded() : "Should not be overloaded";
+
+            // TA with availableHours=10, assigned 15h → OVERLOADED
+            Files.writeString(jobsPath,
+                "id,moduleCode,moduleName,description,requiredSkills,hoursPerWeek,positions,deadline,postedByMoId,status\n"
+                + "j1,CS101,Intro CS,Desc,Java,15,2,2099-12-31,mo1,OPEN\n");
+            JobRepository jr2 = new JobRepository(jobsPath);
+            AdminService svc2 = new AdminService(ur, jr2, ar);
+            AdminService.TAWorkloadSummary s2 = svc2.getTAWorkload("ta1");
+            assert s2.getRiskLevel() == AdminService.RiskLevel.OVERLOADED
+                : "Expected OVERLOADED but got " + s2.getRiskLevel();
+            assert s2.isOverloaded() : "Should be overloaded when assigned > availableHours";
+        } finally {
+            try (var walk = Files.walk(tmp)) {
+                walk.sorted(Comparator.reverseOrder()).forEach(p -> {
+                    try { Files.deleteIfExists(p); } catch (Exception ignored) {}
+                });
+            }
+        }
+    }
+
+    private void testRecruitmentSnapshot() throws Exception {
+        Path tmp = Files.createTempDirectory("ta-test-snap");
+        try {
+            Path usersPath = tmp.resolve("users.csv");
+            Path jobsPath = tmp.resolve("jobs.csv");
+            Path appsPath = tmp.resolve("applications.csv");
+
+            // 2 TAs; job j1 has 1 position and 1 accepted → full; job j2 has 2 positions and 1 filled → not full
+            Files.writeString(usersPath,
+                "id,role,name,email,password,major,yearOfStudy,skills,availableHours,active,cvFilePath\n"
+                + "ta1,TA,Alice,alice@test.com,pass1234,CS,2,Java,8,true,\n"
+                + "ta2,TA,Bob,bob@test.com,pass1234,CS,3,Python,20,true,\n");
+            Files.writeString(jobsPath,
+                "id,moduleCode,moduleName,description,requiredSkills,hoursPerWeek,positions,deadline,postedByMoId,status\n"
+                + "j1,CS101,Intro,Desc,Java,10,1,2099-12-31,mo1,OPEN\n"
+                + "j2,CS102,Algo,Desc,Python,5,2,2099-12-31,mo1,OPEN\n");
+            // ta1: assigned 10h, available 8h → overloaded; ta2: assigned 5h, available 20h → OK
+            Files.writeString(appsPath,
+                "id,jobId,taUserId,status,appliedDate\n"
+                + "app1,j1,ta1,ACCEPTED,2024-01-01\n"
+                + "app2,j2,ta2,ACCEPTED,2024-01-02\n");
+
+            UserRepository ur = new UserRepository(usersPath);
+            JobRepository jr = new JobRepository(jobsPath);
+            ApplicationRepository ar = new ApplicationRepository(appsPath);
+            AdminService svc = new AdminService(ur, jr, ar);
+
+            AdminService.RecruitmentSnapshot snap = svc.getRecruitmentSnapshot();
+            assert snap.totalJobs == 2 : "totalJobs should be 2, got " + snap.totalJobs;
+            assert snap.filledJobs == 1 : "filledJobs should be 1, got " + snap.filledJobs;
+            assert snap.totalActiveTAs == 2 : "totalActiveTAs should be 2, got " + snap.totalActiveTAs;
+            assert snap.overloadedTAs == 1 : "overloadedTAs should be 1, got " + snap.overloadedTAs;
+            assert snap.atRiskTAs == 0 : "atRiskTAs should be 0, got " + snap.atRiskTAs;
+
+            List<AdminService.TAWorkloadSummary> overloaded = svc.getOverloadedTAs();
+            assert overloaded.size() == 1 : "getOverloadedTAs should return 1, got " + overloaded.size();
+            assert overloaded.get(0).getTaUserId().equals("ta1") : "Overloaded TA should be ta1";
+        } finally {
+            try (var walk = Files.walk(tmp)) {
+                walk.sorted(Comparator.reverseOrder()).forEach(p -> {
+                    try { Files.deleteIfExists(p); } catch (Exception ignored) {}
+                });
+            }
         }
     }
 

@@ -4,6 +4,7 @@ import com.group52.tarecruitment.repository.ApplicationRepository;
 import com.group52.tarecruitment.repository.JobRepository;
 import com.group52.tarecruitment.repository.UserRepository;
 import com.group52.tarecruitment.repository.WorkloadRepository;
+import com.group52.tarecruitment.service.AdminService;
 import com.group52.tarecruitment.service.ApplicationService;
 import com.group52.tarecruitment.service.AuthService;
 import com.group52.tarecruitment.service.JobService;
@@ -27,8 +28,9 @@ public class SwingMain {
         WorkloadService workloadService = new WorkloadService(workloadRepository);
         ApplicationService applicationService =
                 new ApplicationService(applicationRepository, jobRepository, workloadService);
+        AdminService adminService = new AdminService(userRepository, jobRepository, applicationRepository);
 
-        SwingApp app = new SwingApp(authService, jobService, applicationService, dataDirectory);
+        SwingApp app = new SwingApp(authService, jobService, applicationService, dataDirectory, adminService);
         app.start();
     }
 }
