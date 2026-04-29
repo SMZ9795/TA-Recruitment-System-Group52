@@ -6,6 +6,7 @@ import com.group52.tarecruitment.model.Job;
 import com.group52.tarecruitment.model.JobStatus;
 import com.group52.tarecruitment.model.Role;
 import com.group52.tarecruitment.model.User;
+import com.group52.tarecruitment.service.AdminService;
 import com.group52.tarecruitment.service.ApplicationService;
 import com.group52.tarecruitment.service.AiMatchingService;
 import com.group52.tarecruitment.service.AuthService;
@@ -117,6 +118,7 @@ public class SwingApp {
     private final JobService jobService;
     private final ApplicationService applicationService;
     private final AiMatchingService aiMatchingService;
+    private final AdminService adminService;
     private final Path dataDirectory;
 
     private JFrame frame;
@@ -131,15 +133,21 @@ public class SwingApp {
     private AdminPanel adminPanel;
 
     public SwingApp(AuthService authService, JobService jobService, ApplicationService applicationService) {
-        this(authService, jobService, applicationService, null);
+        this(authService, jobService, applicationService, null, null);
     }
 
     public SwingApp(AuthService authService, JobService jobService, ApplicationService applicationService, Path dataDirectory) {
+        this(authService, jobService, applicationService, dataDirectory, null);
+    }
+
+    public SwingApp(AuthService authService, JobService jobService, ApplicationService applicationService,
+                    Path dataDirectory, AdminService adminService) {
         this.authService = authService;
         this.jobService = jobService;
         this.applicationService = applicationService;
         this.aiMatchingService = new AiMatchingService();
         this.dataDirectory = dataDirectory;
+        this.adminService = adminService;
     }
 
     public void start() {
@@ -2656,12 +2664,22 @@ public class SwingApp {
         private final DefaultTableModel jobsModel;
         private final JTable jobsTable;
 
+        // Summary bar labels
+        private final JLabel summaryTotalJobs = new JLabel("--");
+        private final JLabel summaryFilledJobs = new JLabel("--");
+        private final JLabel summaryOverloaded = new JLabel("--");
+        private final JLabel summaryHighRisk = new JLabel("--");
+
         private AdminPanel() {
             setLayout(new BorderLayout());
             titleLabel = new JLabel("Admin Dashboard");
             titleLabel.setFont(new Font("Segoe UI", Font.BOLD, 18));
             JPanel topBar = buildTopBar("Admin Dashboard", SwingApp.this::showLoginPage);
-            add(topBar, BorderLayout.NORTH);
+            JPanel northArea = new JPanel(new BorderLayout());
+            northArea.setOpaque(false);
+            northArea.add(topBar, BorderLayout.NORTH);
+            northArea.add(buildSummaryBar(), BorderLayout.SOUTH);
+            add(northArea, BorderLayout.NORTH);
 
             contentLayout = new CardLayout();
             contentPanel = new JPanel(contentLayout);
@@ -2683,7 +2701,8 @@ public class SwingApp {
             };
             add(buildNavigationPanel(navLabels, navActions), BorderLayout.WEST);
 
-            workloadModel = new DefaultTableModel(new Object[] {"TA ID", "TA Name", "Accepted Hours/Week", "Alert"}, 0) {
+            workloadModel = new DefaultTableModel(
+                    new Object[] {"TA ID", "TA Name", "Available h/week", "Assigned h/week", "Remaining h", "Risk"}, 0) {
                 @Override
                 public boolean isCellEditable(int row, int column) {
                     return false;
@@ -2795,14 +2814,17 @@ public class SwingApp {
 
         private void refreshWorkload() {
             workloadModel.setRowCount(0);
-            for (User candidate : authService.getAllUsers()) {
-                if (candidate.getRole() != Role.TA) {
-                    continue;
-                }
-                int hours = acceptedHoursForTa(candidate.getId());
-                String alert = hours > 20 ? "Overloaded" : "";
-                workloadModel.addRow(new Object[] {candidate.getId(), candidate.getName(), hours, alert});
+            for (AdminService.TAWorkloadSummary s : adminService.getAllTAWorkloads()) {
+                workloadModel.addRow(new Object[] {
+                    s.getTaUserId(),
+                    s.getTaName(),
+                    s.getAvailableHours(),
+                    s.getTotalAssignedHours(),
+                    s.getRemainingHours(),
+                    s.getRiskLevel().label()
+                });
             }
+            refreshSummaryBar();
         }
 
         private void refreshAccounts() {
@@ -2829,6 +2851,43 @@ public class SwingApp {
                     job.getStatus().name()
                 });
             }
+        }
+
+        private JPanel buildSummaryBar() {
+            JPanel bar = new JPanel(new java.awt.GridLayout(1, 4, 12, 0));
+            bar.setBackground(new Color(245, 246, 250));
+            bar.setBorder(BorderFactory.createCompoundBorder(
+                    BorderFactory.createMatteBorder(0, 0, 1, 0, new Color(220, 223, 230)),
+                    BorderFactory.createEmptyBorder(10, 20, 10, 20)));
+            bar.add(buildSummaryCard("Total Jobs", summaryTotalJobs, new Color(99, 102, 241)));
+            bar.add(buildSummaryCard("Filled Jobs", summaryFilledJobs, new Color(16, 185, 129)));
+            bar.add(buildSummaryCard("Overloaded TAs", summaryOverloaded, new Color(239, 68, 68)));
+            bar.add(buildSummaryCard("High-Risk TAs", summaryHighRisk, new Color(245, 158, 11)));
+            return bar;
+        }
+
+        private JPanel buildSummaryCard(String title, JLabel valueLabel, Color accent) {
+            JPanel card = new JPanel(new BorderLayout(4, 4));
+            card.setBackground(Color.WHITE);
+            card.setBorder(BorderFactory.createCompoundBorder(
+                    BorderFactory.createLineBorder(new Color(220, 223, 230), 1, true),
+                    BorderFactory.createEmptyBorder(8, 14, 8, 14)));
+            JLabel titleLbl = new JLabel(title);
+            titleLbl.setFont(new Font("Segoe UI", Font.PLAIN, 11));
+            titleLbl.setForeground(new Color(107, 114, 128));
+            valueLabel.setFont(new Font("Segoe UI", Font.BOLD, 22));
+            valueLabel.setForeground(accent);
+            card.add(titleLbl, BorderLayout.NORTH);
+            card.add(valueLabel, BorderLayout.CENTER);
+            return card;
+        }
+
+        private void refreshSummaryBar() {
+            AdminService.RecruitmentSnapshot snap = adminService.getRecruitmentSnapshot();
+            summaryTotalJobs.setText(String.valueOf(snap.totalJobs));
+            summaryFilledJobs.setText(String.valueOf(snap.filledJobs));
+            summaryOverloaded.setText(String.valueOf(snap.overloadedTAs));
+            summaryHighRisk.setText(String.valueOf(snap.atRiskTAs));
         }
 
         private void createMoAccount() {
