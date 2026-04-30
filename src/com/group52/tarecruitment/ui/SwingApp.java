@@ -2710,6 +2710,7 @@ public class SwingApp {
             };
             workloadTable = new JTable(workloadModel);
             styleDataTable(workloadTable);
+            applyRiskLevelRenderer(workloadTable, 5);
             installTableRowHover(workloadTable);
             JPanel workloadPanel = new JPanel(new BorderLayout(0, 16));
             workloadPanel.setOpaque(false);
@@ -2724,9 +2725,17 @@ public class SwingApp {
             JButton refreshWorkloadButton = new JButton("Refresh");
             styleSecondaryButton(refreshWorkloadButton);
             refreshWorkloadButton.addActionListener(e -> refreshWorkload());
+            JButton showOverloadedButton = new JButton("Overloaded Only");
+            styleDangerButton(showOverloadedButton);
+            showOverloadedButton.addActionListener(e -> showOverloadedOnly());
+            JButton exportReportButton = new JButton("View Report");
+            styleSecondaryButton(exportReportButton);
+            exportReportButton.addActionListener(e -> showWorkloadReport());
             JPanel workloadActions = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
             workloadActions.setOpaque(false);
             workloadActions.add(refreshWorkloadButton);
+            workloadActions.add(showOverloadedButton);
+            workloadActions.add(exportReportButton);
             workloadPanel.add(workloadActions, BorderLayout.SOUTH);
 
             accountModel = new DefaultTableModel(
@@ -2770,7 +2779,7 @@ public class SwingApp {
             accountsPanel.add(accountActions, BorderLayout.SOUTH);
 
             jobsModel = new DefaultTableModel(
-                    new Object[] {"Module", "MO", "Positions", "Filled", "Status"}, 0) {
+                    new Object[] {"Module", "MO", "Filled/Total", "Status"}, 0) {
                 @Override
                 public boolean isCellEditable(int row, int column) {
                     return false;
@@ -2778,7 +2787,8 @@ public class SwingApp {
             };
             jobsTable = new JTable(jobsModel);
             styleDataTable(jobsTable);
-            applyStatusRenderer(jobsTable, 4);
+            applyStatusRenderer(jobsTable, 3);
+            applyFilledRatioRenderer(jobsTable, 2);
             installTableRowHover(jobsTable);
             JPanel jobsPanel = new JPanel(new BorderLayout(0, 16));
             jobsPanel.setOpaque(false);
@@ -2842,15 +2852,97 @@ public class SwingApp {
 
         private void refreshJobs() {
             jobsModel.setRowCount(0);
-            for (Job job : jobService.getAllJobs()) {
+            for (AdminService.JobOverview overview : adminService.getJobsOverview()) {
                 jobsModel.addRow(new Object[] {
-                    job.getModuleCode() + " - " + job.getModuleName(),
-                    moNameForJob(job),
-                    job.getPositions(),
-                    acceptedApplicantsForJob(job.getId()),
-                    job.getStatus().name()
+                    overview.moduleCode + " - " + overview.moduleName,
+                    overview.filledRatio(),
+                    overview.status.name()
                 });
             }
+        }
+
+        private void applyRiskLevelRenderer(JTable table, int col) {
+            table.getColumnModel().getColumn(col).setCellRenderer(new DefaultTableCellRenderer() {
+                @Override
+                public java.awt.Component getTableCellRendererComponent(
+                        JTable t, Object value, boolean isSelected, boolean hasFocus, int row, int column) {
+                    super.getTableCellRendererComponent(t, value, isSelected, hasFocus, row, column);
+                    String text = value == null ? "" : String.valueOf(value);
+                    setText(text);
+                    setHorizontalAlignment(CENTER);
+                    setFont(new Font("Segoe UI", Font.BOLD, 12));
+                    setBorder(BorderFactory.createEmptyBorder(4, 10, 4, 10));
+                    if (!isSelected) {
+                        if (text.equals(AdminService.RiskLevel.OVERLOADED.label())) {
+                            setForeground(Color.WHITE);
+                            setBackground(new Color(239, 68, 68));
+                        } else if (text.equals(AdminService.RiskLevel.AT_RISK.label())) {
+                            setForeground(Color.WHITE);
+                            setBackground(new Color(245, 158, 11));
+                        } else {
+                            setForeground(new Color(16, 185, 129));
+                            setBackground(Color.WHITE);
+                        }
+                    }
+                    return this;
+                }
+            });
+        }
+
+        private void applyFilledRatioRenderer(JTable table, int col) {
+            table.getColumnModel().getColumn(col).setCellRenderer(new DefaultTableCellRenderer() {
+                @Override
+                public java.awt.Component getTableCellRendererComponent(
+                        JTable t, Object value, boolean isSelected, boolean hasFocus, int row, int column) {
+                    super.getTableCellRendererComponent(t, value, isSelected, hasFocus, row, column);
+                    String text = value == null ? "" : String.valueOf(value);
+                    setText(text);
+                    setHorizontalAlignment(CENTER);
+                    setFont(new Font("Segoe UI", Font.BOLD, 12));
+                    setBorder(BorderFactory.createEmptyBorder(4, 10, 4, 10));
+                    if (!isSelected) {
+                        boolean isFull = text.contains("/") && !text.startsWith("0/") &&
+                                text.split("/").length == 2 &&
+                                Integer.parseInt(text.split("/")[0]) >= Integer.parseInt(text.split("/")[1]);
+                        if (isFull) {
+                            setForeground(Color.WHITE);
+                            setBackground(new Color(239, 68, 68));
+                        } else {
+                            setForeground(new Color(46, 52, 64));
+                            setBackground(Color.WHITE);
+                        }
+                    }
+                    return this;
+                }
+            });
+        }
+
+        private void showOverloadedOnly() {
+            workloadModel.setRowCount(0);
+            for (AdminService.TAWorkloadSummary s : adminService.getOverloadedTAs()) {
+                workloadModel.addRow(new Object[] {
+                    s.getTaUserId(),
+                    s.getTaName(),
+                    s.getAvailableHours(),
+                    s.getTotalAssignedHours(),
+                    s.getRemainingHours(),
+                    s.getRiskLevel().label()
+                });
+            }
+            if (workloadModel.getRowCount() == 0) {
+                showToast("No Overloaded TAs", "All TAs are within their available hours.", JOptionPane.INFORMATION_MESSAGE);
+            }
+        }
+
+        private void showWorkloadReport() {
+            String report = adminService.getWorkloadReport();
+            JTextArea textArea = new JTextArea(report);
+            textArea.setFont(new Font("Monospaced", Font.PLAIN, 12));
+            textArea.setEditable(false);
+            textArea.setRows(20);
+            textArea.setColumns(60);
+            JScrollPane scrollPane = new JScrollPane(textArea);
+            JOptionPane.showMessageDialog(frame, scrollPane, "Workload Report", JOptionPane.PLAIN_MESSAGE);
         }
 
         private JPanel buildSummaryBar() {

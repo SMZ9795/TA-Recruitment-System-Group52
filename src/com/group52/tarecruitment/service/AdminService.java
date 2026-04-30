@@ -10,7 +10,9 @@ import com.group52.tarecruitment.repository.ApplicationRepository;
 import com.group52.tarecruitment.repository.JobRepository;
 import com.group52.tarecruitment.repository.UserRepository;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Service for Admin functions: TA workload monitoring and recruitment summary.
@@ -67,6 +69,11 @@ public class AdminService {
 
         public int getRemainingHours() {
             return Math.max(0, availableHours - totalAssignedHours);
+        }
+
+        public double getUtilisationPercent() {
+            if (availableHours <= 0) return totalAssignedHours > 0 ? 100.0 : 0.0;
+            return Math.min(100.0, (double) totalAssignedHours / availableHours * 100.0);
         }
 
         /** True when assigned hours exceed the TA's own declared availableHours. */
@@ -129,10 +136,15 @@ public class AdminService {
         public boolean isFull() {
             return filled >= positions && positions > 0;
         }
+
+        public String filledRatio() {
+            return filled + "/" + positions;
+        }
     }
 
     /**
-     * Workload summaries for all active TAs that have at least one accepted application.
+     * Workload summaries for all active TAs that have at least one accepted application,
+     * sorted by risk level (OVERLOADED first) then by utilisation descending.
      */
     public List<TAWorkloadSummary> getAllTAWorkloads() {
         List<Application> allApplications = applicationRepository.findAll();
@@ -149,6 +161,10 @@ public class AdminService {
             if (acceptedApps.isEmpty()) continue;
             summaries.add(buildSummary(ta, acceptedApps));
         }
+
+        summaries.sort(Comparator
+                .comparingInt((TAWorkloadSummary s) -> -s.getRiskLevel().ordinal())
+                .thenComparingDouble(s -> -s.getUtilisationPercent()));
         return summaries;
     }
 
@@ -183,7 +199,7 @@ public class AdminService {
                 .toList();
     }
 
-    /** Per-job overview list for the admin Jobs Overview panel. */
+    /** Per-job overview list sorted: full jobs last so open slots appear first. */
     public List<JobOverview> getJobsOverview() {
         List<Application> allApplications = applicationRepository.findAll();
         List<JobOverview> result = new ArrayList<>();
@@ -196,6 +212,7 @@ public class AdminService {
                     job.getModuleCode(), job.getModuleName(),
                     job.getPositions(), filled, job.getStatus()));
         }
+        result.sort(Comparator.comparingInt(o -> (o.isFull() ? 1 : 0)));
         return result;
     }
 
@@ -220,7 +237,53 @@ public class AdminService {
                 activeTAs.size(), overloaded, atRisk);
     }
 
-    /** Human-readable recruitment summary string (kept for backward compatibility). */
+    /**
+     * Detailed plain-text workload report listing every TA's hours and risk status,
+     * with a section for overloaded TAs highlighted at the top.
+     */
+    public String getWorkloadReport() {
+        List<TAWorkloadSummary> workloads = getAllTAWorkloads();
+        StringBuilder sb = new StringBuilder();
+        sb.append("=== TA Workload Report ===\n\n");
+
+        List<TAWorkloadSummary> overloaded = workloads.stream()
+                .filter(TAWorkloadSummary::isOverloaded).toList();
+        List<TAWorkloadSummary> atRisk = workloads.stream()
+                .filter(s -> s.getRiskLevel() == RiskLevel.AT_RISK).toList();
+
+        if (!overloaded.isEmpty()) {
+            sb.append("!! OVERLOADED TAs (immediate attention required):\n");
+            for (TAWorkloadSummary s : overloaded) {
+                sb.append(String.format("   %-20s assigned=%dh  available=%dh  over=%dh\n",
+                        s.getTaName(), s.getTotalAssignedHours(),
+                        s.getAvailableHours(), s.getTotalAssignedHours() - s.getAvailableHours()));
+                for (String desc : s.getAcceptedJobDescriptions()) {
+                    sb.append("      - ").append(desc).append("\n");
+                }
+            }
+            sb.append("\n");
+        }
+
+        if (!atRisk.isEmpty()) {
+            sb.append("! AT-RISK TAs (>= 80% utilisation):\n");
+            for (TAWorkloadSummary s : atRisk) {
+                sb.append(String.format("   %-20s assigned=%dh  available=%dh  (%.0f%%)\n",
+                        s.getTaName(), s.getTotalAssignedHours(),
+                        s.getAvailableHours(), s.getUtilisationPercent()));
+            }
+            sb.append("\n");
+        }
+
+        sb.append("All active TAs with accepted positions:\n");
+        for (TAWorkloadSummary s : workloads) {
+            sb.append(String.format("   %-20s [%s] assigned=%dh  remaining=%dh\n",
+                    s.getTaName(), s.getRiskLevel().label(),
+                    s.getTotalAssignedHours(), s.getRemainingHours()));
+        }
+        return sb.toString();
+    }
+
+    /** Human-readable recruitment summary string. */
     public String getRecruitmentSummary() {
         RecruitmentSnapshot s = getRecruitmentSnapshot();
         List<TAWorkloadSummary> workloads = getAllTAWorkloads();
@@ -248,16 +311,21 @@ public class AdminService {
                 .toList();
     }
 
+    /**
+     * Optimised buildSummary: resolves each job only once per accepted application
+     * instead of calling findById twice per app.
+     */
     private TAWorkloadSummary buildSummary(User ta, List<Application> acceptedApps) {
         int totalHours = 0;
         List<String> jobDescriptions = new ArrayList<>();
         for (Application app : acceptedApps) {
-            jobRepository.findById(app.getJobId()).ifPresent(job ->
-                    jobDescriptions.add(job.getModuleCode() + " - " + job.getModuleName()
-                            + " (" + job.getHoursPerWeek() + "h/week)"));
-            totalHours += jobRepository.findById(app.getJobId())
-                    .map(Job::getHoursPerWeek)
-                    .orElse(0);
+            Optional<Job> jobOpt = jobRepository.findById(app.getJobId());
+            if (jobOpt.isPresent()) {
+                Job job = jobOpt.get();
+                jobDescriptions.add(job.getModuleCode() + " - " + job.getModuleName()
+                        + " (" + job.getHoursPerWeek() + "h/week)");
+                totalHours += job.getHoursPerWeek();
+            }
         }
         return new TAWorkloadSummary(
                 ta.getId(), ta.getName(), ta.getAvailableHours(),
