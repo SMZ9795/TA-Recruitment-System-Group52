@@ -2669,6 +2669,7 @@ public class SwingApp {
         private final JLabel summaryFilledJobs = new JLabel("--");
         private final JLabel summaryOverloaded = new JLabel("--");
         private final JLabel summaryHighRisk = new JLabel("--");
+        private final JTextField workloadSearchField = new JTextField();
 
         private AdminPanel() {
             setLayout(new BorderLayout());
@@ -2712,11 +2713,34 @@ public class SwingApp {
             styleDataTable(workloadTable);
             applyRiskLevelRenderer(workloadTable, 5);
             installTableRowHover(workloadTable);
+            workloadTable.addMouseListener(new java.awt.event.MouseAdapter() {
+                @Override
+                public void mouseClicked(java.awt.event.MouseEvent e) {
+                    if (e.getClickCount() == 2) {
+                        showTADetailDialog();
+                    }
+                }
+            });
             JPanel workloadPanel = new JPanel(new BorderLayout(0, 16));
             workloadPanel.setOpaque(false);
-            JPanel workloadHeader = new JPanel(new BorderLayout());
+            JPanel workloadHeader = new JPanel(new BorderLayout(12, 0));
             workloadHeader.setOpaque(false);
             workloadHeader.add(createSectionTitle("TA Weekly Workload", "Monitor accepted hours and overloaded TAs."), BorderLayout.WEST);
+            workloadSearchField.setPreferredSize(new java.awt.Dimension(200, 30));
+            workloadSearchField.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+            workloadSearchField.setBorder(BorderFactory.createCompoundBorder(
+                    BorderFactory.createLineBorder(new Color(220, 223, 230), 1, true),
+                    BorderFactory.createEmptyBorder(4, 8, 4, 8)));
+            workloadSearchField.putClientProperty("JTextField.placeholderText", "Search TA name or ID...");
+            workloadSearchField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+                public void insertUpdate(javax.swing.event.DocumentEvent e) { filterWorkloadTable(); }
+                public void removeUpdate(javax.swing.event.DocumentEvent e) { filterWorkloadTable(); }
+                public void changedUpdate(javax.swing.event.DocumentEvent e) { filterWorkloadTable(); }
+            });
+            JPanel searchWrapper = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 0, 0));
+            searchWrapper.setOpaque(false);
+            searchWrapper.add(workloadSearchField);
+            workloadHeader.add(searchWrapper, BorderLayout.EAST);
             workloadPanel.add(createCardPanel(workloadHeader, 18, 18, 18, 18), BorderLayout.NORTH);
             JScrollPane workloadScrollPane = new JScrollPane(workloadTable);
             workloadScrollPane.setBorder(BorderFactory.createEmptyBorder());
@@ -2800,13 +2824,26 @@ public class SwingApp {
             jobsScrollPane.setBorder(BorderFactory.createEmptyBorder());
             jobsScrollPane.getViewport().setBackground(Color.WHITE);
             jobsPanel.add(createCardPanel(jobsScrollPane, 0, 0, 0, 0), BorderLayout.CENTER);
-            JPanel jobsActions = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
+            JPanel jobsActions = new JPanel(new BorderLayout());
             jobsActions.setOpaque(false);
+            JPanel jobsButtonRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
+            jobsButtonRow.setOpaque(false);
             JButton refreshJobsButton = new JButton("Refresh");
             styleSecondaryButton(refreshJobsButton);
             refreshJobsButton.addActionListener(e -> refreshJobs());
-            jobsActions.add(refreshJobsButton);
+            jobsButtonRow.add(refreshJobsButton);
+            jobsActions.add(jobsButtonRow, BorderLayout.WEST);
+            JLabel jobsStatsLabel = new JLabel(" ");
+            jobsStatsLabel.setFont(new Font("Segoe UI", Font.PLAIN, 12));
+            jobsStatsLabel.setForeground(new Color(107, 114, 128));
+            jobsStatsLabel.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 8));
+            jobsActions.add(jobsStatsLabel, BorderLayout.EAST);
             jobsPanel.add(jobsActions, BorderLayout.SOUTH);
+            refreshJobsButton.addActionListener(e2 -> {
+                AdminService.RecruitmentSnapshot snap = adminService.getRecruitmentSnapshot();
+                jobsStatsLabel.setText("Total: " + snap.totalJobs + "  |  Filled: " + snap.filledJobs
+                        + "  |  Open: " + snap.openJobs);
+            });
 
             contentPanel.add(workloadPanel, TAB_WORKLOAD);
             contentPanel.add(accountsPanel, TAB_ACCOUNTS);
@@ -2943,6 +2980,61 @@ public class SwingApp {
             textArea.setColumns(60);
             JScrollPane scrollPane = new JScrollPane(textArea);
             JOptionPane.showMessageDialog(frame, scrollPane, "Workload Report", JOptionPane.PLAIN_MESSAGE);
+        }
+
+        private void filterWorkloadTable() {
+            String keyword = workloadSearchField.getText();
+            workloadModel.setRowCount(0);
+            List<AdminService.TAWorkloadSummary> source = keyword == null || keyword.isBlank()
+                    ? adminService.getAllTAWorkloads()
+                    : adminService.searchTAWorkload(keyword);
+            for (AdminService.TAWorkloadSummary s : source) {
+                workloadModel.addRow(new Object[] {
+                    s.getTaUserId(),
+                    s.getTaName(),
+                    s.getAvailableHours(),
+                    s.getTotalAssignedHours(),
+                    s.getRemainingHours(),
+                    s.getRiskLevel().label()
+                });
+            }
+        }
+
+        private void showTADetailDialog() {
+            int row = workloadTable.getSelectedRow();
+            if (row < 0) return;
+            String taId = String.valueOf(workloadModel.getValueAt(row, 0));
+            AdminService.TAWorkloadSummary s;
+            try {
+                s = adminService.getTAWorkload(taId);
+            } catch (IllegalArgumentException ex) {
+                JOptionPane.showMessageDialog(frame, ex.getMessage());
+                return;
+            }
+            AdminService.WorkloadTrend trend = adminService.getWorkloadTrend(s);
+            StringBuilder sb = new StringBuilder();
+            sb.append("TA ID:           ").append(s.getTaUserId()).append("\n");
+            sb.append("Name:            ").append(s.getTaName()).append("\n");
+            sb.append("Available h/wk:  ").append(s.getAvailableHours()).append("h\n");
+            sb.append("Assigned h/wk:   ").append(s.getTotalAssignedHours()).append("h\n");
+            sb.append("Remaining h/wk:  ").append(s.getRemainingHours()).append("h\n");
+            sb.append("Utilisation:     ").append(String.format("%.0f%%", s.getUtilisationPercent())).append("\n");
+            sb.append("Risk Level:      ").append(s.getRiskLevel().label()).append("\n");
+            sb.append("Workload Trend:  ").append(trend.label()).append("\n");
+            sb.append("\nAccepted Positions (").append(s.getAcceptedJobCount()).append("):\n");
+            if (s.getAcceptedJobDescriptions().isEmpty()) {
+                sb.append("  (none)\n");
+            } else {
+                for (String desc : s.getAcceptedJobDescriptions()) {
+                    sb.append("  • ").append(desc).append("\n");
+                }
+            }
+            JTextArea area = new JTextArea(sb.toString());
+            area.setFont(new Font("Monospaced", Font.PLAIN, 13));
+            area.setEditable(false);
+            area.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
+            JOptionPane.showMessageDialog(frame, new JScrollPane(area),
+                    "TA Detail — " + s.getTaName(), JOptionPane.PLAIN_MESSAGE);
         }
 
         private JPanel buildSummaryBar() {

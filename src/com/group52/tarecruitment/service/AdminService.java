@@ -312,6 +312,45 @@ public class AdminService {
     }
 
     /**
+     * Search workload summaries by TA name or ID (case-insensitive substring match).
+     * Returns an empty list when keyword is blank.
+     */
+    public List<TAWorkloadSummary> searchTAWorkload(String keyword) {
+        if (keyword == null || keyword.isBlank()) {
+            return new ArrayList<>();
+        }
+        String lower = keyword.trim().toLowerCase();
+        return getAllTAWorkloads().stream()
+                .filter(s -> s.getTaName().toLowerCase().contains(lower)
+                        || s.getTaUserId().toLowerCase().contains(lower))
+                .toList();
+    }
+
+    /**
+     * Workload trend label for a TA based on accepted job count.
+     * New: 1 accepted job; Growing: 2; Established: 3+.
+     */
+    public enum WorkloadTrend {
+        NEW, GROWING, ESTABLISHED;
+
+        public String label() {
+            return switch (this) {
+                case NEW -> "New";
+                case GROWING -> "Growing";
+                case ESTABLISHED -> "Established";
+            };
+        }
+    }
+
+    /** Derives a WorkloadTrend label for the given workload summary. */
+    public WorkloadTrend getWorkloadTrend(TAWorkloadSummary summary) {
+        int count = summary.getAcceptedJobCount();
+        if (count >= 3) return WorkloadTrend.ESTABLISHED;
+        if (count == 2) return WorkloadTrend.GROWING;
+        return WorkloadTrend.NEW;
+    }
+
+    /**
      * Optimised buildSummary: resolves each job only once per accepted application
      * instead of calling findById twice per app.
      */

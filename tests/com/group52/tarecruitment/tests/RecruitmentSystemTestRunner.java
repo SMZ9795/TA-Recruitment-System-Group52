@@ -49,6 +49,8 @@ public final class RecruitmentSystemTestRunner {
         runCase("AI matching handles empty and invalid input", this::testAiMatchingEmptyAndInvalidInput);
         runCase("AdminService risk level respects TA availableHours, not hardcoded 20h", this::testAdminRiskLevelUsesAvailableHours);
         runCase("AdminService getRecruitmentSnapshot counts filled jobs and overloaded TAs", this::testRecruitmentSnapshot);
+        runCase("AdminService searchTAWorkload filters by name and ID", this::testSearchTAWorkload);
+        runCase("AdminService getWorkloadTrend returns correct label by job count", this::testWorkloadTrend);
 
         System.out.println();
         System.out.println("==== TEST SUMMARY ====");
@@ -528,6 +530,110 @@ public final class RecruitmentSystemTestRunner {
             List<AdminService.TAWorkloadSummary> overloaded = svc.getOverloadedTAs();
             assert overloaded.size() == 1 : "getOverloadedTAs should return 1, got " + overloaded.size();
             assert overloaded.get(0).getTaUserId().equals("ta1") : "Overloaded TA should be ta1";
+        } finally {
+            try (var walk = Files.walk(tmp)) {
+                walk.sorted(Comparator.reverseOrder()).forEach(p -> {
+                    try { Files.deleteIfExists(p); } catch (Exception ignored) {}
+                });
+            }
+        }
+    }
+
+    private void testSearchTAWorkload() throws Exception {
+        Path tmp = Files.createTempDirectory("ta-test-search");
+        try {
+            Path usersPath = tmp.resolve("users.csv");
+            Path jobsPath = tmp.resolve("jobs.csv");
+            Path appsPath = tmp.resolve("applications.csv");
+
+            Files.writeString(usersPath,
+                "id,role,name,email,password,major,yearOfStudy,skills,availableHours,active,cvFilePath\n"
+                + "ta1,TA,Alice Wang,alice@test.com,pass1234,CS,2,Java,10,true,\n"
+                + "ta2,TA,Bob Zhang,bob@test.com,pass1234,CS,3,Python,15,true,\n");
+            Files.writeString(jobsPath,
+                "id,moduleCode,moduleName,description,requiredSkills,hoursPerWeek,positions,deadline,postedByMoId,status\n"
+                + "j1,CS101,Intro,Desc,Java,5,2,2099-12-31,mo1,OPEN\n"
+                + "j2,CS102,Algo,Desc,Python,6,2,2099-12-31,mo1,OPEN\n");
+            Files.writeString(appsPath,
+                "id,jobId,taUserId,status,appliedDate\n"
+                + "app1,j1,ta1,ACCEPTED,2024-01-01\n"
+                + "app2,j2,ta2,ACCEPTED,2024-01-02\n");
+
+            AdminService svc = new AdminService(
+                new UserRepository(usersPath),
+                new JobRepository(jobsPath),
+                new ApplicationRepository(appsPath));
+
+            List<AdminService.TAWorkloadSummary> byName = svc.searchTAWorkload("alice");
+            assert byName.size() == 1 : "Should find 1 TA by name 'alice', got " + byName.size();
+            assert byName.get(0).getTaUserId().equals("ta1") : "Should find ta1";
+
+            List<AdminService.TAWorkloadSummary> byId = svc.searchTAWorkload("ta2");
+            assert byId.size() == 1 : "Should find 1 TA by ID 'ta2', got " + byId.size();
+            assert byId.get(0).getTaName().equals("Bob Zhang") : "Should find Bob Zhang";
+
+            List<AdminService.TAWorkloadSummary> noMatch = svc.searchTAWorkload("xyz");
+            assert noMatch.isEmpty() : "Should return empty for no match";
+
+            List<AdminService.TAWorkloadSummary> blank = svc.searchTAWorkload("  ");
+            assert blank.isEmpty() : "Should return empty for blank keyword";
+        } finally {
+            try (var walk = Files.walk(tmp)) {
+                walk.sorted(Comparator.reverseOrder()).forEach(p -> {
+                    try { Files.deleteIfExists(p); } catch (Exception ignored) {}
+                });
+            }
+        }
+    }
+
+    private void testWorkloadTrend() throws Exception {
+        Path tmp = Files.createTempDirectory("ta-test-trend");
+        try {
+            Path usersPath = tmp.resolve("users.csv");
+            Path jobsPath = tmp.resolve("jobs.csv");
+            Path appsPath = tmp.resolve("applications.csv");
+
+            Files.writeString(usersPath,
+                "id,role,name,email,password,major,yearOfStudy,skills,availableHours,active,cvFilePath\n"
+                + "ta1,TA,Alice,alice@test.com,pass1234,CS,2,Java,20,true,\n");
+            Files.writeString(jobsPath,
+                "id,moduleCode,moduleName,description,requiredSkills,hoursPerWeek,positions,deadline,postedByMoId,status\n"
+                + "j1,CS101,A,Desc,Java,3,2,2099-12-31,mo1,OPEN\n"
+                + "j2,CS102,B,Desc,Java,3,2,2099-12-31,mo1,OPEN\n"
+                + "j3,CS103,C,Desc,Java,3,2,2099-12-31,mo1,OPEN\n");
+
+            // 1 accepted job → NEW
+            Files.writeString(appsPath,
+                "id,jobId,taUserId,status,appliedDate\n"
+                + "app1,j1,ta1,ACCEPTED,2024-01-01\n");
+            AdminService svc1 = new AdminService(
+                new UserRepository(usersPath), new JobRepository(jobsPath), new ApplicationRepository(appsPath));
+            AdminService.TAWorkloadSummary s1 = svc1.getTAWorkload("ta1");
+            assert svc1.getWorkloadTrend(s1) == AdminService.WorkloadTrend.NEW
+                : "1 job should be NEW, got " + svc1.getWorkloadTrend(s1);
+
+            // 2 accepted jobs → GROWING
+            Files.writeString(appsPath,
+                "id,jobId,taUserId,status,appliedDate\n"
+                + "app1,j1,ta1,ACCEPTED,2024-01-01\n"
+                + "app2,j2,ta1,ACCEPTED,2024-01-02\n");
+            AdminService svc2 = new AdminService(
+                new UserRepository(usersPath), new JobRepository(jobsPath), new ApplicationRepository(appsPath));
+            AdminService.TAWorkloadSummary s2 = svc2.getTAWorkload("ta1");
+            assert svc2.getWorkloadTrend(s2) == AdminService.WorkloadTrend.GROWING
+                : "2 jobs should be GROWING, got " + svc2.getWorkloadTrend(s2);
+
+            // 3 accepted jobs → ESTABLISHED
+            Files.writeString(appsPath,
+                "id,jobId,taUserId,status,appliedDate\n"
+                + "app1,j1,ta1,ACCEPTED,2024-01-01\n"
+                + "app2,j2,ta1,ACCEPTED,2024-01-02\n"
+                + "app3,j3,ta1,ACCEPTED,2024-01-03\n");
+            AdminService svc3 = new AdminService(
+                new UserRepository(usersPath), new JobRepository(jobsPath), new ApplicationRepository(appsPath));
+            AdminService.TAWorkloadSummary s3 = svc3.getTAWorkload("ta1");
+            assert svc3.getWorkloadTrend(s3) == AdminService.WorkloadTrend.ESTABLISHED
+                : "3 jobs should be ESTABLISHED, got " + svc3.getWorkloadTrend(s3);
         } finally {
             try (var walk = Files.walk(tmp)) {
                 walk.sorted(Comparator.reverseOrder()).forEach(p -> {
