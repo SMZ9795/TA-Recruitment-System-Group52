@@ -10,6 +10,7 @@
 - Job validation (deadline not in past, positions vs accepted applications).
 - Application authorization and status-transition constraints.
 - Job deletion guard when related applications exist.
+- TA notification filtering, unread count, status summary, and closed-job alerts.
 - End-to-end integration (TA profile -> apply -> MO review -> admin workload).
 
 ## Manual GUI regression (SwingApp)
@@ -29,4 +30,8 @@
 5. Error handling:
    - Invalid login, duplicate registration, past deadline job creation,
      duplicate application, unauthorized review, non-pending withdrawal.
+6. TA notification center:
+   - Verify Dashboard status summary counts pending/accepted/rejected/withdrawn applications.
+   - Verify notification filters, unread count, Mark Read, and Mark Unread.
+   - Verify closed-job application attempts show a clear TA warning.
 
