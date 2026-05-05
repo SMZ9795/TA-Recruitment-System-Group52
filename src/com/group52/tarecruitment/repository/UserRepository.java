@@ -11,7 +11,7 @@ import java.util.Optional;
 
 public class UserRepository {
     private static final String HEADER =
-            "id,role,name,email,password,programme,yearOfStudy,skills,availableHours,active,cvFilePath";
+            "id,role,name,email,password,programme,yearOfStudy,skills,availableHours,active,cvFilePath,avatarFilePath";
 
     private final Path filePath;
 
@@ -29,7 +29,7 @@ public class UserRepository {
                 continue;
             }
             List<String> values = CsvUtil.parseLine(line);
-            if (values.size() != 10 && values.size() != 11) {
+            if (values.size() != 10 && values.size() != 11 && values.size() != 12) {
                 throw invalidRecord(i + 1, null);
             }
             try {
@@ -84,13 +84,15 @@ public class UserRepository {
                     CsvUtil.escape(user.getSkills()),
                     CsvUtil.escape(String.valueOf(user.getAvailableHours())),
                     CsvUtil.escape(String.valueOf(user.isActive())),
-                    CsvUtil.escape(user.getCvFilePath())));
+                    CsvUtil.escape(user.getCvFilePath()),
+                    CsvUtil.escape(user.getAvatarFilePath())));
         }
         FileUtil.writeAllLines(filePath, lines);
     }
 
     private User toUser(List<String> values) {
         String cvFilePath = values.size() >= 11 ? values.get(10) : "";
+        String avatarFilePath = values.size() >= 12 ? values.get(11) : "";
         return new User(
                 values.get(0),
                 Role.valueOf(values.get(1)),
@@ -102,7 +104,8 @@ public class UserRepository {
                 values.get(7),
                 parseInt(values.get(8)),
                 Boolean.parseBoolean(values.get(9)),
-                cvFilePath);
+                cvFilePath,
+                avatarFilePath);
     }
 
     private int parseInt(String value) {

@@ -123,7 +123,7 @@ public class ApplicationRepository {
                 values.get(0),
                 values.get(1),
                 values.get(2),
-                ApplicationStatus.valueOf(values.get(3)),
+                ApplicationStatus.fromStorageValue(values.get(3)),
                 values.get(4));
     }
 

@@ -79,7 +79,9 @@ public class AuthService {
                 0,
                 "",
                 0,
-                true);
+                true,
+                "",
+                "");
         userRepository.save(user);
         return user;
     }
@@ -105,7 +107,9 @@ public class AuthService {
                 0,
                 "",
                 0,
-                true);
+                true,
+                "",
+                "");
         userRepository.save(user);
         return user;
     }
@@ -176,7 +180,9 @@ public class AuthService {
                 0,
                 "",
                 0,
-                true);
+                true,
+                "",
+                "");
         userRepository.save(mo);
         return mo;
     }

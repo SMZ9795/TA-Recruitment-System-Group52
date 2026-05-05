@@ -12,8 +12,25 @@
 - Job deletion guard when related applications exist.
 - TA notification filtering, unread count, status summary, and closed-job alerts.
 - End-to-end integration (TA profile -> apply -> MO review -> admin workload).
+- **[iteration3]** AdminService risk level uses TA's own `availableHours` (not hardcoded 20h).
+- **[iteration3]** `getRecruitmentSnapshot()` correctly counts filled jobs and overloaded TAs.
 
 ## Manual GUI regression (SwingApp)
+
+### Admin panel — iteration 3 checks
+1. **Summary bar visible**: After logging in as Admin, the top of the dashboard shows four cards:
+   "Total Jobs", "Filled Jobs", "Overloaded TAs", "High-Risk TAs" with numeric values.
+2. **Summary updates on refresh**: Click Refresh in the Workload tab; card numbers reflect current data.
+3. **Workload table columns**: Verify columns are
+   `TA ID | TA Name | Available h/week | Assigned h/week | Remaining h | Risk`.
+   The old "Alert" column and `> 20h` logic should be gone.
+4. **Risk levels correct**:
+   - A TA with 10 available h and 9 assigned h shows **At Risk**.
+   - A TA with 10 available h and 11 assigned h shows **Overloaded**.
+   - A TA with 10 available h and 5 assigned h shows **OK**.
+5. **Remaining hours column**: Verify value is `max(0, availableHours - assignedHours)`.
+
+### Pre-existing GUI regression
 1. TA profile CV upload:
    - Select `.pdf` and `.txt` files and save profile.
    - Re-open profile page and verify uploaded filename is shown.
