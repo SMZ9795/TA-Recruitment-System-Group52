@@ -11,6 +11,9 @@ import com.group52.tarecruitment.service.AuthService;
 import com.group52.tarecruitment.service.JobService;
 import com.group52.tarecruitment.util.CvValidationUtil;
 import com.group52.tarecruitment.util.JobFilterUtil;
+import com.group52.tarecruitment.util.TaNotificationUtil;
+import com.group52.tarecruitment.util.TaNotificationUtil.ApplicationStatusSummary;
+import com.group52.tarecruitment.util.TaNotificationUtil.NotificationEntry;
 import com.group52.tarecruitment.util.ValidationUtil;
 import java.awt.BorderLayout;
 import java.awt.CardLayout;
@@ -722,117 +725,46 @@ public class SwingApp {
         }
 
         private void updateApplicationStatusSummary(List<Application> applications) {
-            int pending = 0;
-            int accepted = 0;
-            int rejected = 0;
-            int withdrawn = 0;
-            for (Application application : applications) {
-                if (application.getStatus() == ApplicationStatus.PENDING) {
-                    pending++;
-                } else if (application.getStatus() == ApplicationStatus.ACCEPTED) {
-                    accepted++;
-                } else if (application.getStatus() == ApplicationStatus.REJECTED) {
-                    rejected++;
-                } else if (application.getStatus() == ApplicationStatus.WITHDRAWN) {
-                    withdrawn++;
-                }
-            }
-            applicationSummaryLabel.setText("Applications: "
-                    + pending + " pending, "
-                    + accepted + " accepted, "
-                    + rejected + " rejected, "
-                    + withdrawn + " withdrawn.");
+            ApplicationStatusSummary summary = TaNotificationUtil.summarizeApplications(applications);
+            applicationSummaryLabel.setText(summary.format());
         }
 
         private void refreshNotifications() {
             notificationModel.setRowCount(0);
-            List<TaNotificationEntry> notifications = buildTaNotifications();
-            int unreadCount = 0;
-            for (TaNotificationEntry notification : notifications) {
-                if (!readNotificationIds.contains(notification.id)) {
-                    unreadCount++;
-                }
-            }
+            List<NotificationEntry> notifications = buildTaNotifications();
+            int unreadCount = TaNotificationUtil.countUnread(notifications, readNotificationIds);
             unreadCountLabel.setText("Unread: " + unreadCount);
             updateDashboardNotificationSummary(notifications, unreadCount);
 
             String filter = String.valueOf(notificationFilterBox.getSelectedItem());
-            for (TaNotificationEntry notification : notifications) {
-                boolean isRead = readNotificationIds.contains(notification.id);
-                if ("Unread".equals(filter) && isRead) {
-                    continue;
-                }
-                if ("Read".equals(filter) && !isRead) {
-                    continue;
-                }
+            for (NotificationEntry notification :
+                    TaNotificationUtil.filterByReadState(notifications, readNotificationIds, filter)) {
+                boolean isRead = readNotificationIds.contains(notification.getId());
                 notificationModel.addRow(new Object[] {
-                    notification.id,
+                    notification.getId(),
                     isRead ? "Read" : "Unread",
-                    notification.type,
-                    notification.message,
-                    notification.date
+                    notification.getType(),
+                    notification.getMessage(),
+                    notification.getDate()
                 });
             }
             notificationEmptyLabel.setVisible(notificationModel.getRowCount() == 0);
         }
 
-        private List<TaNotificationEntry> buildTaNotifications() {
-            List<Application> applications = applicationService.getApplicationsByTaUserId(user.getId());
-            applications.sort(Comparator.comparing(
-                            Application::getAppliedDate,
-                            Comparator.nullsLast(String::compareTo))
-                    .reversed());
-            List<TaNotificationEntry> notifications = new ArrayList<>();
-            for (Application application : applications) {
-                Job job = findJobById(application.getJobId()).orElse(null);
-                String jobName = job == null
-                        ? "Job " + safeText(application.getJobId())
-                        : safeText(job.getModuleCode()) + " - " + safeText(job.getModuleName());
-                notifications.add(notificationForApplication(application, jobName));
-                if (job != null && job.getStatus() == JobStatus.CLOSED
-                        && application.getStatus() == ApplicationStatus.PENDING) {
-                    notifications.add(new TaNotificationEntry(
-                            "JOB_CLOSED:" + job.getId() + ":" + application.getId(),
-                            "Job Closed",
-                            jobName + " is now closed. This pending application may no longer move forward.",
-                            safeText(application.getAppliedDate())));
-                }
-            }
-            return notifications;
+        private List<NotificationEntry> buildTaNotifications() {
+            return TaNotificationUtil.buildNotifications(
+                    applicationService.getApplicationsByTaUserId(user.getId()),
+                    jobService.getAllJobs());
         }
 
-        private TaNotificationEntry notificationForApplication(Application application, String jobName) {
-            ApplicationStatus status = application.getStatus();
-            String type = "Application Update";
-            String message = "Your application for " + jobName + " has been updated.";
-            if (status == ApplicationStatus.PENDING) {
-                type = "Application Submitted";
-                message = "Your application for " + jobName + " is waiting for MO review.";
-            } else if (status == ApplicationStatus.ACCEPTED) {
-                type = "Application Accepted";
-                message = "Your application for " + jobName + " has been accepted.";
-            } else if (status == ApplicationStatus.REJECTED) {
-                type = "Application Rejected";
-                message = "Your application for " + jobName + " has been rejected.";
-            } else if (status == ApplicationStatus.WITHDRAWN) {
-                type = "Application Withdrawn";
-                message = "Your application for " + jobName + " was withdrawn successfully.";
-            }
-            return new TaNotificationEntry(
-                    "APP:" + application.getId() + ":" + (status == null ? "UNKNOWN" : status.name()),
-                    type,
-                    message,
-                    safeText(application.getAppliedDate()));
-        }
-
-        private void updateDashboardNotificationSummary(List<TaNotificationEntry> notifications, int unreadCount) {
+        private void updateDashboardNotificationSummary(List<NotificationEntry> notifications, int unreadCount) {
             if (notifications.isEmpty()) {
                 dashboardNotificationLabel.setText("No notifications yet.");
                 return;
             }
-            TaNotificationEntry latest = notifications.get(0);
+            NotificationEntry latest = notifications.get(0);
             dashboardNotificationLabel.setText(
-                    "Notifications: " + unreadCount + " unread. Latest update: " + latest.type + ".");
+                    "Notifications: " + unreadCount + " unread. Latest update: " + latest.getType() + ".");
         }
 
         private void setSelectedNotificationRead(boolean read) {
@@ -910,6 +842,11 @@ public class SwingApp {
                 showDashboardActionFeedback("Application submitted. Notification center has been refreshed.");
             } catch (IllegalArgumentException ex) {
                 JOptionPane.showMessageDialog(frame, ex.getMessage());
+                String closedMessage = TaNotificationUtil.jobClosedApplyMessage(findJobById(jobId).orElse(null));
+                if (!closedMessage.isBlank()) {
+                    showDashboardActionFeedback(closedMessage);
+                    refreshNotifications();
+                }
             }
         }
 
@@ -1702,17 +1639,4 @@ public class SwingApp {
         }
     }
 
-    private static class TaNotificationEntry {
-        private final String id;
-        private final String type;
-        private final String message;
-        private final String date;
-
-        private TaNotificationEntry(String id, String type, String message, String date) {
-            this.id = id;
-            this.type = type;
-            this.message = message;
-            this.date = date;
-        }
-    }
 }
