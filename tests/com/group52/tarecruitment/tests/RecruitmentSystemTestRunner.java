@@ -17,12 +17,17 @@ import com.group52.tarecruitment.service.JobService;
 import com.group52.tarecruitment.util.CvValidationUtil;
 import com.group52.tarecruitment.util.FileUtil;
 import com.group52.tarecruitment.util.JobFilterUtil;
+import com.group52.tarecruitment.util.TaNotificationUtil;
+import com.group52.tarecruitment.util.TaNotificationUtil.ApplicationStatusSummary;
+import com.group52.tarecruitment.util.TaNotificationUtil.NotificationEntry;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDate;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 
 public final class RecruitmentSystemTestRunner {
     private int passedCount;
@@ -43,6 +48,8 @@ public final class RecruitmentSystemTestRunner {
         runCase("Job creation/update validation includes deadline and capacity", this::testJobValidationFlows);
         runCase("Application authorization and state transition rules", this::testApplicationAuthorizationAndTransitions);
         runCase("Job deletion is blocked when applications exist", this::testDeleteJobGuard);
+        runCase("TA notification filtering and unread count", this::testTaNotificationFilteringAndUnreadCount);
+        runCase("TA notification status summary and closed-job message", this::testTaNotificationSummaryAndClosedMessage);
         runCase("End-to-end integration: TA profile data visible to MO and admin workload", this::testEndToEndIntegrationFlow);
         runCase("AI matching returns 100 for complete matches", this::testAiMatchingCompleteMatch);
         runCase("AI matching returns partial score with missing skills", this::testAiMatchingPartialMatch);
@@ -354,6 +361,119 @@ public final class RecruitmentSystemTestRunner {
                     context.jobService.getJobById(emptyJob.getId()).isEmpty(),
                     "Job without applications should be deletable.");
         }
+    }
+
+    private void testTaNotificationFilteringAndUnreadCount() {
+        Job openJob = new Job(
+                "JOB-NOTIFY-1",
+                "CS901",
+                "Notification Lab",
+                "Assist lab",
+                "Java",
+                6,
+                1,
+                "2026-12-01",
+                "MO001",
+                JobStatus.OPEN);
+        Job closedJob = new Job(
+                "JOB-NOTIFY-2",
+                "CS902",
+                "Closed Lab",
+                "Assist closed lab",
+                "Python",
+                4,
+                1,
+                "2026-12-02",
+                "MO001",
+                JobStatus.CLOSED);
+        Application pendingOpen = new Application(
+                "APP-NOTIFY-1",
+                openJob.getId(),
+                "TA100",
+                ApplicationStatus.PENDING,
+                "2026-04-20");
+        Application accepted = new Application(
+                "APP-NOTIFY-2",
+                openJob.getId(),
+                "TA100",
+                ApplicationStatus.ACCEPTED,
+                "2026-04-21");
+        Application pendingClosed = new Application(
+                "APP-NOTIFY-3",
+                closedJob.getId(),
+                "TA100",
+                ApplicationStatus.PENDING,
+                "2026-04-22");
+
+        List<NotificationEntry> notifications = TaNotificationUtil.buildNotifications(
+                List.of(pendingOpen, accepted, pendingClosed),
+                List.of(openJob, closedJob));
+        assertEquals(4, notifications.size(), "Three applications plus one closed-job alert should be shown.");
+        assertTrue(
+                notifications.stream().anyMatch(notification ->
+                        "Job Closed".equals(notification.getType())
+                                && notification.getMessage().contains("CS902")),
+                "Closed pending jobs should create a visible TA notification.");
+
+        Set<String> readIds = new HashSet<>();
+        readIds.add(notifications.get(0).getId());
+        assertEquals(3, TaNotificationUtil.countUnread(notifications, readIds), "Unread count should exclude read IDs.");
+        assertEquals(
+                3,
+                TaNotificationUtil.filterByReadState(notifications, readIds, "Unread").size(),
+                "Unread filter should hide read notifications.");
+        assertEquals(
+                1,
+                TaNotificationUtil.filterByReadState(notifications, readIds, "Read").size(),
+                "Read filter should only show read notifications.");
+    }
+
+    private void testTaNotificationSummaryAndClosedMessage() {
+        ApplicationStatusSummary summary = TaNotificationUtil.summarizeApplications(List.of(
+                new Application("APP-SUM-1", "JOB1", "TA100", ApplicationStatus.PENDING, "2026-04-20"),
+                new Application("APP-SUM-2", "JOB2", "TA100", ApplicationStatus.ACCEPTED, "2026-04-21"),
+                new Application("APP-SUM-3", "JOB3", "TA100", ApplicationStatus.REJECTED, "2026-04-22"),
+                new Application("APP-SUM-4", "JOB4", "TA100", ApplicationStatus.WITHDRAWN, "2026-04-23")));
+
+        assertEquals(1, summary.getPending(), "Pending count should be summarized.");
+        assertEquals(1, summary.getAccepted(), "Accepted count should be summarized.");
+        assertEquals(1, summary.getRejected(), "Rejected count should be summarized.");
+        assertEquals(1, summary.getWithdrawn(), "Withdrawn count should be summarized.");
+        assertEquals(
+                "Applications: 1 pending, 1 accepted, 1 rejected, 1 withdrawn.",
+                summary.format(),
+                "Dashboard summary text should match TA status counts.");
+
+        Job closedJob = new Job(
+                "JOB-CLOSED-MSG",
+                "AI401",
+                "Closed AI Lab",
+                "No longer accepting",
+                "Python",
+                5,
+                1,
+                "2026-12-03",
+                "MO001",
+                JobStatus.CLOSED);
+        Job openJob = new Job(
+                "JOB-OPEN-MSG",
+                "AI402",
+                "Open AI Lab",
+                "Accepting applications",
+                "Python",
+                5,
+                1,
+                "2026-12-04",
+                "MO001",
+                JobStatus.OPEN);
+
+        assertTrue(
+                TaNotificationUtil.jobClosedApplyMessage(closedJob).contains("no longer accepts applications"),
+                "Closed jobs should produce a clear apply-blocked message.");
+        assertEquals(
+                "",
+                TaNotificationUtil.jobClosedApplyMessage(openJob),
+                "Open jobs should not produce a closed-job apply warning.");
     }
 
     private void testEndToEndIntegrationFlow() throws Exception {

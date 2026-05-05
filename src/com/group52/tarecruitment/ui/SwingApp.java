@@ -13,6 +13,9 @@ import com.group52.tarecruitment.service.AuthService;
 import com.group52.tarecruitment.service.JobService;
 import com.group52.tarecruitment.util.CvValidationUtil;
 import com.group52.tarecruitment.util.JobFilterUtil;
+import com.group52.tarecruitment.util.TaNotificationUtil;
+import com.group52.tarecruitment.util.TaNotificationUtil.ApplicationStatusSummary;
+import com.group52.tarecruitment.util.TaNotificationUtil.NotificationEntry;
 import com.group52.tarecruitment.util.ValidationUtil;
 import java.awt.BorderLayout;
 import java.awt.CardLayout;
@@ -1798,120 +1801,49 @@ public class SwingApp {
         }
 
         private void updateApplicationStatusSummary(List<Application> applications) {
-            int pending = 0;
-            int accepted = 0;
-            int rejected = 0;
-            int withdrawn = 0;
-            for (Application application : applications) {
-                if (application.getStatus() == ApplicationStatus.PENDING) {
-                    pending++;
-                } else if (application.getStatus() == ApplicationStatus.ACCEPTED) {
-                    accepted++;
-                } else if (application.getStatus() == ApplicationStatus.REJECTED) {
-                    rejected++;
-                } else if (application.getStatus() == ApplicationStatus.WITHDRAWN) {
-                    withdrawn++;
-                }
-            }
-            applicationSummaryLabel.setText("Applications: "
-                    + pending + " pending, "
-                    + accepted + " accepted, "
-                    + rejected + " rejected, "
-                    + withdrawn + " withdrawn.");
-            dashboardAppliedCountLabel.setText(String.valueOf(applications.size()));
-            dashboardPendingCountLabel.setText(String.valueOf(pending));
-            dashboardAcceptedCountLabel.setText(String.valueOf(accepted));
+            ApplicationStatusSummary summary = TaNotificationUtil.summarizeApplications(applications);
+            applicationSummaryLabel.setText(summary.format());
+            dashboardAppliedCountLabel.setText(String.valueOf(applications == null ? 0 : applications.size()));
+            dashboardPendingCountLabel.setText(String.valueOf(summary.getPending()));
+            dashboardAcceptedCountLabel.setText(String.valueOf(summary.getAccepted()));
         }
 
         private void refreshNotifications() {
             notificationModel.setRowCount(0);
-            List<TaNotificationEntry> notifications = buildTaNotifications();
-            int unreadCount = 0;
-            for (TaNotificationEntry notification : notifications) {
-                if (!readNotificationIds.contains(notification.id)) {
-                    unreadCount++;
-                }
-            }
+            List<NotificationEntry> notifications = buildTaNotifications();
+            int unreadCount = TaNotificationUtil.countUnread(notifications, readNotificationIds);
             unreadCountLabel.setText("Unread: " + unreadCount);
             updateDashboardNotificationSummary(notifications, unreadCount);
 
             String filter = String.valueOf(notificationFilterBox.getSelectedItem());
-            for (TaNotificationEntry notification : notifications) {
-                boolean isRead = readNotificationIds.contains(notification.id);
-                if ("Unread".equals(filter) && isRead) {
-                    continue;
-                }
-                if ("Read".equals(filter) && !isRead) {
-                    continue;
-                }
+            for (NotificationEntry notification :
+                    TaNotificationUtil.filterByReadState(notifications, readNotificationIds, filter)) {
+                boolean isRead = readNotificationIds.contains(notification.getId());
                 notificationModel.addRow(new Object[] {
-                    notification.id,
+                    notification.getId(),
                     isRead ? "Read" : "Unread",
-                    notification.type,
-                    notification.message,
-                    notification.date
+                    notification.getType(),
+                    notification.getMessage(),
+                    notification.getDate()
                 });
             }
             notificationEmptyLabel.setVisible(notificationModel.getRowCount() == 0);
         }
 
-        private List<TaNotificationEntry> buildTaNotifications() {
-            List<Application> applications = applicationService.getApplicationsByTaUserId(user.getId());
-            applications.sort(Comparator.comparing(
-                            Application::getAppliedDate,
-                            Comparator.nullsLast(String::compareTo))
-                    .reversed());
-            List<TaNotificationEntry> notifications = new ArrayList<>();
-            for (Application application : applications) {
-                Job job = findJobById(application.getJobId()).orElse(null);
-                String jobName = job == null
-                        ? "Job " + safeText(application.getJobId())
-                        : safeText(job.getModuleCode()) + " - " + safeText(job.getModuleName());
-                notifications.add(notificationForApplication(application, jobName));
-                if (job != null && job.getStatus() == JobStatus.CLOSED
-                        && application.getStatus() == ApplicationStatus.PENDING) {
-                    notifications.add(new TaNotificationEntry(
-                            "JOB_CLOSED:" + job.getId() + ":" + application.getId(),
-                            "Job Closed",
-                            jobName + " is now closed. This pending application may no longer move forward.",
-                            safeText(application.getAppliedDate())));
-                }
-            }
-            return notifications;
+        private List<NotificationEntry> buildTaNotifications() {
+            return TaNotificationUtil.buildNotifications(
+                    applicationService.getApplicationsByTaUserId(user.getId()),
+                    jobService.getAllJobs());
         }
 
-        private TaNotificationEntry notificationForApplication(Application application, String jobName) {
-            ApplicationStatus status = application.getStatus();
-            String type = "Application Update";
-            String message = "Your application for " + jobName + " has been updated.";
-            if (status == ApplicationStatus.PENDING) {
-                type = "Application Submitted";
-                message = "Your application for " + jobName + " is waiting for MO review.";
-            } else if (status == ApplicationStatus.ACCEPTED) {
-                type = "Application Accepted";
-                message = "Your application for " + jobName + " has been accepted.";
-            } else if (status == ApplicationStatus.REJECTED) {
-                type = "Application Rejected";
-                message = "Your application for " + jobName + " has been rejected.";
-            } else if (status == ApplicationStatus.WITHDRAWN) {
-                type = "Application Withdrawn";
-                message = "Your application for " + jobName + " was withdrawn successfully.";
-            }
-            return new TaNotificationEntry(
-                    "APP:" + application.getId() + ":" + (status == null ? "UNKNOWN" : status.name()),
-                    type,
-                    message,
-                    safeText(application.getAppliedDate()));
-        }
-
-        private void updateDashboardNotificationSummary(List<TaNotificationEntry> notifications, int unreadCount) {
+        private void updateDashboardNotificationSummary(List<NotificationEntry> notifications, int unreadCount) {
             if (notifications.isEmpty()) {
                 dashboardNotificationLabel.setText("No notifications yet.");
                 return;
             }
-            TaNotificationEntry latest = notifications.get(0);
+            NotificationEntry latest = notifications.get(0);
             dashboardNotificationLabel.setText(
-                    "Notifications: " + unreadCount + " unread. Latest update: " + latest.type + ".");
+                    "Notifications: " + unreadCount + " unread. Latest update: " + latest.getType() + ".");
         }
 
         private void setSelectedNotificationRead(boolean read) {
@@ -1989,6 +1921,11 @@ public class SwingApp {
                 showDashboardActionFeedback("Application submitted. Notification center has been refreshed.");
             } catch (IllegalArgumentException ex) {
                 JOptionPane.showMessageDialog(frame, ex.getMessage());
+                String closedMessage = TaNotificationUtil.jobClosedApplyMessage(findJobById(jobId).orElse(null));
+                if (!closedMessage.isBlank()) {
+                    showDashboardActionFeedback(closedMessage);
+                    refreshNotifications();
+                }
             }
         }
 
@@ -2998,6 +2935,112 @@ public class SwingApp {
                     s.getRiskLevel().label()
                 });
             }
+            if (workloadModel.getRowCount() == 0) {
+                showToast("No Overloaded TAs", "All TAs are within their available hours.", JOptionPane.INFORMATION_MESSAGE);
+            }
+        }
+
+        private void showWorkloadReport() {
+            String report = adminService.getWorkloadReport();
+            JTextArea textArea = new JTextArea(report);
+            textArea.setFont(new Font("Monospaced", Font.PLAIN, 12));
+            textArea.setEditable(false);
+            textArea.setRows(20);
+            textArea.setColumns(60);
+            JScrollPane scrollPane = new JScrollPane(textArea);
+            JOptionPane.showMessageDialog(frame, scrollPane, "Workload Report", JOptionPane.PLAIN_MESSAGE);
+        }
+
+        private void filterWorkloadTable() {
+            String keyword = workloadSearchField.getText();
+            workloadModel.setRowCount(0);
+            List<AdminService.TAWorkloadSummary> source = keyword == null || keyword.isBlank()
+                    ? adminService.getAllTAWorkloads()
+                    : adminService.searchTAWorkload(keyword);
+            for (AdminService.TAWorkloadSummary s : source) {
+                workloadModel.addRow(new Object[] {
+                    s.getTaUserId(),
+                    s.getTaName(),
+                    s.getAvailableHours(),
+                    s.getTotalAssignedHours(),
+                    s.getRemainingHours(),
+                    s.getRiskLevel().label()
+                });
+            }
+        }
+
+        private void showTADetailDialog() {
+            int row = workloadTable.getSelectedRow();
+            if (row < 0) return;
+            String taId = String.valueOf(workloadModel.getValueAt(row, 0));
+            AdminService.TAWorkloadSummary s;
+            try {
+                s = adminService.getTAWorkload(taId);
+            } catch (IllegalArgumentException ex) {
+                JOptionPane.showMessageDialog(frame, ex.getMessage());
+                return;
+            }
+            AdminService.WorkloadTrend trend = adminService.getWorkloadTrend(s);
+            StringBuilder sb = new StringBuilder();
+            sb.append("TA ID:           ").append(s.getTaUserId()).append("\n");
+            sb.append("Name:            ").append(s.getTaName()).append("\n");
+            sb.append("Available h/wk:  ").append(s.getAvailableHours()).append("h\n");
+            sb.append("Assigned h/wk:   ").append(s.getTotalAssignedHours()).append("h\n");
+            sb.append("Remaining h/wk:  ").append(s.getRemainingHours()).append("h\n");
+            sb.append("Utilisation:     ").append(String.format("%.0f%%", s.getUtilisationPercent())).append("\n");
+            sb.append("Risk Level:      ").append(s.getRiskLevel().label()).append("\n");
+            sb.append("Workload Trend:  ").append(trend.label()).append("\n");
+            sb.append("\nAccepted Positions (").append(s.getAcceptedJobCount()).append("):\n");
+            if (s.getAcceptedJobDescriptions().isEmpty()) {
+                sb.append("  (none)\n");
+            } else {
+                for (String desc : s.getAcceptedJobDescriptions()) {
+                    sb.append("  • ").append(desc).append("\n");
+                }
+            }
+            JTextArea area = new JTextArea(sb.toString());
+            area.setFont(new Font("Monospaced", Font.PLAIN, 13));
+            area.setEditable(false);
+            area.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
+            JOptionPane.showMessageDialog(frame, new JScrollPane(area),
+                    "TA Detail — " + s.getTaName(), JOptionPane.PLAIN_MESSAGE);
+        }
+
+        private JPanel buildSummaryBar() {
+            JPanel bar = new JPanel(new java.awt.GridLayout(1, 4, 12, 0));
+            bar.setBackground(new Color(245, 246, 250));
+            bar.setBorder(BorderFactory.createCompoundBorder(
+                    BorderFactory.createMatteBorder(0, 0, 1, 0, new Color(220, 223, 230)),
+                    BorderFactory.createEmptyBorder(10, 20, 10, 20)));
+            bar.add(buildSummaryCard("Total Jobs", summaryTotalJobs, new Color(99, 102, 241)));
+            bar.add(buildSummaryCard("Filled Jobs", summaryFilledJobs, new Color(16, 185, 129)));
+            bar.add(buildSummaryCard("Overloaded TAs", summaryOverloaded, new Color(239, 68, 68)));
+            bar.add(buildSummaryCard("High-Risk TAs", summaryHighRisk, new Color(245, 158, 11)));
+            return bar;
+        }
+
+        private JPanel buildSummaryCard(String title, JLabel valueLabel, Color accent) {
+            JPanel card = new JPanel(new BorderLayout(4, 4));
+            card.setBackground(Color.WHITE);
+            card.setBorder(BorderFactory.createCompoundBorder(
+                    BorderFactory.createLineBorder(new Color(220, 223, 230), 1, true),
+                    BorderFactory.createEmptyBorder(8, 14, 8, 14)));
+            JLabel titleLbl = new JLabel(title);
+            titleLbl.setFont(new Font("Segoe UI", Font.PLAIN, 11));
+            titleLbl.setForeground(new Color(107, 114, 128));
+            valueLabel.setFont(new Font("Segoe UI", Font.BOLD, 22));
+            valueLabel.setForeground(accent);
+            card.add(titleLbl, BorderLayout.NORTH);
+            card.add(valueLabel, BorderLayout.CENTER);
+            return card;
+        }
+
+        private void refreshSummaryBar() {
+            AdminService.RecruitmentSnapshot snap = adminService.getRecruitmentSnapshot();
+            summaryTotalJobs.setText(String.valueOf(snap.totalJobs));
+            summaryFilledJobs.setText(String.valueOf(snap.filledJobs));
+            summaryOverloaded.setText(String.valueOf(snap.overloadedTAs));
+            summaryHighRisk.setText(String.valueOf(snap.atRiskTAs));
         }
 
         private void showTADetailDialog() {
@@ -3166,17 +3209,4 @@ public class SwingApp {
         }
     }
 
-    private static class TaNotificationEntry {
-        private final String id;
-        private final String type;
-        private final String message;
-        private final String date;
-
-        private TaNotificationEntry(String id, String type, String message, String date) {
-            this.id = id;
-            this.type = type;
-            this.message = message;
-            this.date = date;
-        }
-    }
 }
