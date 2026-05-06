@@ -2908,37 +2908,6 @@ public class SwingApp {
             }
         }
 
-        private void showWorkloadReport() {
-            String report = adminService.getWorkloadReport();
-            JTextArea textArea = new JTextArea(report);
-            textArea.setFont(new Font("Monospaced", Font.PLAIN, 12));
-            textArea.setEditable(false);
-            textArea.setRows(20);
-            textArea.setColumns(60);
-            JScrollPane scrollPane = new JScrollPane(textArea);
-            JOptionPane.showMessageDialog(frame, scrollPane, "Workload Report", JOptionPane.PLAIN_MESSAGE);
-        }
-
-        private void filterWorkloadTable() {
-            String keyword = workloadSearchField.getText();
-            workloadModel.setRowCount(0);
-            List<AdminService.TAWorkloadSummary> source = keyword == null || keyword.isBlank()
-                    ? adminService.getAllTAWorkloads()
-                    : adminService.searchTAWorkload(keyword);
-            for (AdminService.TAWorkloadSummary s : source) {
-                workloadModel.addRow(new Object[] {
-                    s.getTaUserId(),
-                    s.getTaName(),
-                    s.getAvailableHours(),
-                    s.getTotalAssignedHours(),
-                    s.getRemainingHours(),
-                    s.getRiskLevel().label()
-                });
-            }
-            if (workloadModel.getRowCount() == 0) {
-                showToast("No Overloaded TAs", "All TAs are within their available hours.", JOptionPane.INFORMATION_MESSAGE);
-            }
-        }
 
         private void showWorkloadReport() {
             String report = adminService.getWorkloadReport();
@@ -2967,43 +2936,6 @@ public class SwingApp {
                     s.getRiskLevel().label()
                 });
             }
-        }
-
-        private void showTADetailDialog() {
-            int row = workloadTable.getSelectedRow();
-            if (row < 0) return;
-            String taId = String.valueOf(workloadModel.getValueAt(row, 0));
-            AdminService.TAWorkloadSummary s;
-            try {
-                s = adminService.getTAWorkload(taId);
-            } catch (IllegalArgumentException ex) {
-                JOptionPane.showMessageDialog(frame, ex.getMessage());
-                return;
-            }
-            AdminService.WorkloadTrend trend = adminService.getWorkloadTrend(s);
-            StringBuilder sb = new StringBuilder();
-            sb.append("TA ID:           ").append(s.getTaUserId()).append("\n");
-            sb.append("Name:            ").append(s.getTaName()).append("\n");
-            sb.append("Available h/wk:  ").append(s.getAvailableHours()).append("h\n");
-            sb.append("Assigned h/wk:   ").append(s.getTotalAssignedHours()).append("h\n");
-            sb.append("Remaining h/wk:  ").append(s.getRemainingHours()).append("h\n");
-            sb.append("Utilisation:     ").append(String.format("%.0f%%", s.getUtilisationPercent())).append("\n");
-            sb.append("Risk Level:      ").append(s.getRiskLevel().label()).append("\n");
-            sb.append("Workload Trend:  ").append(trend.label()).append("\n");
-            sb.append("\nAccepted Positions (").append(s.getAcceptedJobCount()).append("):\n");
-            if (s.getAcceptedJobDescriptions().isEmpty()) {
-                sb.append("  (none)\n");
-            } else {
-                for (String desc : s.getAcceptedJobDescriptions()) {
-                    sb.append("  • ").append(desc).append("\n");
-                }
-            }
-            JTextArea area = new JTextArea(sb.toString());
-            area.setFont(new Font("Monospaced", Font.PLAIN, 13));
-            area.setEditable(false);
-            area.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
-            JOptionPane.showMessageDialog(frame, new JScrollPane(area),
-                    "TA Detail — " + s.getTaName(), JOptionPane.PLAIN_MESSAGE);
         }
 
         private JPanel buildSummaryBar() {
@@ -3078,43 +3010,6 @@ public class SwingApp {
             area.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
             JOptionPane.showMessageDialog(frame, new JScrollPane(area),
                     "TA Detail — " + s.getTaName(), JOptionPane.PLAIN_MESSAGE);
-        }
-
-        private JPanel buildSummaryBar() {
-            JPanel bar = new JPanel(new java.awt.GridLayout(1, 4, 12, 0));
-            bar.setBackground(new Color(245, 246, 250));
-            bar.setBorder(BorderFactory.createCompoundBorder(
-                    BorderFactory.createMatteBorder(0, 0, 1, 0, new Color(220, 223, 230)),
-                    BorderFactory.createEmptyBorder(10, 20, 10, 20)));
-            bar.add(buildSummaryCard("Total Jobs", summaryTotalJobs, new Color(99, 102, 241)));
-            bar.add(buildSummaryCard("Filled Jobs", summaryFilledJobs, new Color(16, 185, 129)));
-            bar.add(buildSummaryCard("Overloaded TAs", summaryOverloaded, new Color(239, 68, 68)));
-            bar.add(buildSummaryCard("High-Risk TAs", summaryHighRisk, new Color(245, 158, 11)));
-            return bar;
-        }
-
-        private JPanel buildSummaryCard(String title, JLabel valueLabel, Color accent) {
-            JPanel card = new JPanel(new BorderLayout(4, 4));
-            card.setBackground(Color.WHITE);
-            card.setBorder(BorderFactory.createCompoundBorder(
-                    BorderFactory.createLineBorder(new Color(220, 223, 230), 1, true),
-                    BorderFactory.createEmptyBorder(8, 14, 8, 14)));
-            JLabel titleLbl = new JLabel(title);
-            titleLbl.setFont(new Font("Segoe UI", Font.PLAIN, 11));
-            titleLbl.setForeground(new Color(107, 114, 128));
-            valueLabel.setFont(new Font("Segoe UI", Font.BOLD, 22));
-            valueLabel.setForeground(accent);
-            card.add(titleLbl, BorderLayout.NORTH);
-            card.add(valueLabel, BorderLayout.CENTER);
-            return card;
-        }
-
-        private void refreshSummaryBar() {
-            AdminService.RecruitmentSnapshot snap = adminService.getRecruitmentSnapshot();
-            summaryTotalJobs.setText(String.valueOf(snap.totalJobs));
-            summaryFilledJobs.setText(String.valueOf(snap.filledJobs));
-            summaryOverloaded.setText(String.valueOf(snap.overloadedTAs));
-            summaryHighRisk.setText(String.valueOf(snap.atRiskTAs));
         }
 
         private void createMoAccount() {
