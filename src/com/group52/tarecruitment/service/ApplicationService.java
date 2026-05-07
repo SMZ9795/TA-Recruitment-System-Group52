@@ -80,6 +80,22 @@ public class ApplicationService {
         return new ArrayList<>(applicationRepository.findByJobId(jobId.trim()));
     }
 
+    public int getAcceptedWorkloadHoursForTa(String taUserId) {
+        if (taUserId == null || taUserId.isBlank()) {
+            return 0;
+        }
+        int totalHours = 0;
+        for (Application application : applicationRepository.findByTaUserId(taUserId.trim())) {
+            if (application.getStatus() != ApplicationStatus.ACCEPTED) {
+                continue;
+            }
+            totalHours += jobRepository.findById(application.getJobId())
+                    .map(Job::getHoursPerWeek)
+                    .orElse(0);
+        }
+        return totalHours;
+    }
+
     public Application updateStatus(String applicationId, ApplicationStatus newStatus) {
         throw new IllegalArgumentException("Use updateStatus(applicationId, operatorUserId, newStatus).");
     }

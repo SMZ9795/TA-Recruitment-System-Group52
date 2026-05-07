@@ -9,8 +9,10 @@ import com.group52.tarecruitment.model.User;
 import com.group52.tarecruitment.service.AdminService;
 import com.group52.tarecruitment.service.ApplicationService;
 import com.group52.tarecruitment.service.AiMatchingService;
+import com.group52.tarecruitment.service.AiMatchingServiceAdapter;
 import com.group52.tarecruitment.service.AuthService;
 import com.group52.tarecruitment.service.JobService;
+import com.group52.tarecruitment.service.MoApplicantRankingService;
 import com.group52.tarecruitment.util.CvValidationUtil;
 import com.group52.tarecruitment.util.JobFilterUtil;
 import com.group52.tarecruitment.util.TaNotificationUtil;
@@ -41,13 +43,16 @@ import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
 import javax.swing.JButton;
+import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
 import javax.swing.JFileChooser;
@@ -57,19 +62,18 @@ import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JPasswordField;
 import javax.swing.JScrollPane;
+import javax.swing.JSpinner;
 import javax.swing.JTable;
 import javax.swing.JTextArea;
 import javax.swing.JTextField;
 import javax.swing.SwingUtilities;
-import javax.swing.RowSorter;
-import javax.swing.SortOrder;
 import javax.swing.ImageIcon;
+import javax.swing.SpinnerNumberModel;
 import javax.swing.JToggleButton;
 import javax.swing.SwingConstants;
 import javax.swing.filechooser.FileNameExtensionFilter;
 import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.table.DefaultTableModel;
-import javax.swing.table.TableRowSorter;
 
 public class SwingApp {
     private static final String PAGE_LOGIN = "login";
@@ -78,6 +82,7 @@ public class SwingApp {
     private static final String PAGE_MO = "mo";
     private static final String PAGE_ADMIN = "admin";
     private static final String BRAND_TAGLINE = "BUPT x QMUL TA Recruitment";
+    private static final int DEFAULT_MO_MATCH_THRESHOLD = 0;
     private static final Color QMUL_PURPLE = new Color(75, 46, 131);
     private static final Color QMUL_PURPLE_DARK = new Color(58, 31, 107);
     private static final Color QMUL_PURPLE_LIGHT = new Color(123, 92, 240);
@@ -121,6 +126,7 @@ public class SwingApp {
     private final JobService jobService;
     private final ApplicationService applicationService;
     private final AiMatchingService aiMatchingService;
+    private final MoApplicantRankingService moApplicantRankingService;
     private final AdminService adminService;
     private final Path dataDirectory;
 
@@ -149,6 +155,8 @@ public class SwingApp {
         this.jobService = jobService;
         this.applicationService = applicationService;
         this.aiMatchingService = new AiMatchingService();
+        this.moApplicantRankingService = new MoApplicantRankingService(
+                applicationService, new AiMatchingServiceAdapter(this.aiMatchingService));
         this.dataDirectory = dataDirectory;
         this.adminService = adminService;
     }
@@ -493,16 +501,6 @@ public class SwingApp {
         return findUserById(job.getPostedByMoId()).map(User::getName).orElse("Unknown MO");
     }
 
-    private int acceptedHoursForTa(String taUserId) {
-        int total = 0;
-        for (Application application : applicationService.getApplicationsByTaUserId(taUserId)) {
-            if (application.getStatus() == ApplicationStatus.ACCEPTED) {
-                total += findJobById(application.getJobId()).map(Job::getHoursPerWeek).orElse(0);
-            }
-        }
-        return total;
-    }
-
     private int acceptedApplicantsForJob(String jobId) {
         int count = 0;
         for (Application application : applicationService.getApplicationsByJobId(jobId)) {
@@ -674,6 +672,40 @@ public class SwingApp {
                 if (!isSelected) {
                     setForeground(fg);
                     setBackground(bg);
+                }
+                return this;
+            }
+        });
+    }
+
+    private void applyIntegerSuffixRenderer(JTable table, int columnIndex, String suffix) {
+        table.getColumnModel().getColumn(columnIndex).setCellRenderer(new DefaultTableCellRenderer() {
+            @Override
+            public java.awt.Component getTableCellRendererComponent(
+                    JTable table, Object value, boolean isSelected, boolean hasFocus, int row, int column) {
+                super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
+                setHorizontalAlignment(CENTER);
+                setText(value == null ? "" : value + suffix);
+                return this;
+            }
+        });
+    }
+
+    private void applyRecommendationRenderer(JTable table, int columnIndex) {
+        table.getColumnModel().getColumn(columnIndex).setCellRenderer(new DefaultTableCellRenderer() {
+            @Override
+            public java.awt.Component getTableCellRendererComponent(
+                    JTable table, Object value, boolean isSelected, boolean hasFocus, int row, int column) {
+                super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
+                String recommendation = value == null ? "" : String.valueOf(value).trim();
+                setHorizontalAlignment(CENTER);
+                setFont(new Font("Segoe UI", Font.BOLD, 12));
+                if (!isSelected) {
+                    if ("Recommended".equalsIgnoreCase(recommendation)) {
+                        setForeground(new Color(31, 122, 78));
+                    } else {
+                        setForeground(new Color(183, 77, 77));
+                    }
                 }
                 return this;
             }
@@ -2115,12 +2147,15 @@ public class SwingApp {
         private final DefaultTableModel applicantsModel;
         private final JTable applicantsTable;
         private final JLabel applicantsTitle;
+        private final JCheckBox pendingOnlyCheckBox;
+        private final JSpinner matchThresholdSpinner;
         private final JTextField profileNameField;
         private final JTextField profileProgrammeField;
         private final JTextField profileEmailField;
         private final JTextField profileHoursField;
         private User user;
         private String selectedJobId;
+        private MoApplicantRankingService.SortMode applicantSortMode;
 
         private MoPanel() {
             setLayout(new BorderLayout());
@@ -2148,6 +2183,7 @@ public class SwingApp {
                 }
             };
             add(buildNavigationPanel(navLabels, navActions), BorderLayout.WEST);
+            applicantSortMode = MoApplicantRankingService.SortMode.MATCH_SCORE_DESC;
 
             jobsModel = new DefaultTableModel(
                     new Object[] {"Job ID", "Module", "Positions", "Filled", "Status", "Deadline"}, 0) {
@@ -2196,26 +2232,62 @@ public class SwingApp {
             dashboardPanel.add(jobActions, BorderLayout.SOUTH);
 
             applicantsModel = new DefaultTableModel(
-                    new Object[] {"App ID", "Applicant", "Year", "AI Match", "Workload", "Status"}, 0) {
+                    new Object[] {
+                        "App ID", "Applicant", "Year", "Match Score", "Missing Skills",
+                        "Current Workload", "Recommendation", "Status"
+                    }, 0) {
                 @Override
                 public boolean isCellEditable(int row, int column) {
                     return false;
                 }
+
+                @Override
+                public Class<?> getColumnClass(int columnIndex) {
+                    switch (columnIndex) {
+                        case 2:
+                        case 3:
+                        case 5:
+                            return Integer.class;
+                        default:
+                            return String.class;
+                    }
+                }
             };
             applicantsTable = new JTable(applicantsModel);
             styleDataTable(applicantsTable);
-            applyStatusRenderer(applicantsTable, 5);
+            applyIntegerSuffixRenderer(applicantsTable, 3, "%");
+            applyIntegerSuffixRenderer(applicantsTable, 5, "h/week");
+            applyRecommendationRenderer(applicantsTable, 6);
+            applyStatusRenderer(applicantsTable, 7);
             installTableRowHover(applicantsTable);
-            TableRowSorter<DefaultTableModel> applicantsSorter =
-                    (TableRowSorter<DefaultTableModel>) applicantsTable.getRowSorter();
-            applicantsSorter.setComparator(3, (left, right) ->
-                    Integer.compare(extractMatchScore(String.valueOf(left)), extractMatchScore(String.valueOf(right))));
             JPanel applicantsPanel = new JPanel(new BorderLayout(0, 16));
             applicantsPanel.setOpaque(false);
             applicantsTitle = new JLabel("Applicants List");
+            applicantsTitle.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+            applicantsTitle.setForeground(MUTED_TEXT_COLOR);
             JPanel applicantsHeader = new JPanel(new BorderLayout());
             applicantsHeader.setOpaque(false);
-            applicantsHeader.add(createSectionTitle("Applicants", "Review candidates and AI match scores."), BorderLayout.WEST);
+            JPanel applicantsHeaderText = new JPanel();
+            applicantsHeaderText.setOpaque(false);
+            applicantsHeaderText.setLayout(new BoxLayout(applicantsHeaderText, BoxLayout.Y_AXIS));
+            applicantsHeaderText.add(createSectionTitle(
+                    "Applicants", "Review pending candidates with match score, missing skills, and workload."));
+            applicantsHeaderText.add(Box.createVerticalStrut(6));
+            applicantsHeaderText.add(applicantsTitle);
+            applicantsHeader.add(applicantsHeaderText, BorderLayout.WEST);
+            JPanel applicantsControls = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0));
+            applicantsControls.setOpaque(false);
+            pendingOnlyCheckBox = new JCheckBox("Pending only", true);
+            pendingOnlyCheckBox.setOpaque(false);
+            pendingOnlyCheckBox.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+            pendingOnlyCheckBox.addActionListener(e -> refreshApplicants());
+            applicantsControls.add(pendingOnlyCheckBox);
+            applicantsControls.add(new JLabel("Min match score"));
+            matchThresholdSpinner = new JSpinner(new SpinnerNumberModel(DEFAULT_MO_MATCH_THRESHOLD, 0, 100, 5));
+            matchThresholdSpinner.setPreferredSize(new Dimension(70, 32));
+            matchThresholdSpinner.addChangeListener(e -> refreshApplicants());
+            applicantsControls.add(matchThresholdSpinner);
+            applicantsHeader.add(applicantsControls, BorderLayout.EAST);
             applicantsPanel.add(createCardPanel(applicantsHeader, 18, 18, 18, 18), BorderLayout.NORTH);
             JScrollPane applicantsScrollPane = new JScrollPane(applicantsTable);
             applicantsScrollPane.setBorder(BorderFactory.createEmptyBorder());
@@ -2238,14 +2310,18 @@ public class SwingApp {
             JButton refreshApplicantsButton = new JButton("Refresh");
             styleSecondaryButton(refreshApplicantsButton);
             refreshApplicantsButton.addActionListener(e -> refreshApplicants());
-            JButton sortAiButton = new JButton("Sort by AI Match");
-            stylePrimaryButton(sortAiButton);
-            sortAiButton.addActionListener(e -> sortApplicantsByAiMatch());
+            JButton sortMatchButton = new JButton("Sort by Match Score");
+            stylePrimaryButton(sortMatchButton);
+            sortMatchButton.addActionListener(e -> sortApplicantsByMatchScore());
+            JButton sortWorkloadButton = new JButton("Sort by Workload");
+            styleSecondaryButton(sortWorkloadButton);
+            sortWorkloadButton.addActionListener(e -> sortApplicantsByWorkload());
             applicantActions.add(acceptButton);
             applicantActions.add(rejectButton);
             applicantActions.add(viewProfileButton);
             applicantActions.add(viewCvButton);
-            applicantActions.add(sortAiButton);
+            applicantActions.add(sortMatchButton);
+            applicantActions.add(sortWorkloadButton);
             applicantActions.add(refreshApplicantsButton);
             applicantsPanel.add(applicantActions, BorderLayout.SOUTH);
 
@@ -2331,7 +2407,8 @@ public class SwingApp {
                 JOptionPane.showMessageDialog(frame, "Please select a job first.");
                 return;
             }
-            String jobId = String.valueOf(jobsModel.getValueAt(row, 0));
+            int modelRow = jobsTable.convertRowIndexToModel(row);
+            String jobId = String.valueOf(jobsModel.getValueAt(modelRow, 0));
             Job job = findJobById(jobId).orElse(null);
             if (job == null) {
                 JOptionPane.showMessageDialog(frame, "Job not found.");
@@ -2360,7 +2437,8 @@ public class SwingApp {
                 JOptionPane.showMessageDialog(frame, "Please select a job first.");
                 return;
             }
-            String jobId = String.valueOf(jobsModel.getValueAt(row, 0));
+            int modelRow = jobsTable.convertRowIndexToModel(row);
+            String jobId = String.valueOf(jobsModel.getValueAt(modelRow, 0));
             int confirm = JOptionPane.showConfirmDialog(
                     frame, "Delete selected job?", "Confirm", JOptionPane.YES_NO_OPTION);
             if (confirm != JOptionPane.YES_OPTION) {
@@ -2380,7 +2458,8 @@ public class SwingApp {
                 JOptionPane.showMessageDialog(frame, "Please select a job first.");
                 return;
             }
-            selectedJobId = String.valueOf(jobsModel.getValueAt(row, 0));
+            int modelRow = jobsTable.convertRowIndexToModel(row);
+            selectedJobId = String.valueOf(jobsModel.getValueAt(modelRow, 0));
             refreshApplicants();
             contentLayout.show(contentPanel, TAB_APPLICANTS);
         }
@@ -2397,54 +2476,56 @@ public class SwingApp {
                 return;
             }
             applicantsTitle.setText("Applicants for " + selectedJob.getModuleCode() + " - " + selectedJob.getModuleName());
-            for (Application application : applicationService.getApplicationsByJobId(selectedJobId)) {
-                User ta = findUserById(application.getTaUserId()).orElse(null);
-                if (ta == null) {
-                    continue;
-                }
-                AiMatchingService.MatchResult matchResult =
-                        aiMatchingService.analyzeSkills(ta.getSkills(), selectedJob.getRequiredSkills());
-                String missingSkills = matchResult.getMissingSkills().isEmpty()
-                        ? "None"
-                        : String.join(", ", matchResult.getMissingSkills());
+            List<Application> applications = applicationService.getApplicationsByJobId(selectedJobId);
+            Map<String, User> applicantsById = new LinkedHashMap<>();
+            for (Application application : applications) {
+                findUserById(application.getTaUserId())
+                        .ifPresent(user -> applicantsById.put(user.getId(), user));
+            }
+            MoApplicantRankingService.RankingOptions options = new MoApplicantRankingService.RankingOptions(
+                    pendingOnlyCheckBox.isSelected(),
+                    (Integer) matchThresholdSpinner.getValue(),
+                    applicantSortMode);
+            for (MoApplicantRankingService.RankedApplicant applicant : moApplicantRankingService.rankApplicants(
+                    selectedJob, applications, applicantsById, options)) {
                 applicantsModel.addRow(new Object[] {
-                    application.getId(),
-                    ta.getName(),
-                    ta.getYearOfStudy(),
-                    scoreProgressBar(matchResult.getScore()) + " (" + missingSkills + ")",
-                    acceptedHoursForTa(ta.getId()) + "h/week",
-                    application.getStatus().name()
+                    applicant.getApplicationId(),
+                    applicant.getApplicantName(),
+                    applicant.getYearOfStudy(),
+                    applicant.getMatchScore(),
+                    applicant.getMissingSkillsText(),
+                    applicant.getCurrentWorkload(),
+                    applicant.getRecommendationLabel(),
+                    applicant.getStatus().name()
                 });
             }
         }
 
-        private int extractMatchScore(String scoreText) {
-            if (scoreText == null || scoreText.isBlank()) {
-                return 0;
-            }
-            int percentIndex = scoreText.indexOf('%');
-            String numeric = percentIndex >= 0 ? scoreText.substring(0, percentIndex) : scoreText;
-            try {
-                return Integer.parseInt(numeric.trim());
-            } catch (NumberFormatException ex) {
-                return 0;
-            }
+        private void sortApplicantsByMatchScore() {
+            applicantSortMode = MoApplicantRankingService.SortMode.MATCH_SCORE_DESC;
+            refreshApplicants();
         }
 
-        private void sortApplicantsByAiMatch() {
-            @SuppressWarnings("unchecked")
-            TableRowSorter<DefaultTableModel> sorter = (TableRowSorter<DefaultTableModel>) applicantsTable.getRowSorter();
-            sorter.setSortKeys(List.of(new RowSorter.SortKey(3, SortOrder.DESCENDING)));
-            sorter.sort();
+        private void sortApplicantsByWorkload() {
+            applicantSortMode = MoApplicantRankingService.SortMode.WORKLOAD_ASC;
+            refreshApplicants();
+        }
+
+        private String selectedApplicantApplicationId() {
+            int row = applicantsTable.getSelectedRow();
+            if (row < 0) {
+                return null;
+            }
+            int modelRow = applicantsTable.convertRowIndexToModel(row);
+            return String.valueOf(applicantsModel.getValueAt(modelRow, 0));
         }
 
         private void updateApplicantStatus(ApplicationStatus status) {
-            int row = applicantsTable.getSelectedRow();
-            if (row < 0) {
+            String appId = selectedApplicantApplicationId();
+            if (appId == null) {
                 JOptionPane.showMessageDialog(frame, "Please select an applicant first.");
                 return;
             }
-            String appId = String.valueOf(applicantsModel.getValueAt(row, 0));
             try {
                 applicationService.updateApplicationStatus(appId, user.getId(), status);
                 refreshApplicants();
@@ -2459,12 +2540,11 @@ public class SwingApp {
         }
 
         private void viewSelectedApplicantCv() {
-            int row = applicantsTable.getSelectedRow();
-            if (row < 0) {
+            String appId = selectedApplicantApplicationId();
+            if (appId == null) {
                 JOptionPane.showMessageDialog(frame, "Please select an applicant first.");
                 return;
             }
-            String appId = String.valueOf(applicantsModel.getValueAt(row, 0));
             Optional<Application> application = applicationService.getApplicationById(appId);
             if (application.isEmpty()) {
                 JOptionPane.showMessageDialog(frame, "Application not found.");
@@ -2479,12 +2559,11 @@ public class SwingApp {
         }
 
         private void viewSelectedApplicantProfile() {
-            int row = applicantsTable.getSelectedRow();
-            if (row < 0) {
+            String appId = selectedApplicantApplicationId();
+            if (appId == null) {
                 JOptionPane.showMessageDialog(frame, "Please select an applicant first.");
                 return;
             }
-            String appId = String.valueOf(applicantsModel.getValueAt(row, 0));
             Optional<Application> application = applicationService.getApplicationById(appId);
             if (application.isEmpty()) {
                 JOptionPane.showMessageDialog(frame, "Application not found.");
