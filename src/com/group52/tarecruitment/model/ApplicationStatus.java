@@ -14,7 +14,7 @@ public enum ApplicationStatus {
         }
         String normalized = rawValue.trim().toUpperCase();
         if ("PENDING".equals(normalized)) {
-            return APPLIED;
+            return PENDING;
         }
         return ApplicationStatus.valueOf(normalized);
     }
