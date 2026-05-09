@@ -82,7 +82,7 @@ public class SwingApp {
     private static final String PAGE_MO = "mo";
     private static final String PAGE_ADMIN = "admin";
     private static final String BRAND_TAGLINE = "BUPT x QMUL TA Recruitment";
-    private static final int DEFAULT_MO_MATCH_THRESHOLD = 0;
+    private static final int DEFAULT_MO_MATCH_THRESHOLD = MoApplicantRankingService.DEFAULT_MINIMUM_MATCH_SCORE;
     private static final Color QMUL_PURPLE = new Color(75, 46, 131);
     private static final Color QMUL_PURPLE_DARK = new Color(58, 31, 107);
     private static final Color QMUL_PURPLE_LIGHT = new Color(123, 92, 240);
@@ -2149,6 +2149,7 @@ public class SwingApp {
         private final JLabel applicantsTitle;
         private final JCheckBox pendingOnlyCheckBox;
         private final JSpinner matchThresholdSpinner;
+        private final Map<String, MoApplicantRankingService.RankedApplicant> rankedApplicantsByApplicationId;
         private final JTextField profileNameField;
         private final JTextField profileProgrammeField;
         private final JTextField profileEmailField;
@@ -2184,6 +2185,7 @@ public class SwingApp {
             };
             add(buildNavigationPanel(navLabels, navActions), BorderLayout.WEST);
             applicantSortMode = MoApplicantRankingService.SortMode.MATCH_SCORE_DESC;
+            rankedApplicantsByApplicationId = new LinkedHashMap<>();
 
             jobsModel = new DefaultTableModel(
                     new Object[] {"Job ID", "Module", "Positions", "Filled", "Status", "Deadline"}, 0) {
@@ -2307,6 +2309,9 @@ public class SwingApp {
             JButton viewCvButton = new JButton("View Applicant CV");
             styleSecondaryButton(viewCvButton);
             viewCvButton.addActionListener(e -> viewSelectedApplicantCv());
+            JButton explanationButton = new JButton("View Explanation");
+            styleSecondaryButton(explanationButton);
+            explanationButton.addActionListener(e -> viewSelectedApplicantExplanation());
             JButton refreshApplicantsButton = new JButton("Refresh");
             styleSecondaryButton(refreshApplicantsButton);
             refreshApplicantsButton.addActionListener(e -> refreshApplicants());
@@ -2320,6 +2325,7 @@ public class SwingApp {
             applicantActions.add(rejectButton);
             applicantActions.add(viewProfileButton);
             applicantActions.add(viewCvButton);
+            applicantActions.add(explanationButton);
             applicantActions.add(sortMatchButton);
             applicantActions.add(sortWorkloadButton);
             applicantActions.add(refreshApplicantsButton);
@@ -2465,7 +2471,9 @@ public class SwingApp {
         }
 
         private void refreshApplicants() {
+            String selectedApplicationId = selectedApplicantApplicationId();
             applicantsModel.setRowCount(0);
+            rankedApplicantsByApplicationId.clear();
             if (selectedJobId == null || selectedJobId.isBlank()) {
                 applicantsTitle.setText("Applicants List (Select a job in Dashboard first)");
                 return;
@@ -2488,6 +2496,7 @@ public class SwingApp {
                     applicantSortMode);
             for (MoApplicantRankingService.RankedApplicant applicant : moApplicantRankingService.rankApplicants(
                     selectedJob, applications, applicantsById, options)) {
+                rankedApplicantsByApplicationId.put(applicant.getApplicationId(), applicant);
                 applicantsModel.addRow(new Object[] {
                     applicant.getApplicationId(),
                     applicant.getApplicantName(),
@@ -2499,16 +2508,25 @@ public class SwingApp {
                     applicant.getStatus().name()
                 });
             }
+            selectApplicantByApplicationId(selectedApplicationId);
         }
 
         private void sortApplicantsByMatchScore() {
             applicantSortMode = MoApplicantRankingService.SortMode.MATCH_SCORE_DESC;
+            clearApplicantsTableSortKeys();
             refreshApplicants();
         }
 
         private void sortApplicantsByWorkload() {
             applicantSortMode = MoApplicantRankingService.SortMode.WORKLOAD_ASC;
+            clearApplicantsTableSortKeys();
             refreshApplicants();
+        }
+
+        private void clearApplicantsTableSortKeys() {
+            if (applicantsTable.getRowSorter() != null) {
+                applicantsTable.getRowSorter().setSortKeys(List.of());
+            }
         }
 
         private String selectedApplicantApplicationId() {
@@ -2518,6 +2536,23 @@ public class SwingApp {
             }
             int modelRow = applicantsTable.convertRowIndexToModel(row);
             return String.valueOf(applicantsModel.getValueAt(modelRow, 0));
+        }
+
+        private void selectApplicantByApplicationId(String applicationId) {
+            if (applicationId == null || applicationId.isBlank()) {
+                return;
+            }
+            for (int modelRow = 0; modelRow < applicantsModel.getRowCount(); modelRow++) {
+                if (!applicationId.equalsIgnoreCase(String.valueOf(applicantsModel.getValueAt(modelRow, 0)))) {
+                    continue;
+                }
+                int viewRow = applicantsTable.convertRowIndexToView(modelRow);
+                if (viewRow >= 0) {
+                    applicantsTable.getSelectionModel().setSelectionInterval(viewRow, viewRow);
+                    applicantsTable.scrollRectToVisible(applicantsTable.getCellRect(viewRow, 0, true));
+                }
+                return;
+            }
         }
 
         private void updateApplicantStatus(ApplicationStatus status) {
@@ -2556,6 +2591,32 @@ public class SwingApp {
                 return;
             }
             openCvFile(ta.getCvFilePath());
+        }
+
+        private void viewSelectedApplicantExplanation() {
+            String appId = selectedApplicantApplicationId();
+            if (appId == null) {
+                JOptionPane.showMessageDialog(frame, "Please select an applicant first.");
+                return;
+            }
+            Job selectedJob = selectedJobId == null ? null : findJobById(selectedJobId).orElse(null);
+            MoApplicantRankingService.RankedApplicant applicant = rankedApplicantsByApplicationId.get(appId);
+            if (applicant == null) {
+                JOptionPane.showMessageDialog(frame, "Applicant ranking details are no longer available. Please refresh the list.");
+                return;
+            }
+
+            String explanation = moApplicantRankingService.buildExplanation(
+                    selectedJob, applicant, (Integer) matchThresholdSpinner.getValue());
+            JTextArea explanationArea = new JTextArea(explanation, 14, 58);
+            explanationArea.setEditable(false);
+            explanationArea.setLineWrap(true);
+            explanationArea.setWrapStyleWord(true);
+            explanationArea.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+            explanationArea.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
+            JScrollPane scrollPane = new JScrollPane(explanationArea);
+            scrollPane.setBorder(BorderFactory.createLineBorder(CARD_BORDER));
+            JOptionPane.showMessageDialog(frame, scrollPane, "Applicant Match Explanation", JOptionPane.INFORMATION_MESSAGE);
         }
 
         private void viewSelectedApplicantProfile() {

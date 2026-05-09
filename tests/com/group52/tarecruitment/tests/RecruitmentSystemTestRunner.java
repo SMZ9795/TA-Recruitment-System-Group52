@@ -12,8 +12,10 @@ import com.group52.tarecruitment.repository.UserRepository;
 import com.group52.tarecruitment.service.AdminService;
 import com.group52.tarecruitment.service.ApplicationService;
 import com.group52.tarecruitment.service.AiMatchingService;
+import com.group52.tarecruitment.service.AiMatchingServiceAdapter;
 import com.group52.tarecruitment.service.AuthService;
 import com.group52.tarecruitment.service.JobService;
+import com.group52.tarecruitment.service.MoApplicantRankingService;
 import com.group52.tarecruitment.util.CvValidationUtil;
 import com.group52.tarecruitment.util.FileUtil;
 import com.group52.tarecruitment.util.JobFilterUtil;
@@ -26,6 +28,7 @@ import java.time.LocalDate;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
@@ -54,6 +57,8 @@ public final class RecruitmentSystemTestRunner {
         runCase("AI matching returns 100 for complete matches", this::testAiMatchingCompleteMatch);
         runCase("AI matching returns partial score with missing skills", this::testAiMatchingPartialMatch);
         runCase("AI matching handles empty and invalid input", this::testAiMatchingEmptyAndInvalidInput);
+        runCase("MO ranking sorts by match score descending", this::testMoRankingSortsByMatchScoreDescending);
+        runCase("MO ranking filters pending applications and minimum score", this::testMoRankingFiltersPendingAndMinimumScore);
         runCase("AdminService risk level respects TA availableHours, not hardcoded 20h", this::testAdminRiskLevelUsesAvailableHours);
         runCase("AdminService getRecruitmentSnapshot counts filled jobs and overloaded TAs", this::testRecruitmentSnapshot);
         runCase("AdminService searchTAWorkload filters by name and ID", this::testSearchTAWorkload);
@@ -549,6 +554,109 @@ public final class RecruitmentSystemTestRunner {
                 "Match score must be between 0 and 100.",
                 () -> new AiMatchingService.MatchResult(120, List.of("java"), List.of(), "invalid"),
                 "Out-of-range score should be rejected.");
+    }
+
+    private void testMoRankingSortsByMatchScoreDescending() throws Exception {
+        try (TestContext context = new TestContext()) {
+            Job targetJob = new Job(
+                    "JOB-RANK-1",
+                    "ECS7001",
+                    "Software Engineering",
+                    "Support labs",
+                    "Java;Python;SQL",
+                    4,
+                    2,
+                    LocalDate.now().plusDays(30).toString(),
+                    "MO-RANK",
+                    JobStatus.OPEN);
+            Job workloadJob = new Job(
+                    "JOB-WORKLOAD-1",
+                    "ECS7002",
+                    "Databases",
+                    "Support tutorials",
+                    "SQL",
+                    6,
+                    1,
+                    LocalDate.now().plusDays(30).toString(),
+                    "MO-RANK",
+                    JobStatus.OPEN);
+            context.jobRepository.save(targetJob);
+            context.jobRepository.save(workloadJob);
+
+            User high = newTa("TA-RANK-HIGH", "High Match", "high.rank@bupt.cn");
+            high.setSkills("Java;Python;SQL");
+            User mid = newTa("TA-RANK-MID", "Mid Match", "mid.rank@bupt.cn");
+            mid.setSkills("Java;Python");
+            User low = newTa("TA-RANK-LOW", "Low Match", "low.rank@bupt.cn");
+            low.setSkills("Java");
+            context.userRepository.save(high);
+            context.userRepository.save(mid);
+            context.userRepository.save(low);
+
+            context.applicationRepository.save(new Application("APP-RANK-HIGH", targetJob.getId(), high.getId(), ApplicationStatus.PENDING, "2026-05-01"));
+            context.applicationRepository.save(new Application("APP-RANK-MID", targetJob.getId(), mid.getId(), ApplicationStatus.PENDING, "2026-05-01"));
+            context.applicationRepository.save(new Application("APP-RANK-LOW", targetJob.getId(), low.getId(), ApplicationStatus.PENDING, "2026-05-01"));
+            context.applicationRepository.save(new Application("APP-RANK-WORKLOAD", workloadJob.getId(), high.getId(), ApplicationStatus.ACCEPTED, "2026-04-01"));
+
+            MoApplicantRankingService rankingService = new MoApplicantRankingService(
+                    context.applicationService, new AiMatchingServiceAdapter(new AiMatchingService()));
+            List<MoApplicantRankingService.RankedApplicant> ranked = rankingService.rankApplicants(
+                    targetJob,
+                    context.applicationRepository.findByJobId(targetJob.getId()),
+                    Map.of(high.getId(), high, mid.getId(), mid, low.getId(), low),
+                    new MoApplicantRankingService.RankingOptions(
+                            true, 0, MoApplicantRankingService.SortMode.MATCH_SCORE_DESC));
+
+            assertEquals(3, ranked.size(), "All pending applicants should be included.");
+            assertEquals("TA-RANK-HIGH", ranked.get(0).getApplicantId(), "Highest match should be first.");
+            assertEquals("TA-RANK-MID", ranked.get(1).getApplicantId(), "Second-highest match should be second.");
+            assertEquals("TA-RANK-LOW", ranked.get(2).getApplicantId(), "Lowest match should be last.");
+            assertEquals(6, ranked.get(0).getCurrentWorkload(), "Current workload should be calculated from accepted applications.");
+        }
+    }
+
+    private void testMoRankingFiltersPendingAndMinimumScore() throws Exception {
+        try (TestContext context = new TestContext()) {
+            Job targetJob = new Job(
+                    "JOB-RANK-2",
+                    "ECS7003",
+                    "AI Methods",
+                    "Support labs",
+                    "Java;Python;SQL",
+                    4,
+                    2,
+                    LocalDate.now().plusDays(30).toString(),
+                    "MO-RANK",
+                    JobStatus.OPEN);
+            context.jobRepository.save(targetJob);
+
+            User pendingPass = newTa("TA-FILTER-PASS", "Pending Pass", "pass.filter@bupt.cn");
+            pendingPass.setSkills("Java;Python");
+            User pendingLow = newTa("TA-FILTER-LOW", "Pending Low", "low.filter@bupt.cn");
+            pendingLow.setSkills("Java");
+            User acceptedHigh = newTa("TA-FILTER-ACCEPTED", "Accepted High", "accepted.filter@bupt.cn");
+            acceptedHigh.setSkills("Java;Python;SQL");
+            context.userRepository.save(pendingPass);
+            context.userRepository.save(pendingLow);
+            context.userRepository.save(acceptedHigh);
+
+            context.applicationRepository.save(new Application("APP-FILTER-PASS", targetJob.getId(), pendingPass.getId(), ApplicationStatus.PENDING, "2026-05-01"));
+            context.applicationRepository.save(new Application("APP-FILTER-LOW", targetJob.getId(), pendingLow.getId(), ApplicationStatus.PENDING, "2026-05-01"));
+            context.applicationRepository.save(new Application("APP-FILTER-ACCEPTED", targetJob.getId(), acceptedHigh.getId(), ApplicationStatus.ACCEPTED, "2026-05-01"));
+
+            MoApplicantRankingService rankingService = new MoApplicantRankingService(
+                    context.applicationService, new AiMatchingServiceAdapter(new AiMatchingService()));
+            List<MoApplicantRankingService.RankedApplicant> ranked = rankingService.rankApplicants(
+                    targetJob,
+                    context.applicationRepository.findByJobId(targetJob.getId()),
+                    Map.of(pendingPass.getId(), pendingPass, pendingLow.getId(), pendingLow, acceptedHigh.getId(), acceptedHigh),
+                    new MoApplicantRankingService.RankingOptions(
+                            true, 60, MoApplicantRankingService.SortMode.MATCH_SCORE_DESC));
+
+            assertEquals(1, ranked.size(), "Only pending applicants at or above the threshold should remain.");
+            assertEquals("TA-FILTER-PASS", ranked.get(0).getApplicantId(), "Pending applicant above threshold should remain.");
+            assertEquals(67, ranked.get(0).getMatchScore(), "Two of three required skills should score 67.");
+        }
     }
 
     private void runCase(String caseName, ThrowingRunnable testCase) throws Exception {

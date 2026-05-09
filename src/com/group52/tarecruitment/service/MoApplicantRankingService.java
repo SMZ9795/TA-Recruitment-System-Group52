@@ -11,7 +11,8 @@ import java.util.Map;
 import java.util.Objects;
 
 public class MoApplicantRankingService {
-    private static final int RECOMMENDED_MATCH_SCORE = 60;
+    public static final int DEFAULT_MINIMUM_MATCH_SCORE = 0;
+    public static final int RECOMMENDED_MATCH_SCORE = 60;
     private final ApplicationService applicationService;
     private final ApplicantMatchingService matchingService;
 
@@ -66,10 +67,55 @@ public class MoApplicantRankingService {
                 applicant.getName(),
                 applicant.getYearOfStudy(),
                 matchDetails.getScore(),
+                matchDetails.getMatchedSkills(),
                 matchDetails.getMissingSkills(),
+                matchDetails.getReason(),
                 currentWorkload,
                 recommended,
                 application.getStatus());
+    }
+
+    public String buildExplanation(Job job, RankedApplicant applicant, int minimumMatchScore) {
+        if (applicant == null) {
+            return "No applicant is selected.";
+        }
+        int safeMinimumScore = ValidationUtil.parseIntInRange(
+                String.valueOf(minimumMatchScore), "Minimum match score", 0, 100);
+        String jobLabel = job == null
+                ? "Unknown job"
+                : safeText(job.getModuleCode()) + " - " + safeText(job.getModuleName())
+                        + " (" + safeText(job.getId()) + ")";
+        boolean meetsThreshold = applicant.getMatchScore() >= safeMinimumScore;
+        int recommendationScore = Math.max(safeMinimumScore, RECOMMENDED_MATCH_SCORE);
+        String recommendationReason = applicant.isRecommended()
+                ? "This applicant is recommended because their match score is at or above the recommendation score and their current workload is acceptable."
+                : "This applicant is not recommended because their match score is below the recommendation score or their workload is too high.";
+
+        StringBuilder explanation = new StringBuilder();
+        explanation.append("Applicant: ")
+                .append(applicant.getApplicantName())
+                .append(" (")
+                .append(applicant.getApplicantId())
+                .append(")\n");
+        explanation.append("Job: ").append(jobLabel).append("\n");
+        explanation.append("Application ID: ").append(applicant.getApplicationId()).append("\n");
+        explanation.append("Match Score: ").append(applicant.getMatchScore()).append("%\n");
+        explanation.append("Minimum Threshold: ").append(safeMinimumScore).append("%\n");
+        explanation.append("Recommendation Score: ").append(recommendationScore).append("%\n");
+        explanation.append("Matched Skills: ").append(applicant.getMatchedSkillsText()).append("\n");
+        explanation.append("Missing Skills: ").append(applicant.getMissingSkillsText()).append("\n");
+        explanation.append("Current Workload: ").append(applicant.getCurrentWorkload()).append("h/week\n");
+        explanation.append("Recommendation: ").append(applicant.getRecommendationLabel()).append("\n");
+        explanation.append("Threshold Result: ").append(meetsThreshold ? "Meets threshold" : "Below threshold").append("\n");
+        if (!applicant.getMatchReason().isBlank()) {
+            explanation.append("Score Reason: ").append(applicant.getMatchReason()).append("\n");
+        }
+        explanation.append("\n").append(recommendationReason);
+        return explanation.toString();
+    }
+
+    private String safeText(String value) {
+        return value == null || value.isBlank() ? "N/A" : value.trim();
     }
 
     public enum SortMode {
@@ -104,7 +150,7 @@ public class MoApplicantRankingService {
         }
 
         public static RankingOptions defaultOptions() {
-            return new RankingOptions(true, 0, SortMode.MATCH_SCORE_DESC);
+            return new RankingOptions(true, DEFAULT_MINIMUM_MATCH_SCORE, SortMode.MATCH_SCORE_DESC);
         }
 
         public boolean isPendingOnly() {
@@ -126,7 +172,9 @@ public class MoApplicantRankingService {
         private final String applicantName;
         private final int yearOfStudy;
         private final int matchScore;
+        private final List<String> matchedSkills;
         private final List<String> missingSkills;
+        private final String matchReason;
         private final int currentWorkload;
         private final boolean recommended;
         private final ApplicationStatus status;
@@ -137,7 +185,9 @@ public class MoApplicantRankingService {
                 String applicantName,
                 int yearOfStudy,
                 int matchScore,
+                List<String> matchedSkills,
                 List<String> missingSkills,
+                String matchReason,
                 int currentWorkload,
                 boolean recommended,
                 ApplicationStatus status) {
@@ -146,7 +196,9 @@ public class MoApplicantRankingService {
             this.applicantName = ValidationUtil.requireText(applicantName, "Applicant name");
             this.yearOfStudy = yearOfStudy;
             this.matchScore = ValidationUtil.parseIntInRange(String.valueOf(matchScore), "Match score", 0, 100);
+            this.matchedSkills = List.copyOf(matchedSkills == null ? List.of() : matchedSkills);
             this.missingSkills = List.copyOf(missingSkills == null ? List.of() : missingSkills);
+            this.matchReason = matchReason == null ? "" : matchReason;
             this.currentWorkload = Math.max(0, currentWorkload);
             this.recommended = recommended;
             this.status = status == null ? ApplicationStatus.PENDING : status;
@@ -172,12 +224,24 @@ public class MoApplicantRankingService {
             return matchScore;
         }
 
+        public List<String> getMatchedSkills() {
+            return matchedSkills;
+        }
+
+        public String getMatchedSkillsText() {
+            return matchedSkills.isEmpty() ? "None" : String.join(", ", matchedSkills);
+        }
+
         public List<String> getMissingSkills() {
             return missingSkills;
         }
 
         public String getMissingSkillsText() {
             return missingSkills.isEmpty() ? "None" : String.join(", ", missingSkills);
+        }
+
+        public String getMatchReason() {
+            return matchReason;
         }
 
         public int getCurrentWorkload() {
