@@ -187,16 +187,24 @@ public class ApplicationService {
     }
 
     private void validateJobIsOpen(Job job) {
+        if (job.getStatus() == JobStatus.CLOSED) {
+            throw new IllegalArgumentException("This job is closed and no longer accepts applications.");
+        }
         if (job.getStatus() != JobStatus.OPEN) {
             throw new IllegalArgumentException("This job is not open for applications.");
         }
 
+        final LocalDate deadlineDate;
         try {
-            if (LocalDate.parse(job.getDeadline()).isBefore(LocalDate.now())) {
-                throw new IllegalArgumentException("This job has passed its deadline.");
-            }
+            deadlineDate = LocalDate.parse(job.getDeadline());
         } catch (DateTimeParseException e) {
             throw new IllegalArgumentException("The job deadline is invalid.");
+        }
+        if (deadlineDate.isBefore(LocalDate.now())) {
+            // Self-heal: an OPEN job past its deadline should be CLOSED before we reject the apply.
+            job.setStatus(JobStatus.CLOSED);
+            jobRepository.save(job);
+            throw new IllegalArgumentException("This job has passed its deadline.");
         }
     }
 
