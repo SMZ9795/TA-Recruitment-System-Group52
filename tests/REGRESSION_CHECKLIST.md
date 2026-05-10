@@ -14,6 +14,9 @@
 - End-to-end integration (TA profile -> apply -> MO review -> admin workload).
 - **[iteration3]** AdminService risk level uses TA's own `availableHours` (not hardcoded 20h).
 - **[iteration3]** `getRecruitmentSnapshot()` correctly counts filled jobs and overloaded TAs.
+- **[iteration3]** Job lifecycle: closing an OPEN job blocks new TA applications.
+- **[iteration3]** Job lifecycle: reopening a CLOSED job restores apply, but is rejected when the deadline has passed or the job is already FILLED.
+- **[iteration3]** Job lifecycle: `autoCloseExpiredJobs` sweeps all OPEN jobs past deadline; an apply attempt against a stale OPEN job self-heals to CLOSED.
 
 ## Manual GUI regression (SwingApp)
 
@@ -29,6 +32,22 @@
    - A TA with 10 available h and 11 assigned h shows **Overloaded**.
    - A TA with 10 available h and 5 assigned h shows **OK**.
 5. **Remaining hours column**: Verify value is `max(0, availableHours - assignedHours)`.
+
+### MO panel — iteration 3 job lifecycle
+1. **Manual close**: Open MO Dashboard, select an OPEN job, click `Close Job`, confirm.
+   - Status badge turns red and shows `CLOSED`.
+   - From a TA account, attempting to apply to that job shows the closed-job warning.
+2. **Manual reopen**: Select the CLOSED job, click `Reopen Job`, confirm.
+   - Status flips back to `OPEN`; TA applies succeed again.
+3. **Reopen guard**: For a CLOSED job whose deadline has already passed, `Reopen Job` shows
+   "Cannot reopen a job whose deadline has passed."
+4. **Filled-job guard**: Reopening a job that already has all positions filled is rejected
+   with "filled" in the error message.
+5. **Auto-close on entry**: With the dashboard open, advance the system clock past a job's
+   deadline (or edit `data/jobs.csv` to a past date) and click `Refresh`.
+   - The job becomes `CLOSED` automatically and a toast shows the count of auto-closed jobs.
+6. **Edit preserves CLOSED**: Editing a CLOSED job's fields keeps it CLOSED; reopening must be
+   done via the explicit `Reopen Job` button.
 
 ### Pre-existing GUI regression
 1. TA profile CV upload:

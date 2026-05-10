@@ -63,6 +63,9 @@ public final class RecruitmentSystemTestRunner {
         runCase("AdminService getRecruitmentSnapshot counts filled jobs and overloaded TAs", this::testRecruitmentSnapshot);
         runCase("AdminService searchTAWorkload filters by name and ID", this::testSearchTAWorkload);
         runCase("AdminService getWorkloadTrend returns correct label by job count", this::testWorkloadTrend);
+        runCase("Job lifecycle: closing a job blocks new applications", this::testJobLifecycleCloseBlocksApplication);
+        runCase("Job lifecycle: reopen restores apply, respects deadline and capacity", this::testJobLifecycleReopenAllowsApplication);
+        runCase("Job lifecycle: expired deadline auto-closes the job and rejects applications", this::testJobLifecycleAutoCloseOnDeadline);
 
         System.out.println();
         System.out.println("==== TEST SUMMARY ====");
@@ -868,6 +871,189 @@ public final class RecruitmentSystemTestRunner {
                     try { Files.deleteIfExists(p); } catch (Exception ignored) {}
                 });
             }
+        }
+    }
+
+    private void testJobLifecycleCloseBlocksApplication() throws Exception {
+        try (TestContext context = new TestContext()) {
+            User mo = newMo("MO-LC-1", "MO Lifecycle One", "mo.lc1@bupt.cn");
+            User ta = newTa("TA-LC-1", "TA Lifecycle One", "ta.lc1@bupt.cn");
+            context.userRepository.save(mo);
+            context.userRepository.save(ta);
+
+            Job job = context.jobService.createJob(
+                    "CS-LC-101",
+                    "Lifecycle Lab",
+                    "desc",
+                    "Java",
+                    "6",
+                    "1",
+                    LocalDate.now().plusDays(7).toString(),
+                    mo.getId());
+            assertEquals(JobStatus.OPEN, job.getStatus(), "Newly created job should be OPEN.");
+
+            Job closed = context.jobService.closeJob(job.getId(), mo.getId());
+            assertEquals(JobStatus.CLOSED, closed.getStatus(), "closeJob should move OPEN job to CLOSED.");
+            assertEquals(
+                    JobStatus.CLOSED,
+                    context.jobRepository.findById(job.getId()).orElseThrow().getStatus(),
+                    "CLOSED status must be persisted.");
+
+            assertThrowsContains(
+                    "closed and no longer accepts applications",
+                    () -> context.applicationService.applyForJob(job.getId(), ta.getId()),
+                    "TA must not be able to apply after the job is closed.");
+
+            assertThrowsContains(
+                    "already closed",
+                    () -> context.jobService.closeJob(job.getId(), mo.getId()),
+                    "Closing an already-closed job must be rejected.");
+
+            User otherMo = newMo("MO-LC-OTHER", "Other MO", "mo.other@bupt.cn");
+            context.userRepository.save(otherMo);
+            assertThrowsContains(
+                    "You can only edit jobs that you posted",
+                    () -> context.jobService.closeJob(job.getId(), otherMo.getId()),
+                    "Other MOs must not be able to close a job they did not post.");
+        }
+    }
+
+    private void testJobLifecycleReopenAllowsApplication() throws Exception {
+        try (TestContext context = new TestContext()) {
+            User mo = newMo("MO-LC-2", "MO Lifecycle Two", "mo.lc2@bupt.cn");
+            User ta = newTa("TA-LC-2", "TA Lifecycle Two", "ta.lc2@bupt.cn");
+            context.userRepository.save(mo);
+            context.userRepository.save(ta);
+
+            Job job = context.jobService.createJob(
+                    "CS-LC-201",
+                    "Reopen Lab",
+                    "desc",
+                    "Java",
+                    "6",
+                    "1",
+                    LocalDate.now().plusDays(10).toString(),
+                    mo.getId());
+            context.jobService.closeJob(job.getId(), mo.getId());
+
+            Job reopened = context.jobService.reopenJob(job.getId(), mo.getId());
+            assertEquals(JobStatus.OPEN, reopened.getStatus(), "reopenJob should restore status to OPEN.");
+
+            Application application = context.applicationService.applyForJob(job.getId(), ta.getId());
+            assertEquals(
+                    ApplicationStatus.PENDING,
+                    application.getStatus(),
+                    "TA should be able to apply once the job is reopened.");
+
+            assertThrowsContains(
+                    "already open",
+                    () -> context.jobService.reopenJob(job.getId(), mo.getId()),
+                    "Reopening an already-open job must be rejected.");
+
+            // Reopening must respect deadline; rewrite the row with an expired deadline and try again.
+            Job expired = context.jobRepository.findById(job.getId()).orElseThrow();
+            expired.setStatus(JobStatus.CLOSED);
+            expired.setDeadline(LocalDate.now().minusDays(1).toString());
+            context.jobRepository.save(expired);
+            assertThrowsContains(
+                    "deadline has passed",
+                    () -> context.jobService.reopenJob(job.getId(), mo.getId()),
+                    "Reopening past-deadline jobs must be rejected.");
+
+            // Reopening a job whose offers fill all positions should be rejected too.
+            Job filledJob = context.jobService.createJob(
+                    "CS-LC-202",
+                    "Filled Lab",
+                    "desc",
+                    "Java",
+                    "6",
+                    "1",
+                    LocalDate.now().plusDays(12).toString(),
+                    mo.getId());
+            context.applicationRepository.save(new Application(
+                    "APP-LC-FILL",
+                    filledJob.getId(),
+                    ta.getId(),
+                    ApplicationStatus.ACCEPTED,
+                    LocalDate.now().toString()));
+            Job persistedFilled = context.jobRepository.findById(filledJob.getId()).orElseThrow();
+            persistedFilled.setStatus(JobStatus.CLOSED);
+            context.jobRepository.save(persistedFilled);
+            assertThrowsContains(
+                    "filled",
+                    () -> context.jobService.reopenJob(filledJob.getId(), mo.getId()),
+                    "Reopening a fully-filled job must be rejected.");
+        }
+    }
+
+    private void testJobLifecycleAutoCloseOnDeadline() throws Exception {
+        try (TestContext context = new TestContext()) {
+            User mo = newMo("MO-LC-3", "MO Lifecycle Three", "mo.lc3@bupt.cn");
+            User ta = newTa("TA-LC-3", "TA Lifecycle Three", "ta.lc3@bupt.cn");
+            context.userRepository.save(mo);
+            context.userRepository.save(ta);
+
+            // Jobs created via the service must have a future deadline, so we plant the expired row directly.
+            Job expired = new Job(
+                    "JOB-LC-EXPIRED",
+                    "CS-LC-301",
+                    "Expired Lab",
+                    "desc",
+                    "Java",
+                    6,
+                    1,
+                    LocalDate.now().minusDays(2).toString(),
+                    mo.getId(),
+                    JobStatus.OPEN);
+            Job futureOpen = new Job(
+                    "JOB-LC-FUTURE",
+                    "CS-LC-302",
+                    "Future Lab",
+                    "desc",
+                    "Java",
+                    6,
+                    1,
+                    LocalDate.now().plusDays(5).toString(),
+                    mo.getId(),
+                    JobStatus.OPEN);
+            context.jobRepository.save(expired);
+            context.jobRepository.save(futureOpen);
+
+            List<Job> swept = context.jobService.autoCloseExpiredJobs();
+            assertEquals(1, swept.size(), "Only the expired job should be swept.");
+            assertEquals(
+                    JobStatus.CLOSED,
+                    context.jobRepository.findById(expired.getId()).orElseThrow().getStatus(),
+                    "Expired job must be persisted as CLOSED.");
+            assertEquals(
+                    JobStatus.OPEN,
+                    context.jobRepository.findById(futureOpen.getId()).orElseThrow().getStatus(),
+                    "Future-deadline jobs must remain OPEN.");
+
+            // Sweeping again should be a no-op.
+            assertEquals(0, context.jobService.autoCloseExpiredJobs().size(), "Second sweep should find nothing.");
+
+            // End-to-end: an expired OPEN job must self-heal to CLOSED when a TA tries to apply.
+            Job stale = new Job(
+                    "JOB-LC-STALE",
+                    "CS-LC-303",
+                    "Stale Lab",
+                    "desc",
+                    "Java",
+                    6,
+                    1,
+                    LocalDate.now().minusDays(1).toString(),
+                    mo.getId(),
+                    JobStatus.OPEN);
+            context.jobRepository.save(stale);
+            assertThrowsContains(
+                    "passed its deadline",
+                    () -> context.applicationService.applyForJob(stale.getId(), ta.getId()),
+                    "Applying to an expired job should be rejected.");
+            assertEquals(
+                    JobStatus.CLOSED,
+                    context.jobRepository.findById(stale.getId()).orElseThrow().getStatus(),
+                    "Apply-time validation should self-heal stale OPEN jobs to CLOSED.");
         }
     }
 

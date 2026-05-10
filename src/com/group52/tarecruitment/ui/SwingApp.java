@@ -2217,6 +2217,12 @@ public class SwingApp {
             JButton editButton = new JButton("Edit");
             styleSecondaryButton(editButton);
             editButton.addActionListener(e -> editSelectedJob());
+            JButton closeButton = new JButton("Close Job");
+            styleDangerButton(closeButton);
+            closeButton.addActionListener(e -> closeSelectedJob());
+            JButton reopenButton = new JButton("Reopen Job");
+            styleSecondaryButton(reopenButton);
+            reopenButton.addActionListener(e -> reopenSelectedJob());
             JButton deleteButton = new JButton("Delete");
             styleDangerButton(deleteButton);
             deleteButton.addActionListener(e -> deleteSelectedJob());
@@ -2228,6 +2234,8 @@ public class SwingApp {
             refreshButton.addActionListener(e -> refreshJobs());
             jobActions.add(postButton);
             jobActions.add(editButton);
+            jobActions.add(closeButton);
+            jobActions.add(reopenButton);
             jobActions.add(deleteButton);
             jobActions.add(applicantsButton);
             jobActions.add(refreshButton);
@@ -2371,6 +2379,17 @@ public class SwingApp {
         }
 
         private void refreshJobs() {
+            try {
+                List<Job> closed = jobService.autoCloseExpiredJobs();
+                if (!closed.isEmpty()) {
+                    showToast(
+                            "Jobs Auto-Closed",
+                            closed.size() + " job(s) past their deadline were closed automatically.",
+                            JOptionPane.INFORMATION_MESSAGE);
+                }
+            } catch (RuntimeException ignored) {
+                // Don't block dashboard rendering if the sweep fails; the latest data still loads below.
+            }
             jobsModel.setRowCount(0);
             for (Job job : jobService.getJobsByMoId(user.getId())) {
                 jobsModel.addRow(new Object[] {
@@ -2390,7 +2409,7 @@ public class SwingApp {
                 return;
             }
             try {
-                Job job = jobService.createJob(
+                jobService.createJob(
                         input.moduleCode,
                         input.moduleName,
                         input.description,
@@ -2399,8 +2418,6 @@ public class SwingApp {
                         input.positions,
                         input.deadline,
                         user.getId());
-                job.setStatus(input.status);
-                jobService.updateJob(job);
                 refreshJobs();
             } catch (IllegalArgumentException ex) {
                 JOptionPane.showMessageDialog(frame, ex.getMessage());
@@ -2424,17 +2441,98 @@ public class SwingApp {
             if (input == null) {
                 return;
             }
-            job.setModuleCode(input.moduleCode);
-            job.setModuleName(input.moduleName);
-            job.setDescription(input.description);
-            job.setRequiredSkills(input.requiredSkills);
-            job.setHoursPerWeek(input.hoursPerWeek);
-            job.setPositions(input.positions);
-            job.setDeadline(input.deadline);
-            job.setStatus(input.status);
-            jobService.updateJob(job);
-            refreshJobs();
-            refreshApplicants();
+            try {
+                jobService.updateJob(
+                        job.getId(),
+                        user.getId(),
+                        input.moduleCode,
+                        input.moduleName,
+                        input.description,
+                        input.requiredSkills,
+                        String.valueOf(input.hoursPerWeek),
+                        String.valueOf(input.positions),
+                        input.deadline);
+                refreshJobs();
+                refreshApplicants();
+            } catch (IllegalArgumentException ex) {
+                JOptionPane.showMessageDialog(frame, ex.getMessage());
+            }
+        }
+
+        private void closeSelectedJob() {
+            int row = jobsTable.getSelectedRow();
+            if (row < 0) {
+                JOptionPane.showMessageDialog(frame, "Please select a job first.");
+                return;
+            }
+            int modelRow = jobsTable.convertRowIndexToModel(row);
+            String jobId = String.valueOf(jobsModel.getValueAt(modelRow, 0));
+            Job job = findJobById(jobId).orElse(null);
+            if (job == null) {
+                JOptionPane.showMessageDialog(frame, "Job not found.");
+                return;
+            }
+            if (job.getStatus() == JobStatus.CLOSED) {
+                JOptionPane.showMessageDialog(frame, "This job is already closed.");
+                return;
+            }
+            String label = job.getModuleCode() + " - " + job.getModuleName();
+            String prompt = "Close " + label + "?\n"
+                    + "New TAs will not be able to apply.\n"
+                    + "Pending applications keep their current status.";
+            int confirm = JOptionPane.showConfirmDialog(
+                    frame, prompt, "Confirm Close Job", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
+            if (confirm != JOptionPane.YES_OPTION) {
+                return;
+            }
+            try {
+                jobService.closeJob(job.getId(), user.getId());
+                showToast("Job Closed", label + " is now closed.", JOptionPane.INFORMATION_MESSAGE);
+                refreshJobs();
+                refreshApplicants();
+            } catch (IllegalArgumentException ex) {
+                JOptionPane.showMessageDialog(frame, ex.getMessage());
+            }
+        }
+
+        private void reopenSelectedJob() {
+            int row = jobsTable.getSelectedRow();
+            if (row < 0) {
+                JOptionPane.showMessageDialog(frame, "Please select a job first.");
+                return;
+            }
+            int modelRow = jobsTable.convertRowIndexToModel(row);
+            String jobId = String.valueOf(jobsModel.getValueAt(modelRow, 0));
+            Job job = findJobById(jobId).orElse(null);
+            if (job == null) {
+                JOptionPane.showMessageDialog(frame, "Job not found.");
+                return;
+            }
+            if (job.getStatus() == JobStatus.OPEN) {
+                JOptionPane.showMessageDialog(frame, "This job is already open.");
+                return;
+            }
+            String label = job.getModuleCode() + " - " + job.getModuleName();
+            int confirm = JOptionPane.showConfirmDialog(
+                    frame,
+                    "Reopen " + label + "?\nTAs will be able to apply again until the deadline.",
+                    "Confirm Reopen Job",
+                    JOptionPane.YES_NO_OPTION,
+                    JOptionPane.QUESTION_MESSAGE);
+            if (confirm != JOptionPane.YES_OPTION) {
+                return;
+            }
+            try {
+                Job reopened = jobService.reopenJob(job.getId(), user.getId());
+                showToast(
+                        "Job Reopened",
+                        label + " is now " + reopened.getStatus().name() + ".",
+                        JOptionPane.INFORMATION_MESSAGE);
+                refreshJobs();
+                refreshApplicants();
+            } catch (IllegalArgumentException ex) {
+                JOptionPane.showMessageDialog(frame, ex.getMessage());
+            }
         }
 
         private void deleteSelectedJob() {
@@ -2676,11 +2774,6 @@ public class SwingApp {
             JTextField hoursField = new JTextField(existing == null ? "" : String.valueOf(existing.getHoursPerWeek()));
             JTextField positionsField = new JTextField(existing == null ? "" : String.valueOf(existing.getPositions()));
             JTextField deadlineField = new JTextField(existing == null ? "" : existing.getDeadline());
-            JComboBox<JobStatus> statusBox =
-                    new JComboBox<>(new JobStatus[] {JobStatus.OPEN, JobStatus.CLOSED, JobStatus.FILLED});
-            if (existing != null) {
-                statusBox.setSelectedItem(existing.getStatus());
-            }
 
             JPanel panel = new JPanel(new GridLayout(0, 1, 6, 6));
             panel.add(new JLabel("Module Code"));
@@ -2697,8 +2790,12 @@ public class SwingApp {
             panel.add(positionsField);
             panel.add(new JLabel("Deadline (YYYY-MM-DD)"));
             panel.add(deadlineField);
-            panel.add(new JLabel("Status"));
-            panel.add(statusBox);
+            if (existing != null) {
+                JLabel statusHint = new JLabel(
+                        "Status: " + existing.getStatus().name() + "  (use Close / Reopen to change)");
+                statusHint.setForeground(MUTED_TEXT_COLOR);
+                panel.add(statusHint);
+            }
 
             int option = JOptionPane.showConfirmDialog(
                     frame,
@@ -2717,8 +2814,7 @@ public class SwingApp {
                         requiredSkillsField.getText().trim(),
                         Integer.parseInt(hoursField.getText().trim()),
                         Integer.parseInt(positionsField.getText().trim()),
-                        deadlineField.getText().trim(),
-                        (JobStatus) statusBox.getSelectedItem());
+                        deadlineField.getText().trim());
             } catch (NumberFormatException ex) {
                 JOptionPane.showMessageDialog(frame, "Hours and positions must be numbers.");
                 return null;
@@ -3229,10 +3325,9 @@ public class SwingApp {
         private final int hoursPerWeek;
         private final int positions;
         private final String deadline;
-        private final JobStatus status;
 
         private JobInput(String moduleCode, String moduleName, String description, String requiredSkills,
-                int hoursPerWeek, int positions, String deadline, JobStatus status) {
+                int hoursPerWeek, int positions, String deadline) {
             this.moduleCode = moduleCode;
             this.moduleName = moduleName;
             this.description = description;
@@ -3240,7 +3335,6 @@ public class SwingApp {
             this.hoursPerWeek = hoursPerWeek;
             this.positions = positions;
             this.deadline = deadline;
-            this.status = status;
         }
     }
 
