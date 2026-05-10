@@ -4,6 +4,7 @@ import com.group52.tarecruitment.model.Application;
 import com.group52.tarecruitment.model.ApplicationStatus;
 import com.group52.tarecruitment.model.Job;
 import com.group52.tarecruitment.model.JobStatus;
+import com.group52.tarecruitment.model.Notification;
 import com.group52.tarecruitment.model.Role;
 import com.group52.tarecruitment.model.User;
 import com.group52.tarecruitment.service.AdminService;
@@ -13,6 +14,7 @@ import com.group52.tarecruitment.service.AiMatchingServiceAdapter;
 import com.group52.tarecruitment.service.AuthService;
 import com.group52.tarecruitment.service.JobService;
 import com.group52.tarecruitment.service.MoApplicantRankingService;
+import com.group52.tarecruitment.service.NotificationService;
 import com.group52.tarecruitment.util.CvValidationUtil;
 import com.group52.tarecruitment.util.JobFilterUtil;
 import com.group52.tarecruitment.util.TaNotificationUtil;
@@ -128,6 +130,7 @@ public class SwingApp {
     private final AiMatchingService aiMatchingService;
     private final MoApplicantRankingService moApplicantRankingService;
     private final AdminService adminService;
+    private final NotificationService notificationService;
     private final Path dataDirectory;
 
     private JFrame frame;
@@ -142,15 +145,20 @@ public class SwingApp {
     private AdminPanel adminPanel;
 
     public SwingApp(AuthService authService, JobService jobService, ApplicationService applicationService) {
-        this(authService, jobService, applicationService, null, null);
+        this(authService, jobService, applicationService, null, null, null);
     }
 
     public SwingApp(AuthService authService, JobService jobService, ApplicationService applicationService, Path dataDirectory) {
-        this(authService, jobService, applicationService, dataDirectory, null);
+        this(authService, jobService, applicationService, dataDirectory, null, null);
     }
 
     public SwingApp(AuthService authService, JobService jobService, ApplicationService applicationService,
                     Path dataDirectory, AdminService adminService) {
+        this(authService, jobService, applicationService, dataDirectory, adminService, null);
+    }
+
+    public SwingApp(AuthService authService, JobService jobService, ApplicationService applicationService,
+                    Path dataDirectory, AdminService adminService, NotificationService notificationService) {
         this.authService = authService;
         this.jobService = jobService;
         this.applicationService = applicationService;
@@ -159,6 +167,7 @@ public class SwingApp {
                 applicationService, new AiMatchingServiceAdapter(this.aiMatchingService));
         this.dataDirectory = dataDirectory;
         this.adminService = adminService;
+        this.notificationService = notificationService;
     }
 
     public void start() {
@@ -1843,7 +1852,9 @@ public class SwingApp {
         private void refreshNotifications() {
             notificationModel.setRowCount(0);
             List<NotificationEntry> notifications = buildTaNotifications();
-            int unreadCount = TaNotificationUtil.countUnread(notifications, readNotificationIds);
+            int unreadCount = notificationService == null
+                    ? TaNotificationUtil.countUnread(notifications, readNotificationIds)
+                    : notificationService.countUnreadForUser(user.getId());
             unreadCountLabel.setText("Unread: " + unreadCount);
             updateDashboardNotificationSummary(notifications, unreadCount);
 
@@ -1863,6 +1874,22 @@ public class SwingApp {
         }
 
         private List<NotificationEntry> buildTaNotifications() {
+            if (notificationService != null) {
+                List<Notification> persisted = notificationService.getNotificationsForUser(user.getId());
+                readNotificationIds.clear();
+                List<NotificationEntry> entries = new ArrayList<>();
+                for (Notification notification : persisted) {
+                    if (notification.isReadStatus()) {
+                        readNotificationIds.add(notification.getId());
+                    }
+                    entries.add(new NotificationEntry(
+                            notification.getId(),
+                            notificationTypeLabel(notification),
+                            safeText(notification.getMessage()),
+                            safeText(notification.getCreatedAt())));
+                }
+                return entries;
+            }
             return TaNotificationUtil.buildNotifications(
                     applicationService.getApplicationsByTaUserId(user.getId()),
                     jobService.getAllJobs());
@@ -1885,12 +1912,36 @@ public class SwingApp {
                 return;
             }
             String notificationId = String.valueOf(notificationModel.getValueAt(selected, 0));
-            if (read) {
-                readNotificationIds.add(notificationId);
+            if (notificationService != null) {
+                try {
+                    notificationService.setReadStatus(notificationId, read);
+                } catch (IllegalArgumentException ex) {
+                    JOptionPane.showMessageDialog(frame, ex.getMessage());
+                    return;
+                }
             } else {
-                readNotificationIds.remove(notificationId);
+                if (read) {
+                    readNotificationIds.add(notificationId);
+                } else {
+                    readNotificationIds.remove(notificationId);
+                }
             }
             refreshNotifications();
+        }
+
+        private String notificationTypeLabel(Notification notification) {
+            if (notification == null || notification.getType() == null) {
+                return "Notification";
+            }
+            return switch (notification.getType()) {
+                case APPLY -> "Application Submitted";
+                case WITHDRAW -> "Application Withdrawn";
+                case ACCEPT -> "Application Accepted";
+                case REJECT -> "Application Rejected";
+                case JOB_CLOSE -> "Job Closed";
+                case JOB_REOPEN -> "Job Reopened";
+                case OVERLOAD_ALERT -> "Overload Alert";
+            };
         }
 
         private void refreshJobs() {
@@ -3044,6 +3095,7 @@ public class SwingApp {
                     s.getRiskLevel().label()
                 });
             }
+            adminService.publishOverloadAlerts();
             refreshSummaryBar();
         }
 
