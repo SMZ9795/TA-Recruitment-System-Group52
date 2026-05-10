@@ -4,6 +4,7 @@ import com.group52.tarecruitment.model.Application;
 import com.group52.tarecruitment.model.ApplicationStatus;
 import com.group52.tarecruitment.model.Job;
 import com.group52.tarecruitment.model.JobStatus;
+import com.group52.tarecruitment.model.NotificationType;
 import com.group52.tarecruitment.model.Role;
 import com.group52.tarecruitment.model.User;
 import com.group52.tarecruitment.repository.ApplicationRepository;
@@ -21,12 +22,19 @@ public class AdminService {
     private final UserRepository userRepository;
     private final JobRepository jobRepository;
     private final ApplicationRepository applicationRepository;
+    private final NotificationService notificationService;
 
     public AdminService(UserRepository userRepository, JobRepository jobRepository,
                         ApplicationRepository applicationRepository) {
+        this(userRepository, jobRepository, applicationRepository, null);
+    }
+
+    public AdminService(UserRepository userRepository, JobRepository jobRepository,
+                        ApplicationRepository applicationRepository, NotificationService notificationService) {
         this.userRepository = userRepository;
         this.jobRepository = jobRepository;
         this.applicationRepository = applicationRepository;
+        this.notificationService = notificationService;
     }
 
     public enum RiskLevel {
@@ -190,6 +198,31 @@ public class AdminService {
         return getAllTAWorkloads().stream()
                 .filter(TAWorkloadSummary::isOverloaded)
                 .toList();
+    }
+
+    public int publishOverloadAlerts() {
+        if (notificationService == null) {
+            return 0;
+        }
+        int createdCount = 0;
+        for (TAWorkloadSummary summary : getOverloadedTAs()) {
+            String message = "Overload alert: you are assigned "
+                    + summary.getTotalAssignedHours() + "h/week, exceeding your available "
+                    + summary.getAvailableHours() + "h/week.";
+            String relatedId = "OVERLOAD:" + summary.getTaUserId();
+            int before = notificationService.countUnreadForUser(summary.getTaUserId());
+            notificationService.publishIfNotExists(
+                    Role.TA,
+                    NotificationType.OVERLOAD_ALERT,
+                    summary.getTaUserId(),
+                    message,
+                    relatedId);
+            int after = notificationService.countUnreadForUser(summary.getTaUserId());
+            if (after > before) {
+                createdCount++;
+            }
+        }
+        return createdCount;
     }
 
     /** TAs at risk (>= 80% utilisation) or already overloaded. */

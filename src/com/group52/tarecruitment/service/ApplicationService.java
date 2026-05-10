@@ -4,6 +4,8 @@ import com.group52.tarecruitment.model.Application;
 import com.group52.tarecruitment.model.ApplicationStatus;
 import com.group52.tarecruitment.model.Job;
 import com.group52.tarecruitment.model.JobStatus;
+import com.group52.tarecruitment.model.NotificationType;
+import com.group52.tarecruitment.model.Role;
 import com.group52.tarecruitment.repository.ApplicationRepository;
 import com.group52.tarecruitment.repository.JobRepository;
 import com.group52.tarecruitment.util.IdGenerator;
@@ -18,16 +20,23 @@ public class ApplicationService {
     private final ApplicationRepository applicationRepository;
     private final JobRepository jobRepository;
     private final WorkloadService workloadService;
+    private final NotificationService notificationService;
 
     public ApplicationService(ApplicationRepository applicationRepository, JobRepository jobRepository) {
-        this(applicationRepository, jobRepository, null);
+        this(applicationRepository, jobRepository, null, null);
     }
 
     public ApplicationService(ApplicationRepository applicationRepository, JobRepository jobRepository,
             WorkloadService workloadService) {
+        this(applicationRepository, jobRepository, workloadService, null);
+    }
+
+    public ApplicationService(ApplicationRepository applicationRepository, JobRepository jobRepository,
+            WorkloadService workloadService, NotificationService notificationService) {
         this.applicationRepository = applicationRepository;
         this.jobRepository = jobRepository;
         this.workloadService = workloadService;
+        this.notificationService = notificationService;
     }
 
     public Application applyForJob(String jobId, String taUserId) {
@@ -36,7 +45,12 @@ public class ApplicationService {
 
         Job job = jobRepository.findById(normalizedJobId)
                 .orElseThrow(() -> new IllegalArgumentException("Job not found."));
-        validateJobIsOpen(job);
+        try {
+            validateJobIsOpen(job);
+        } catch (IllegalArgumentException ex) {
+            maybePublishJobClosedApplyBlockedNotification(job, normalizedTaUserId);
+            throw ex;
+        }
         validateJobHasCapacity(job);
 
         if (applicationRepository.existsByJobIdAndTaUserId(normalizedJobId, normalizedTaUserId)) {
@@ -50,6 +64,12 @@ public class ApplicationService {
                 ApplicationStatus.PENDING,
                 LocalDate.now().toString());
         applicationRepository.save(application);
+        publishTaNotification(
+                NotificationType.APPLY,
+                normalizedTaUserId,
+                application.getId(),
+                "Application submitted for "
+                        + safeText(job.getModuleCode()) + " - " + safeText(job.getModuleName()) + ".");
         return application;
     }
 
@@ -123,6 +143,12 @@ public class ApplicationService {
 
         application.setStatus(newStatus);
         applicationRepository.save(application);
+        publishTaNotification(
+                NotificationType.WITHDRAW,
+                application.getTaUserId(),
+                application.getId(),
+                "Application withdrawn successfully for "
+                        + safeText(job.getModuleCode()) + " - " + safeText(job.getModuleName()) + ".");
 
         long acceptedCount = applicationRepository.countByJobIdAndStatus(job.getId(), ApplicationStatus.ACCEPTED);
         if (acceptedCount >= job.getPositions()) {
@@ -167,6 +193,23 @@ public class ApplicationService {
 
         application.setStatus(newStatus);
         applicationRepository.save(application);
+        if (newStatus == ApplicationStatus.ACCEPTED) {
+            publishTaNotification(
+                    NotificationType.ACCEPT,
+                    application.getTaUserId(),
+                    application.getId(),
+                    "Your application for "
+                            + safeText(job.getModuleCode()) + " - " + safeText(job.getModuleName())
+                            + " has been accepted.");
+        } else if (newStatus == ApplicationStatus.REJECTED) {
+            publishTaNotification(
+                    NotificationType.REJECT,
+                    application.getTaUserId(),
+                    application.getId(),
+                    "Your application for "
+                            + safeText(job.getModuleCode()) + " - " + safeText(job.getModuleName())
+                            + " has been rejected.");
+        }
         if (workloadService != null) {
             if (newStatus == ApplicationStatus.ACCEPTED) {
                 workloadService.assignJob(application.getTaUserId(), application.getJobId());
@@ -223,5 +266,33 @@ public class ApplicationService {
         return status == ApplicationStatus.APPLIED
                 || status == ApplicationStatus.REVIEWING
                 || status == ApplicationStatus.PENDING;
+    }
+
+    private void maybePublishJobClosedApplyBlockedNotification(Job job, String taUserId) {
+        if (notificationService == null || job == null || taUserId == null || taUserId.isBlank()) {
+            return;
+        }
+        if (job.getStatus() != JobStatus.CLOSED) {
+            return;
+        }
+        String message = safeText(job.getModuleCode()) + " - " + safeText(job.getModuleName())
+                + " is closed and no longer accepts applications.";
+        notificationService.publishIfNotExists(
+                Role.TA,
+                NotificationType.JOB_CLOSE,
+                taUserId,
+                message,
+                "JOB_CLOSE_APPLY_BLOCKED:" + safeText(job.getId()));
+    }
+
+    private void publishTaNotification(NotificationType type, String taUserId, String relatedId, String message) {
+        if (notificationService == null || taUserId == null || taUserId.isBlank()) {
+            return;
+        }
+        notificationService.publish(Role.TA, type, taUserId, message, safeText(relatedId));
+    }
+
+    private String safeText(String value) {
+        return value == null ? "" : value;
     }
 }

@@ -4,10 +4,13 @@ import com.group52.tarecruitment.model.Application;
 import com.group52.tarecruitment.model.ApplicationStatus;
 import com.group52.tarecruitment.model.Job;
 import com.group52.tarecruitment.model.JobStatus;
+import com.group52.tarecruitment.model.Notification;
+import com.group52.tarecruitment.model.NotificationType;
 import com.group52.tarecruitment.model.Role;
 import com.group52.tarecruitment.model.User;
 import com.group52.tarecruitment.repository.ApplicationRepository;
 import com.group52.tarecruitment.repository.JobRepository;
+import com.group52.tarecruitment.repository.NotificationRepository;
 import com.group52.tarecruitment.repository.UserRepository;
 import com.group52.tarecruitment.service.AdminService;
 import com.group52.tarecruitment.service.ApplicationService;
@@ -16,6 +19,7 @@ import com.group52.tarecruitment.service.AiMatchingServiceAdapter;
 import com.group52.tarecruitment.service.AuthService;
 import com.group52.tarecruitment.service.JobService;
 import com.group52.tarecruitment.service.MoApplicantRankingService;
+import com.group52.tarecruitment.service.NotificationService;
 import com.group52.tarecruitment.util.CvValidationUtil;
 import com.group52.tarecruitment.util.FileUtil;
 import com.group52.tarecruitment.util.JobFilterUtil;
@@ -66,6 +70,9 @@ public final class RecruitmentSystemTestRunner {
         runCase("Job lifecycle: closing a job blocks new applications", this::testJobLifecycleCloseBlocksApplication);
         runCase("Job lifecycle: reopen restores apply, respects deadline and capacity", this::testJobLifecycleReopenAllowsApplication);
         runCase("Job lifecycle: expired deadline auto-closes the job and rejects applications", this::testJobLifecycleAutoCloseOnDeadline);
+        runCase("Notification persistence survives repository restart", this::testNotificationPersistenceAfterRestart);
+        runCase("Application and job lifecycle events create persistent notifications", this::testApplicationAndJobEventsCreateNotifications);
+        runCase("Admin overload alert notification is persisted and de-duplicated", this::testAdminOverloadAlertNotification);
 
         System.out.println();
         System.out.println("==== TEST SUMMARY ====");
@@ -1057,6 +1064,113 @@ public final class RecruitmentSystemTestRunner {
         }
     }
 
+    private void testNotificationPersistenceAfterRestart() throws Exception {
+        try (TestContext context = new TestContext()) {
+            context.notificationService.publish(
+                    Role.TA,
+                    NotificationType.APPLY,
+                    "TA-NTF-01",
+                    "Application submitted.",
+                    "APP-NTF-01");
+            context.notificationService.publish(
+                    Role.TA,
+                    NotificationType.ACCEPT,
+                    "TA-NTF-01",
+                    "Application accepted.",
+                    "APP-NTF-01");
+
+            NotificationRepository restartedRepository = new NotificationRepository(context.notificationsFilePath);
+            NotificationService restartedService = new NotificationService(restartedRepository);
+            List<Notification> restored = restartedService.getNotificationsForUser("TA-NTF-01");
+            assertEquals(2, restored.size(), "Notifications should still exist after restarting repository.");
+
+            boolean hasApply = restored.stream().anyMatch(n -> n.getType() == NotificationType.APPLY);
+            boolean hasAccept = restored.stream().anyMatch(n -> n.getType() == NotificationType.ACCEPT);
+            assertTrue(hasApply, "Restored notifications should include APPLY.");
+            assertTrue(hasAccept, "Restored notifications should include ACCEPT.");
+        }
+    }
+
+    private void testApplicationAndJobEventsCreateNotifications() throws Exception {
+        try (TestContext context = new TestContext()) {
+            User mo = newMo("MO-NTF-01", "MO NTF", "mo.ntf@bupt.cn");
+            User ta = newTa("TA-NTF-02", "TA NTF", "ta.ntf@bupt.cn");
+            context.userRepository.save(mo);
+            context.userRepository.save(ta);
+
+            Job job = context.jobService.createJob(
+                    "CS-NTF-101",
+                    "Notification Integration Lab",
+                    "desc",
+                    "Java",
+                    "6",
+                    "2",
+                    LocalDate.now().plusDays(8).toString(),
+                    mo.getId());
+
+            Application application = context.applicationService.applyForJob(job.getId(), ta.getId());
+            context.applicationService.updateApplicationStatus(application.getId(), mo.getId(), ApplicationStatus.ACCEPTED);
+            context.jobService.closeJob(job.getId(), mo.getId());
+            context.jobService.reopenJob(job.getId(), mo.getId());
+
+            List<Notification> notifications = context.notificationService.getNotificationsForUser(ta.getId());
+            Set<NotificationType> types = new HashSet<>();
+            for (Notification notification : notifications) {
+                types.add(notification.getType());
+            }
+
+            assertTrue(types.contains(NotificationType.APPLY), "TA should receive APPLY notification.");
+            assertTrue(types.contains(NotificationType.ACCEPT), "TA should receive ACCEPT notification.");
+            assertTrue(types.contains(NotificationType.JOB_CLOSE), "TA should receive JOB_CLOSE notification.");
+            assertTrue(types.contains(NotificationType.JOB_REOPEN), "TA should receive JOB_REOPEN notification.");
+        }
+    }
+
+    private void testAdminOverloadAlertNotification() throws Exception {
+        try (TestContext context = new TestContext()) {
+            User mo = newMo("MO-NTF-02", "MO Alert", "mo.alert@bupt.cn");
+            User ta = new User(
+                    "TA-NTF-03",
+                    Role.TA,
+                    "TA Alert",
+                    "ta.alert@bupt.cn",
+                    "password1",
+                    "Computer Science",
+                    2,
+                    "Java",
+                    4,
+                    true,
+                    "");
+            context.userRepository.save(mo);
+            context.userRepository.save(ta);
+
+            Job heavyJob = context.jobService.createJob(
+                    "CS-NTF-201",
+                    "Heavy Lab",
+                    "desc",
+                    "Java",
+                    "6",
+                    "1",
+                    LocalDate.now().plusDays(10).toString(),
+                    mo.getId());
+            Application application = context.applicationService.applyForJob(heavyJob.getId(), ta.getId());
+            context.applicationService.updateApplicationStatus(application.getId(), mo.getId(), ApplicationStatus.ACCEPTED);
+
+            int createdOnce = context.adminService.publishOverloadAlerts();
+            int createdTwice = context.adminService.publishOverloadAlerts();
+            assertEquals(1, createdOnce, "First overload publish should create exactly one alert.");
+            assertEquals(0, createdTwice, "Second overload publish should be de-duplicated.");
+
+            NotificationRepository restartedRepository = new NotificationRepository(context.notificationsFilePath);
+            NotificationService restartedService = new NotificationService(restartedRepository);
+            List<Notification> persisted = restartedService.getNotificationsForUser(ta.getId());
+            long overloadCount = persisted.stream()
+                    .filter(notification -> notification.getType() == NotificationType.OVERLOAD_ALERT)
+                    .count();
+            assertEquals(1L, overloadCount, "Overload alert should persist and remain unique after restart.");
+        }
+    }
+
     private interface ThrowingRunnable {
         void run() throws Exception;
     }
@@ -1128,10 +1242,13 @@ public final class RecruitmentSystemTestRunner {
         private final Path usersFilePath;
         private final Path jobsFilePath;
         private final Path applicationsFilePath;
+        private final Path notificationsFilePath;
         private final UserRepository userRepository;
         private final JobRepository jobRepository;
         private final ApplicationRepository applicationRepository;
+        private final NotificationRepository notificationRepository;
         private final AuthService authService;
+        private final NotificationService notificationService;
         private final JobService jobService;
         private final ApplicationService applicationService;
         private final AdminService adminService;
@@ -1141,14 +1258,17 @@ public final class RecruitmentSystemTestRunner {
             this.usersFilePath = tempDirectory.resolve("users.csv");
             this.jobsFilePath = tempDirectory.resolve("jobs.csv");
             this.applicationsFilePath = tempDirectory.resolve("applications.csv");
+            this.notificationsFilePath = tempDirectory.resolve("notifications.csv");
 
             this.userRepository = new UserRepository(usersFilePath);
             this.jobRepository = new JobRepository(jobsFilePath);
             this.applicationRepository = new ApplicationRepository(applicationsFilePath);
+            this.notificationRepository = new NotificationRepository(notificationsFilePath);
             this.authService = new AuthService(userRepository);
-            this.jobService = new JobService(jobRepository, applicationRepository);
-            this.applicationService = new ApplicationService(applicationRepository, jobRepository);
-            this.adminService = new AdminService(userRepository, jobRepository, applicationRepository);
+            this.notificationService = new NotificationService(notificationRepository);
+            this.jobService = new JobService(jobRepository, applicationRepository, notificationService);
+            this.applicationService = new ApplicationService(applicationRepository, jobRepository, null, notificationService);
+            this.adminService = new AdminService(userRepository, jobRepository, applicationRepository, notificationService);
         }
 
         @Override
