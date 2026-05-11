@@ -2198,7 +2198,10 @@ public class SwingApp {
         private final DefaultTableModel applicantsModel;
         private final JTable applicantsTable;
         private final JLabel applicantsTitle;
-        private final JCheckBox pendingOnlyCheckBox;
+        private final JLabel moNotificationSummaryLabel;
+        private final JTextArea moNotificationArea;
+        private JCheckBox pendingOnlyCheckBox;
+        private JCheckBox needsDecisionCheckBox;
         private final JSpinner matchThresholdSpinner;
         private final Map<String, MoApplicantRankingService.RankedApplicant> rankedApplicantsByApplicationId;
         private final JTextField profileNameField;
@@ -2251,11 +2254,50 @@ public class SwingApp {
             installTableRowHover(jobsTable);
             JPanel dashboardPanel = new JPanel(new BorderLayout(0, 16));
             dashboardPanel.setOpaque(false);
+            JPanel dashboardTopStack = new JPanel();
+            dashboardTopStack.setOpaque(false);
+            dashboardTopStack.setLayout(new BoxLayout(dashboardTopStack, BoxLayout.Y_AXIS));
+
+            JPanel moNotificationPanel = new JPanel(new BorderLayout(0, 10));
+            moNotificationPanel.setOpaque(false);
+            JPanel moNotificationHeader = new JPanel(new BorderLayout());
+            moNotificationHeader.setOpaque(false);
+            moNotificationHeader.add(createSectionTitle(
+                    "MO Notifications",
+                    "New applications, pending decisions, and filled jobs for your posted jobs."), BorderLayout.WEST);
+            JPanel moNotificationActions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0));
+            moNotificationActions.setOpaque(false);
+            moNotificationSummaryLabel = new JLabel("Pending applications: 0 | Filled jobs: 0");
+            moNotificationSummaryLabel.setFont(new Font("Segoe UI", Font.BOLD, 13));
+            moNotificationSummaryLabel.setForeground(MUTED_TEXT_COLOR);
+            JButton refreshMoNotificationsButton = new JButton("Refresh");
+            styleSecondaryButton(refreshMoNotificationsButton);
+            refreshMoNotificationsButton.addActionListener(e -> refreshMoNotifications());
+            moNotificationActions.add(moNotificationSummaryLabel);
+            moNotificationActions.add(refreshMoNotificationsButton);
+            moNotificationHeader.add(moNotificationActions, BorderLayout.EAST);
+            moNotificationArea = new JTextArea(5, 60);
+            moNotificationArea.setEditable(false);
+            moNotificationArea.setLineWrap(true);
+            moNotificationArea.setWrapStyleWord(true);
+            moNotificationArea.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+            moNotificationArea.setForeground(HEADER_TEXT);
+            moNotificationArea.setBackground(Color.WHITE);
+            moNotificationArea.setBorder(BorderFactory.createEmptyBorder(8, 10, 8, 10));
+            JScrollPane moNotificationScrollPane = new JScrollPane(moNotificationArea);
+            moNotificationScrollPane.setBorder(BorderFactory.createLineBorder(CARD_BORDER));
+            moNotificationScrollPane.setPreferredSize(new Dimension(0, 126));
+            moNotificationPanel.add(moNotificationHeader, BorderLayout.NORTH);
+            moNotificationPanel.add(moNotificationScrollPane, BorderLayout.CENTER);
+            dashboardTopStack.add(createCardPanel(moNotificationPanel, 18, 18, 18, 18));
+            dashboardTopStack.add(Box.createVerticalStrut(12));
+
             JPanel dashboardHeader = new JPanel(new BorderLayout());
             dashboardHeader.setOpaque(false);
             JPanel dashboardHeaderText = createSectionTitle("My Posted Jobs", "Overview of jobs, applicants, and statuses.");
             dashboardHeader.add(dashboardHeaderText, BorderLayout.WEST);
-            dashboardPanel.add(createCardPanel(dashboardHeader, 18, 18, 18, 18), BorderLayout.NORTH);
+            dashboardTopStack.add(createCardPanel(dashboardHeader, 18, 18, 18, 18));
+            dashboardPanel.add(dashboardTopStack, BorderLayout.NORTH);
             JScrollPane jobsScrollPane = new JScrollPane(jobsTable);
             jobsScrollPane.setBorder(BorderFactory.createEmptyBorder());
             jobsScrollPane.getViewport().setBackground(Color.WHITE);
@@ -2341,8 +2383,23 @@ public class SwingApp {
             pendingOnlyCheckBox = new JCheckBox("Pending only", true);
             pendingOnlyCheckBox.setOpaque(false);
             pendingOnlyCheckBox.setFont(new Font("Segoe UI", Font.PLAIN, 13));
-            pendingOnlyCheckBox.addActionListener(e -> refreshApplicants());
+            pendingOnlyCheckBox.addActionListener(e -> {
+                if (pendingOnlyCheckBox.isSelected()) {
+                    needsDecisionCheckBox.setSelected(false);
+                }
+                refreshApplicants();
+            });
             applicantsControls.add(pendingOnlyCheckBox);
+            needsDecisionCheckBox = new JCheckBox("Needs decision", false);
+            needsDecisionCheckBox.setOpaque(false);
+            needsDecisionCheckBox.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+            needsDecisionCheckBox.addActionListener(e -> {
+                if (needsDecisionCheckBox.isSelected()) {
+                    pendingOnlyCheckBox.setSelected(false);
+                }
+                refreshApplicants();
+            });
+            applicantsControls.add(needsDecisionCheckBox);
             applicantsControls.add(new JLabel("Min match score"));
             matchThresholdSpinner = new JSpinner(new SpinnerNumberModel(DEFAULT_MO_MATCH_THRESHOLD, 0, 100, 5));
             matchThresholdSpinner.setPreferredSize(new Dimension(70, 32));
@@ -2374,7 +2431,7 @@ public class SwingApp {
             JButton refreshApplicantsButton = new JButton("Refresh");
             styleSecondaryButton(refreshApplicantsButton);
             refreshApplicantsButton.addActionListener(e -> refreshApplicants());
-            JButton sortMatchButton = new JButton("Sort by Match Score");
+            JButton sortMatchButton = new JButton("High match first");
             stylePrimaryButton(sortMatchButton);
             sortMatchButton.addActionListener(e -> sortApplicantsByMatchScore());
             JButton sortWorkloadButton = new JButton("Sort by Workload");
@@ -2424,6 +2481,7 @@ public class SwingApp {
             this.selectedJobId = null;
             refreshJobs();
             refreshApplicants();
+            refreshMoNotifications();
             loadProfile();
             updateTopBarAvatar(user == null ? "" : user.getAvatarFilePath());
             contentLayout.show(contentPanel, TAB_DASHBOARD);
@@ -2452,6 +2510,130 @@ public class SwingApp {
                     job.getDeadline()
                 });
             }
+            refreshMoNotifications();
+        }
+
+        private void refreshMoNotifications() {
+            if (user == null) {
+                moNotificationSummaryLabel.setText("Pending applications: 0 | Filled jobs: 0");
+                moNotificationArea.setText("Login as an MO to see notifications for your jobs.");
+                return;
+            }
+
+            int pendingCount = applicationService.getPendingApplicationCountForMo(user.getId());
+            int filledJobCount = countFilledJobsForCurrentMo();
+            moNotificationSummaryLabel.setText(
+                    "Pending applications: " + pendingCount + " | Filled jobs: " + filledJobCount);
+
+            List<String> notificationLines = buildMoNotificationLines(pendingCount);
+            if (notificationLines.isEmpty()) {
+                moNotificationArea.setText(
+                        "No MO notifications right now. New applications, pending decisions, and filled jobs will appear here.");
+            } else {
+                moNotificationArea.setText(String.join("\n\n", notificationLines));
+            }
+            moNotificationArea.setCaretPosition(0);
+        }
+
+        private List<String> buildMoNotificationLines(int pendingCount) {
+            List<String> lines = new ArrayList<>();
+            List<Job> jobs = jobService.getJobsByMoId(user.getId());
+            Map<String, Job> jobsById = new LinkedHashMap<>();
+            for (Job job : jobs) {
+                jobsById.put(job.getId(), job);
+            }
+
+            // Pending count gives the MO an immediate workload summary before they inspect individual rows.
+            if (pendingCount > 0) {
+                int jobsWithPendingApplications = countJobsWithPendingApplications(jobs);
+                lines.add("Pending review: " + pendingCount + " application(s) across "
+                        + jobsWithPendingApplications + " job(s) need your decision.");
+            }
+
+            // Pending applications are treated as new reminders because the MO still needs to review them.
+            int remindersAdded = 0;
+            for (Application application : applicationService.getApplicationsForMo(user.getId())) {
+                if (application.getStatus() != ApplicationStatus.PENDING) {
+                    continue;
+                }
+                Job job = jobsById.get(application.getJobId());
+                User applicant = findUserById(application.getTaUserId()).orElse(null);
+                lines.add(buildPendingApplicationReminder(application, job, applicant));
+                remindersAdded++;
+                if (remindersAdded >= 8) {
+                    int remaining = pendingCount - remindersAdded;
+                    if (remaining > 0) {
+                        lines.add("More pending applications: " + remaining
+                                + " additional application(s) are waiting in the Applicants list.");
+                    }
+                    break;
+                }
+            }
+
+            // Filled-job reminders are regenerated from live accepted counts so they refresh after every decision.
+            for (Job job : jobs) {
+                int acceptedCount = acceptedApplicantsForJob(job.getId());
+                if (job.getStatus() == JobStatus.FILLED || acceptedCount >= job.getPositions()) {
+                    lines.add("Job filled: " + jobLabel(job) + " has " + acceptedCount + "/"
+                            + job.getPositions() + " accepted applicant(s). Status: FILLED.");
+                }
+            }
+            return lines;
+        }
+
+        private String buildPendingApplicationReminder(Application application, Job job, User applicant) {
+            String applicantName = applicant == null ? "Unknown applicant" : safeText(applicant.getName());
+            String jobText = job == null ? "an unknown job" : jobLabel(job);
+            String appliedDate = safeText(application.getAppliedDate()).isBlank()
+                    ? "an unknown date"
+                    : application.getAppliedDate();
+            String matchScoreText = "not available";
+            if (job != null && applicant != null) {
+                AiMatchingService.MatchResult matchResult =
+                        aiMatchingService.analyzeSkills(applicant.getSkills(), job.getRequiredSkills());
+                matchScoreText = matchResult.getScore() + "%";
+            }
+            return "New application: " + applicantName + " applied for " + jobText + " on " + appliedDate
+                    + ". Status: " + application.getStatus().name()
+                    + ". Match score: " + matchScoreText + ".";
+        }
+
+        private int countJobsWithPendingApplications(List<Job> jobs) {
+            int count = 0;
+            for (Job job : jobs) {
+                boolean hasPendingApplication = false;
+                for (Application application : applicationService.getApplicationsByJobId(job.getId())) {
+                    if (application.getStatus() == ApplicationStatus.PENDING) {
+                        hasPendingApplication = true;
+                        break;
+                    }
+                }
+                if (hasPendingApplication) {
+                    count++;
+                }
+            }
+            return count;
+        }
+
+        private int countFilledJobsForCurrentMo() {
+            if (user == null) {
+                return 0;
+            }
+            int count = 0;
+            for (Job job : jobService.getJobsByMoId(user.getId())) {
+                int acceptedCount = acceptedApplicantsForJob(job.getId());
+                if (job.getStatus() == JobStatus.FILLED || acceptedCount >= job.getPositions()) {
+                    count++;
+                }
+            }
+            return count;
+        }
+
+        private String jobLabel(Job job) {
+            if (job == null) {
+                return "Unknown job";
+            }
+            return safeText(job.getModuleCode()) + " - " + safeText(job.getModuleName());
         }
 
         private void createJob() {
@@ -2470,6 +2652,7 @@ public class SwingApp {
                         input.deadline,
                         user.getId());
                 refreshJobs();
+                refreshMoNotifications();
             } catch (IllegalArgumentException ex) {
                 JOptionPane.showMessageDialog(frame, ex.getMessage());
             }
@@ -2505,6 +2688,7 @@ public class SwingApp {
                         input.deadline);
                 refreshJobs();
                 refreshApplicants();
+                refreshMoNotifications();
             } catch (IllegalArgumentException ex) {
                 JOptionPane.showMessageDialog(frame, ex.getMessage());
             }
@@ -2541,6 +2725,7 @@ public class SwingApp {
                 showToast("Job Closed", label + " is now closed.", JOptionPane.INFORMATION_MESSAGE);
                 refreshJobs();
                 refreshApplicants();
+                refreshMoNotifications();
             } catch (IllegalArgumentException ex) {
                 JOptionPane.showMessageDialog(frame, ex.getMessage());
             }
@@ -2581,6 +2766,7 @@ public class SwingApp {
                         JOptionPane.INFORMATION_MESSAGE);
                 refreshJobs();
                 refreshApplicants();
+                refreshMoNotifications();
             } catch (IllegalArgumentException ex) {
                 JOptionPane.showMessageDialog(frame, ex.getMessage());
             }
@@ -2605,6 +2791,7 @@ public class SwingApp {
             }
             refreshJobs();
             refreshApplicants();
+            refreshMoNotifications();
         }
 
         private void openApplicantsForSelectedJob() {
@@ -2641,6 +2828,7 @@ public class SwingApp {
             }
             MoApplicantRankingService.RankingOptions options = new MoApplicantRankingService.RankingOptions(
                     pendingOnlyCheckBox.isSelected(),
+                    needsDecisionCheckBox.isSelected(),
                     (Integer) matchThresholdSpinner.getValue(),
                     applicantSortMode);
             for (MoApplicantRankingService.RankedApplicant applicant : moApplicantRankingService.rankApplicants(
@@ -2714,6 +2902,7 @@ public class SwingApp {
                 applicationService.updateApplicationStatus(appId, user.getId(), status);
                 refreshApplicants();
                 refreshJobs();
+                refreshMoNotifications();
                 showToast(
                         "Application Reviewed",
                         "Application has been marked as " + status.name() + ".",

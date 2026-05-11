@@ -34,6 +34,8 @@ public class MoApplicantRankingService {
 
         return applications.stream()
                 .filter(Objects::nonNull)
+                .filter(application -> !safeOptions.isNeedsDecisionOnly()
+                        || isNeedsDecisionStatus(application.getStatus()))
                 .filter(application -> !safeOptions.isPendingOnly()
                         || application.getStatus() == ApplicationStatus.PENDING)
                 .map(application -> buildRankedApplicant(job, application, safeApplicants.get(application.getTaUserId()),
@@ -73,6 +75,12 @@ public class MoApplicantRankingService {
                 currentWorkload,
                 recommended,
                 application.getStatus());
+    }
+
+    private boolean isNeedsDecisionStatus(ApplicationStatus status) {
+        return status == ApplicationStatus.APPLIED
+                || status == ApplicationStatus.REVIEWING
+                || status == ApplicationStatus.PENDING;
     }
 
     public String buildExplanation(Job job, RankedApplicant applicant, int minimumMatchScore) {
@@ -139,11 +147,21 @@ public class MoApplicantRankingService {
 
     public static final class RankingOptions {
         private final boolean pendingOnly;
+        private final boolean needsDecisionOnly;
         private final int minimumMatchScore;
         private final SortMode sortMode;
 
         public RankingOptions(boolean pendingOnly, int minimumMatchScore, SortMode sortMode) {
+            this(pendingOnly, false, minimumMatchScore, sortMode);
+        }
+
+        public RankingOptions(
+                boolean pendingOnly,
+                boolean needsDecisionOnly,
+                int minimumMatchScore,
+                SortMode sortMode) {
             this.pendingOnly = pendingOnly;
+            this.needsDecisionOnly = needsDecisionOnly;
             this.minimumMatchScore = ValidationUtil.parseIntInRange(
                     String.valueOf(minimumMatchScore), "Minimum match score", 0, 100);
             this.sortMode = sortMode == null ? SortMode.MATCH_SCORE_DESC : sortMode;
@@ -155,6 +173,10 @@ public class MoApplicantRankingService {
 
         public boolean isPendingOnly() {
             return pendingOnly;
+        }
+
+        public boolean isNeedsDecisionOnly() {
+            return needsDecisionOnly;
         }
 
         public int getMinimumMatchScore() {

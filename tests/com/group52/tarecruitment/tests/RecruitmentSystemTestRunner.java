@@ -54,6 +54,8 @@ public final class RecruitmentSystemTestRunner {
         runCase("Auth register/login success and validation failures", this::testAuthFlows);
         runCase("Job creation/update validation includes deadline and capacity", this::testJobValidationFlows);
         runCase("Application authorization and state transition rules", this::testApplicationAuthorizationAndTransitions);
+        runCase("MO pending application count uses only the MO's pending applications", this::testMoPendingApplicationCount);
+        runCase("MO accept fills job when final position is accepted", this::testMoAcceptFillsJobWhenCapacityReached);
         runCase("Job deletion is blocked when applications exist", this::testDeleteJobGuard);
         runCase("TA notification filtering and unread count", this::testTaNotificationFilteringAndUnreadCount);
         runCase("TA notification status summary and closed-job message", this::testTaNotificationSummaryAndClosedMessage);
@@ -375,6 +377,117 @@ public final class RecruitmentSystemTestRunner {
             assertTrue(
                     context.jobService.getJobById(emptyJob.getId()).isEmpty(),
                     "Job without applications should be deletable.");
+        }
+    }
+
+    private void testMoPendingApplicationCount() throws Exception {
+        try (TestContext context = new TestContext()) {
+            // Setup
+            User mo = newMo("MO-PENDING-1", "MO Pending", "mo.pending@bupt.cn");
+            User otherMo = newMo("MO-PENDING-2", "Other MO Pending", "other.pending@bupt.cn");
+            User ta1 = newTa("TA-PENDING-1", "Iris Pending", "iris.pending@bupt.cn");
+            User ta2 = newTa("TA-PENDING-2", "Jack Pending", "jack.pending@bupt.cn");
+            User ta3 = newTa("TA-PENDING-3", "Kara Pending", "kara.pending@bupt.cn");
+            context.userRepository.save(mo);
+            context.userRepository.save(otherMo);
+            context.userRepository.save(ta1);
+            context.userRepository.save(ta2);
+            context.userRepository.save(ta3);
+
+            Job moJobOne = context.jobService.createJob(
+                    "CS-MO-101",
+                    "MO Pending One",
+                    "desc",
+                    "Java",
+                    "6",
+                    "2",
+                    LocalDate.now().plusDays(7).toString(),
+                    mo.getId());
+            Job moJobTwo = context.jobService.createJob(
+                    "CS-MO-102",
+                    "MO Pending Two",
+                    "desc",
+                    "Python",
+                    "4",
+                    "1",
+                    LocalDate.now().plusDays(7).toString(),
+                    mo.getId());
+            Job otherMoJob = context.jobService.createJob(
+                    "CS-MO-103",
+                    "Other MO Job",
+                    "desc",
+                    "Java",
+                    "4",
+                    "1",
+                    LocalDate.now().plusDays(7).toString(),
+                    otherMo.getId());
+
+            context.applicationRepository.save(new Application(
+                    "APP-MO-PENDING-1",
+                    moJobOne.getId(),
+                    ta1.getId(),
+                    ApplicationStatus.PENDING,
+                    LocalDate.now().toString()));
+            context.applicationRepository.save(new Application(
+                    "APP-MO-PENDING-2",
+                    moJobTwo.getId(),
+                    ta2.getId(),
+                    ApplicationStatus.PENDING,
+                    LocalDate.now().toString()));
+            context.applicationRepository.save(new Application(
+                    "APP-MO-REJECTED-1",
+                    moJobOne.getId(),
+                    ta3.getId(),
+                    ApplicationStatus.REJECTED,
+                    LocalDate.now().toString()));
+            context.applicationRepository.save(new Application(
+                    "APP-OTHER-MO-PENDING-1",
+                    otherMoJob.getId(),
+                    ta3.getId(),
+                    ApplicationStatus.PENDING,
+                    LocalDate.now().toString()));
+
+            // Action
+            int pendingCount = context.applicationService.getPendingApplicationCountForMo(mo.getId());
+
+            // Expected result
+            assertEquals(2, pendingCount, "MO pending count should include only pending applications for that MO's jobs.");
+        }
+    }
+
+    private void testMoAcceptFillsJobWhenCapacityReached() throws Exception {
+        try (TestContext context = new TestContext()) {
+            // Setup
+            User mo = newMo("MO-FILL-1", "MO Fill", "mo.fill@bupt.cn");
+            User ta = newTa("TA-FILL-1", "Lena Fill", "lena.fill@bupt.cn");
+            context.userRepository.save(mo);
+            context.userRepository.save(ta);
+
+            Job job = context.jobService.createJob(
+                    "CS-FILL-101",
+                    "Capacity Lab",
+                    "desc",
+                    "Java",
+                    "6",
+                    "1",
+                    LocalDate.now().plusDays(7).toString(),
+                    mo.getId());
+            Application application = context.applicationService.applyForJob(job.getId(), ta.getId());
+
+            // Action
+            context.applicationService.updateApplicationStatus(
+                    application.getId(),
+                    mo.getId(),
+                    ApplicationStatus.ACCEPTED);
+
+            // Expected result
+            Job reloadedJob = context.jobRepository.findById(job.getId())
+                    .orElseThrow(() -> new AssertionError("Job should still exist after accepting an applicant."));
+            assertEquals(JobStatus.FILLED, reloadedJob.getStatus(), "Job should become FILLED when capacity is reached.");
+            assertEquals(
+                    0,
+                    context.applicationService.getPendingApplicationCountForMo(mo.getId()),
+                    "Pending count should refresh to zero after the only pending application is accepted.");
         }
     }
 

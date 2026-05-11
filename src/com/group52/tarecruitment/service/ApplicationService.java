@@ -85,6 +85,20 @@ public class ApplicationService {
                 .toList();
     }
 
+    public int getPendingApplicationCountForMo(String moId) {
+        return countApplicationsForMoByStatus(moId, ApplicationStatus.PENDING);
+    }
+
+    public int getReviewableApplicationCountForMo(String moId) {
+        int count = 0;
+        for (Application application : getApplicationsForMo(moId)) {
+            if (isReviewableStatus(application.getStatus())) {
+                count++;
+            }
+        }
+        return count;
+    }
+
     // Compatibility APIs for Swing UI flows.
     public Optional<Application> getApplicationById(String applicationId) {
         if (applicationId == null || applicationId.isBlank()) {
@@ -219,14 +233,35 @@ public class ApplicationService {
         }
 
         if (newStatus == ApplicationStatus.ACCEPTED) {
-            long acceptedCount = applicationRepository.countByJobIdAndStatus(job.getId(), ApplicationStatus.ACCEPTED);
-            if (acceptedCount >= job.getPositions()) {
-                job.setStatus(JobStatus.FILLED);
-                jobRepository.save(job);
-            }
+            refreshJobFilledStatus(job);
         }
 
         return application;
+    }
+
+    private int countApplicationsForMoByStatus(String moId, ApplicationStatus status) {
+        if (status == null) {
+            return 0;
+        }
+        int count = 0;
+        for (Application application : getApplicationsForMo(moId)) {
+            if (application.getStatus() == status) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private void refreshJobFilledStatus(Job job) {
+        if (job == null || job.getStatus() == JobStatus.CLOSED) {
+            return;
+        }
+        long acceptedCount = applicationRepository.countByJobIdAndStatus(job.getId(), ApplicationStatus.ACCEPTED);
+        JobStatus refreshedStatus = acceptedCount >= job.getPositions() ? JobStatus.FILLED : JobStatus.OPEN;
+        if (job.getStatus() != refreshedStatus) {
+            job.setStatus(refreshedStatus);
+            jobRepository.save(job);
+        }
     }
 
     private void validateJobIsOpen(Job job) {
