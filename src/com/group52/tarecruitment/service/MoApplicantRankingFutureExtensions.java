@@ -2,6 +2,8 @@ package com.group52.tarecruitment.service;
 
 import com.group52.tarecruitment.model.ApplicationStatus;
 import com.group52.tarecruitment.model.JobStatus;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
 
@@ -15,10 +17,15 @@ import java.util.Objects;
 public final class MoApplicantRankingFutureExtensions {
     private static final int STRONG_MATCH_SCORE = 80;
     private static final int MODERATE_MATCH_SCORE = 60;
+    private static final int LOW_MATCH_SCORE = 40;
     private static final int HIGH_MATCH_NOTIFICATION_SCORE = 85;
     private static final int MEDIUM_WORKLOAD_HOURS = 10;
     private static final int HIGH_WORKLOAD_HOURS = 15;
+    private static final int DEFAULT_WAITING_DAYS_ATTENTION_THRESHOLD = 7;
+    private static final int LONG_WAITING_DAYS_THRESHOLD = 14;
+    private static final int CLOSE_TO_FILLED_PERCENT = 80;
     private static final int MANY_PENDING_APPLICATIONS = 5;
+    private static final int MANY_REVIEWABLE_APPLICATIONS = 8;
     private static final int PRIORITY_MATCH_WEIGHT = 50;
     private static final int PRIORITY_PENDING_STATUS_BONUS = 25;
     private static final int PRIORITY_REVIEWING_STATUS_BONUS = 20;
@@ -27,6 +34,14 @@ public final class MoApplicantRankingFutureExtensions {
     private static final int PRIORITY_ALMOST_FILLED_JOB_BONUS = 12;
     private static final int PRIORITY_FILLED_JOB_PENALTY = 30;
     private static final int PRIORITY_HIGH_WORKLOAD_PENALTY = 8;
+    private static final int DECISION_STRONGLY_REVIEW_SCORE = 75;
+    private static final int DECISION_REVIEW_SCORE = 45;
+    private static final int DECISION_LOW_PRIORITY_SCORE = 20;
+    private static final int JOB_URGENCY_FILLED_POINTS = 35;
+    private static final int JOB_URGENCY_CLOSE_TO_FILLED_POINTS = 25;
+    private static final int JOB_URGENCY_PENDING_POINTS = 4;
+    private static final int JOB_URGENCY_REVIEWABLE_POINTS = 3;
+    private static final int JOB_URGENCY_HIGH_MATCH_POINTS = 15;
 
     private MoApplicantRankingFutureExtensions() {
         throw new UnsupportedOperationException("Utility class");
@@ -218,6 +233,474 @@ public final class MoApplicantRankingFutureExtensions {
         return "No action needed: this job has no pending applications right now.";
     }
 
+    /**
+     * Future-use attention flag detector for a single applicant row.
+     *
+     * <p>The current production UI builds its own simple reminders. This richer result is left here
+     * so a later dashboard can explain why an applicant row deserves MO attention without adding
+     * more logic to Swing components.
+     */
+    public static List<ApplicantAttentionFlag> identifyApplicantAttentionFlags(
+            FutureApplicantSignal signal) {
+        if (signal == null) {
+            return List.of(ApplicantAttentionFlag.NO_SIGNAL_DATA);
+        }
+        return identifyApplicantAttentionFlags(
+                signal.getMatchScore(),
+                signal.getStatus(),
+                signal.getCurrentWorkloadHours(),
+                signal.getAcceptedApplicantsForJob(),
+                signal.getJobPositions(),
+                signal.getWaitingDays(),
+                DEFAULT_WAITING_DAYS_ATTENTION_THRESHOLD,
+                signal.getJobStatus());
+    }
+
+    /**
+     * Primitive-value overload for future callers that do not have a FutureApplicantSignal object.
+     */
+    public static List<ApplicantAttentionFlag> identifyApplicantAttentionFlags(
+            int matchScore,
+            ApplicationStatus status,
+            int currentWorkloadHours,
+            int acceptedApplicantsForJob,
+            int jobPositions,
+            int waitingDays,
+            int waitingDaysAttentionThreshold,
+            JobStatus jobStatus) {
+        List<ApplicantAttentionFlag> flags = new ArrayList<>();
+        int safeMatchScore = normalizeMatchScore(matchScore);
+        int safeWorkload = Math.max(0, currentWorkloadHours);
+        int safeWaitingDays = Math.max(0, waitingDays);
+        int safeWaitingThreshold = Math.max(1, waitingDaysAttentionThreshold);
+        boolean needsDecision = needsDecision(status);
+        boolean jobFilled = isJobFilledStatus(jobStatus) || isJobFilled(acceptedApplicantsForJob, jobPositions);
+
+        if (needsDecision && safeMatchScore >= STRONG_MATCH_SCORE) {
+            flags.add(ApplicantAttentionFlag.HIGH_MATCH_STILL_PENDING);
+        }
+        if (needsDecision && safeMatchScore < LOW_MATCH_SCORE) {
+            flags.add(ApplicantAttentionFlag.LOW_MATCH_STILL_PENDING);
+        }
+        if (isJobAlmostFilled(acceptedApplicantsForJob, jobPositions)) {
+            flags.add(ApplicantAttentionFlag.JOB_ALMOST_FILLED);
+        }
+        if (jobFilled) {
+            flags.add(ApplicantAttentionFlag.JOB_ALREADY_FILLED);
+        }
+        if (safeWorkload >= HIGH_WORKLOAD_HOURS) {
+            flags.add(ApplicantAttentionFlag.APPLICANT_POSSIBLY_OVERLOADED);
+        }
+        if (needsDecision && safeWaitingDays >= safeWaitingThreshold) {
+            flags.add(ApplicantAttentionFlag.APPLICATION_WAITING_TOO_LONG);
+        }
+        if (!needsDecision) {
+            flags.add(ApplicantAttentionFlag.APPLICATION_DOES_NOT_NEED_ACTION);
+        }
+        if (flags.isEmpty()) {
+            flags.add(ApplicantAttentionFlag.NORMAL_REVIEW_ITEM);
+        }
+        return List.copyOf(flags);
+    }
+
+    public static DecisionSuggestion suggestFutureDecision(FutureApplicantSignal signal) {
+        if (signal == null) {
+            return DecisionSuggestion.NO_ACTION_NEEDED;
+        }
+        return suggestFutureDecision(
+                signal.getMatchScore(),
+                signal.getStatus(),
+                signal.getCurrentWorkloadHours(),
+                signal.getAcceptedApplicantsForJob(),
+                signal.getJobPositions(),
+                signal.getWaitingDays(),
+                signal.getJobStatus());
+    }
+
+    /**
+     * Future-use decision suggestion that stays deliberately simple and auditable.
+     *
+     * <p>This is not a hiring decision engine. It produces a coarse queue suggestion so a future MO
+     * dashboard could sort or label applicants while leaving the actual decision to the MO.
+     */
+    public static DecisionSuggestion suggestFutureDecision(
+            int matchScore,
+            ApplicationStatus status,
+            int currentWorkloadHours,
+            int acceptedApplicantsForJob,
+            int jobPositions,
+            int waitingDays,
+            JobStatus jobStatus) {
+        if (!needsDecision(status)) {
+            return DecisionSuggestion.NO_ACTION_NEEDED;
+        }
+        if (isJobFilledStatus(jobStatus) || isJobFilled(acceptedApplicantsForJob, jobPositions)) {
+            return DecisionSuggestion.NO_ACTION_NEEDED;
+        }
+
+        int score = 0;
+        int safeMatchScore = normalizeMatchScore(matchScore);
+        int safeWorkload = Math.max(0, currentWorkloadHours);
+        int safeWaitingDays = Math.max(0, waitingDays);
+
+        if (safeMatchScore >= STRONG_MATCH_SCORE) {
+            score += 45;
+        } else if (safeMatchScore >= MODERATE_MATCH_SCORE) {
+            score += 30;
+        } else if (safeMatchScore >= LOW_MATCH_SCORE) {
+            score += 15;
+        } else {
+            score += 5;
+        }
+
+        if (status == ApplicationStatus.PENDING) {
+            score += 20;
+        } else if (status == ApplicationStatus.REVIEWING) {
+            score += 18;
+        } else if (status == ApplicationStatus.APPLIED) {
+            score += 15;
+        }
+
+        if (isJobAlmostFilled(acceptedApplicantsForJob, jobPositions)) {
+            score += 12;
+        }
+        if (safeWaitingDays >= LONG_WAITING_DAYS_THRESHOLD) {
+            score += 12;
+        } else if (safeWaitingDays >= DEFAULT_WAITING_DAYS_ATTENTION_THRESHOLD) {
+            score += 6;
+        }
+        if (safeWorkload >= HIGH_WORKLOAD_HOURS) {
+            score -= 15;
+        } else if (safeWorkload >= MEDIUM_WORKLOAD_HOURS) {
+            score -= 5;
+        }
+
+        if (score >= DECISION_STRONGLY_REVIEW_SCORE) {
+            return DecisionSuggestion.STRONGLY_REVIEW;
+        }
+        if (score >= DECISION_REVIEW_SCORE) {
+            return DecisionSuggestion.REVIEW;
+        }
+        if (score >= DECISION_LOW_PRIORITY_SCORE) {
+            return DecisionSuggestion.LOW_PRIORITY;
+        }
+        return DecisionSuggestion.NO_ACTION_NEEDED;
+    }
+
+    public static String buildApplicantPriorityExplanation(FutureApplicantSignal signal) {
+        if (signal == null) {
+            return "No applicant signal is available, so no future priority explanation can be built.";
+        }
+
+        StringBuilder explanation = new StringBuilder();
+        explanation.append("Applicant: ").append(safeLabel(signal.getApplicantName(), "Unknown applicant")).append("\n");
+        explanation.append("Application ID: ").append(safeLabel(signal.getApplicationId(), "Unknown application")).append("\n");
+        explanation.append("Decision state: ").append(readableApplicantDecisionState(signal.getStatus())).append("\n");
+        explanation.append("Review suggestion: ").append(suggestFutureDecision(signal).getLabel()).append("\n");
+        explanation.append("Match quality: ").append(readableMatchQualityLevel(signal.getMatchScore())).append("\n");
+        explanation.append("Workload: ").append(buildWorkloadExplanation(signal.getCurrentWorkloadHours())).append("\n");
+        explanation.append("Job fill state: ")
+                .append(readableJobFillState(signal.getAcceptedApplicantsForJob(), signal.getJobPositions(),
+                        signal.getJobStatus()))
+                .append("\n");
+        explanation.append("Waiting time: ").append(Math.max(0, signal.getWaitingDays())).append(" day(s).\n");
+        explanation.append("Attention flags: ")
+                .append(readableAttentionFlags(identifyApplicantAttentionFlags(signal)))
+                .append("\n\n");
+        explanation.append(buildMatchScoreExplanation(signal.getMatchScore()));
+        return explanation.toString();
+    }
+
+    public static String buildJobAttentionExplanation(FutureJobDashboardItem item) {
+        if (item == null) {
+            return "No job summary is available, so no future job attention explanation can be built.";
+        }
+
+        StringBuilder explanation = new StringBuilder();
+        explanation.append("Job: ").append(item.getJobLabel()).append("\n");
+        explanation.append("Fill state: ")
+                .append(readableJobFillState(item.getAcceptedApplicants(), item.getPositions(), item.getJobStatus()))
+                .append("\n");
+        explanation.append("Pending applications: ").append(item.getPendingApplications()).append("\n");
+        explanation.append("Applicants needing decision: ").append(item.getReviewableApplications()).append("\n");
+        explanation.append("Highest pending match score: ").append(item.getHighestPendingMatchScore()).append("%\n");
+        explanation.append("Job urgency score: ").append(calculateJobUrgencyScore(item)).append("/100\n");
+
+        if (item.needsAttention()) {
+            explanation.append("Why it needs attention: ");
+            if (item.isFilled()) {
+                explanation.append("the job is already filled and may need status visibility.");
+            } else if (item.isCloseToFilled()) {
+                explanation.append("the job is close to capacity, so each decision has a stronger effect.");
+            } else if (item.getReviewableApplications() >= MANY_REVIEWABLE_APPLICATIONS) {
+                explanation.append("many applications still need review.");
+            } else {
+                explanation.append("there are pending applications waiting for an MO decision.");
+            }
+        } else {
+            explanation.append(buildNoActionNeededExplanation(item));
+        }
+        return explanation.toString();
+    }
+
+    public static String buildNoActionNeededExplanation(FutureJobDashboardItem item) {
+        if (item == null) {
+            return "No action needed because no job information was provided.";
+        }
+        if (item.isFilled()) {
+            return "No applicant decision is needed because the job is already filled.";
+        }
+        if (item.getReviewableApplications() == 0 && item.getPendingApplications() == 0) {
+            return "No action needed because this job currently has no pending or reviewable applications.";
+        }
+        return "No immediate action is needed because this job is not close to capacity and has a small review queue.";
+    }
+
+    public static String buildMatchScoreExplanation(int matchScore) {
+        int safeMatchScore = normalizeMatchScore(matchScore);
+        MatchTier tier = matchTierFromScore(safeMatchScore);
+        if (tier == MatchTier.STRONG_MATCH) {
+            return "Match score matters because a strong score suggests the applicant covers most required skills.";
+        }
+        if (tier == MatchTier.MODERATE_MATCH) {
+            return "Match score matters because this applicant covers some required skills but may need closer review.";
+        }
+        return "Match score matters because a weak score highlights missing skills that the MO may want to inspect.";
+    }
+
+    public static String buildWorkloadExplanation(int currentWorkloadHours) {
+        int safeWorkload = Math.max(0, currentWorkloadHours);
+        WorkloadRisk risk = workloadRiskFromHours(safeWorkload);
+        if (risk == WorkloadRisk.HIGH) {
+            return safeWorkload + "h/week, high risk; accepting more work may overload the applicant.";
+        }
+        if (risk == WorkloadRisk.MEDIUM) {
+            return safeWorkload + "h/week, medium risk; workload should be checked before accepting.";
+        }
+        return safeWorkload + "h/week, low risk; workload alone does not raise a concern.";
+    }
+
+    public static FutureDashboardSummary summarizeFutureDashboard(List<FutureJobDashboardItem> jobs) {
+        List<FutureJobDashboardItem> safeJobs = safeFutureJobDashboardItems(jobs);
+        int jobsNeedingAttention = 0;
+        int jobsAlreadyFilled = 0;
+        int jobsCloseToFilled = 0;
+        int highMatchPendingApplicants = 0;
+        int applicantsNeedingDecision = 0;
+
+        for (FutureJobDashboardItem job : safeJobs) {
+            if (job.needsAttention()) {
+                jobsNeedingAttention++;
+            }
+            if (job.isFilled()) {
+                jobsAlreadyFilled++;
+            }
+            if (job.isCloseToFilled()) {
+                jobsCloseToFilled++;
+            }
+            if (job.getHighestPendingMatchScore() >= STRONG_MATCH_SCORE) {
+                highMatchPendingApplicants += Math.max(0, job.getPendingApplications());
+            }
+            applicantsNeedingDecision += Math.max(0, job.getReviewableApplications());
+        }
+
+        return new FutureDashboardSummary(
+                safeJobs.size(),
+                jobsNeedingAttention,
+                jobsAlreadyFilled,
+                jobsCloseToFilled,
+                highMatchPendingApplicants,
+                applicantsNeedingDecision);
+    }
+
+    public static int calculateJobUrgencyScore(FutureJobDashboardItem item) {
+        if (item == null) {
+            return 0;
+        }
+
+        int score = 0;
+        if (item.isFilled()) {
+            score += JOB_URGENCY_FILLED_POINTS;
+        }
+        if (item.isCloseToFilled()) {
+            score += JOB_URGENCY_CLOSE_TO_FILLED_POINTS;
+        }
+        score += Math.min(25, Math.max(0, item.getPendingApplications()) * JOB_URGENCY_PENDING_POINTS);
+        score += Math.min(25, Math.max(0, item.getReviewableApplications()) * JOB_URGENCY_REVIEWABLE_POINTS);
+        if (item.getHighestPendingMatchScore() >= STRONG_MATCH_SCORE) {
+            score += JOB_URGENCY_HIGH_MATCH_POINTS;
+        }
+        return clampToRange(score, 0, 100);
+    }
+
+    public static int calculateFillRatioPercent(int acceptedApplicantsForJob, int jobPositions) {
+        int safePositions = Math.max(0, jobPositions);
+        if (safePositions == 0) {
+            return 0;
+        }
+        int safeAccepted = Math.max(0, acceptedApplicantsForJob);
+        return clampToRange((int) Math.round((safeAccepted * 100.0) / safePositions), 0, 100);
+    }
+
+    public static JobFillState classifyJobFillState(
+            int acceptedApplicantsForJob,
+            int jobPositions,
+            JobStatus jobStatus) {
+        if (isJobFilledStatus(jobStatus) || isJobFilled(acceptedApplicantsForJob, jobPositions)) {
+            return JobFillState.FILLED;
+        }
+        if (isJobAlmostFilled(acceptedApplicantsForJob, jobPositions)
+                || calculateFillRatioPercent(acceptedApplicantsForJob, jobPositions) >= CLOSE_TO_FILLED_PERCENT) {
+            return JobFillState.CLOSE_TO_FILLED;
+        }
+        if (Math.max(0, acceptedApplicantsForJob) == 0) {
+            return JobFillState.EMPTY;
+        }
+        return JobFillState.IN_PROGRESS;
+    }
+
+    public static String readableNotificationSeverity(NotificationSeverity severity) {
+        return severity == null ? NotificationSeverity.LOW.getLabel() : severity.getLabel();
+    }
+
+    public static String readableReviewPriority(DecisionSuggestion suggestion) {
+        return suggestion == null ? DecisionSuggestion.NO_ACTION_NEEDED.getLabel() : suggestion.getLabel();
+    }
+
+    public static String readableJobFillState(
+            int acceptedApplicantsForJob,
+            int jobPositions,
+            JobStatus jobStatus) {
+        return classifyJobFillState(acceptedApplicantsForJob, jobPositions, jobStatus).getLabel();
+    }
+
+    public static String readableApplicantDecisionState(ApplicationStatus status) {
+        return decisionStateFromStatus(status).getLabel();
+    }
+
+    public static String readableMatchQualityLevel(int matchScore) {
+        return matchTierFromScore(matchScore).getLabel();
+    }
+
+    public static Comparator<FutureApplicantSignal> reviewPriorityComparator() {
+        return MoApplicantRankingFutureExtensions::compareByReviewPriority;
+    }
+
+    public static int compareByReviewPriority(FutureApplicantSignal left, FutureApplicantSignal right) {
+        if (left == null && right == null) {
+            return 0;
+        }
+        if (left == null) {
+            return 1;
+        }
+        if (right == null) {
+            return -1;
+        }
+
+        int leftPriority = calculateReviewPriorityScore(
+                left.getMatchScore(),
+                left.getStatus(),
+                left.getCurrentWorkloadHours(),
+                left.getAcceptedApplicantsForJob(),
+                left.getJobPositions());
+        int rightPriority = calculateReviewPriorityScore(
+                right.getMatchScore(),
+                right.getStatus(),
+                right.getCurrentWorkloadHours(),
+                right.getAcceptedApplicantsForJob(),
+                right.getJobPositions());
+
+        int priorityCompare = Integer.compare(rightPriority, leftPriority);
+        if (priorityCompare != 0) {
+            return priorityCompare;
+        }
+
+        int matchCompare = compareByMatchScore(left, right);
+        if (matchCompare != 0) {
+            return matchCompare;
+        }
+
+        int workloadCompare = compareByWorkload(left, right);
+        if (workloadCompare != 0) {
+            return workloadCompare;
+        }
+
+        return Integer.compare(right.getWaitingDays(), left.getWaitingDays());
+    }
+
+    public static Comparator<FutureApplicantSignal> matchScoreComparator() {
+        return MoApplicantRankingFutureExtensions::compareByMatchScore;
+    }
+
+    public static int compareByMatchScore(FutureApplicantSignal left, FutureApplicantSignal right) {
+        if (left == null && right == null) {
+            return 0;
+        }
+        if (left == null) {
+            return 1;
+        }
+        if (right == null) {
+            return -1;
+        }
+        return Integer.compare(right.getMatchScore(), left.getMatchScore());
+    }
+
+    public static Comparator<FutureApplicantSignal> workloadComparator() {
+        return MoApplicantRankingFutureExtensions::compareByWorkload;
+    }
+
+    public static int compareByWorkload(FutureApplicantSignal left, FutureApplicantSignal right) {
+        if (left == null && right == null) {
+            return 0;
+        }
+        if (left == null) {
+            return 1;
+        }
+        if (right == null) {
+            return -1;
+        }
+        return Integer.compare(left.getCurrentWorkloadHours(), right.getCurrentWorkloadHours());
+    }
+
+    public static Comparator<FutureJobDashboardItem> jobUrgencyComparator() {
+        return MoApplicantRankingFutureExtensions::compareByJobUrgency;
+    }
+
+    public static int compareByJobUrgency(FutureJobDashboardItem left, FutureJobDashboardItem right) {
+        if (left == null && right == null) {
+            return 0;
+        }
+        if (left == null) {
+            return 1;
+        }
+        if (right == null) {
+            return -1;
+        }
+        return Integer.compare(calculateJobUrgencyScore(right), calculateJobUrgencyScore(left));
+    }
+
+    public static Comparator<FutureApplicantSignal> decisionNeedComparator() {
+        return MoApplicantRankingFutureExtensions::compareByDecisionNeed;
+    }
+
+    public static int compareByDecisionNeed(FutureApplicantSignal left, FutureApplicantSignal right) {
+        if (left == null && right == null) {
+            return 0;
+        }
+        if (left == null) {
+            return 1;
+        }
+        if (right == null) {
+            return -1;
+        }
+        int leftNeed = decisionNeedWeight(left.getStatus());
+        int rightNeed = decisionNeedWeight(right.getStatus());
+        if (leftNeed != rightNeed) {
+            return Integer.compare(rightNeed, leftNeed);
+        }
+        return compareByReviewPriority(left, right);
+    }
+
     public static ReviewSummary summarizeFutureReviewItems(List<FutureReviewItem> items) {
         List<FutureReviewItem> safeItems = safeFutureReviewItems(items);
         int pendingApplications = 0;
@@ -362,6 +845,92 @@ public final class MoApplicantRankingFutureExtensions {
                 .toList();
     }
 
+    private static List<FutureJobDashboardItem> safeFutureJobDashboardItems(List<FutureJobDashboardItem> items) {
+        if (items == null || items.isEmpty()) {
+            return List.of();
+        }
+        return items.stream()
+                .filter(Objects::nonNull)
+                .toList();
+    }
+
+    private static String readableAttentionFlags(List<ApplicantAttentionFlag> flags) {
+        if (flags == null || flags.isEmpty()) {
+            return ApplicantAttentionFlag.NORMAL_REVIEW_ITEM.getLabel();
+        }
+        return flags.stream()
+                .filter(Objects::nonNull)
+                .map(ApplicantAttentionFlag::getLabel)
+                .toList()
+                .stream()
+                .reduce((left, right) -> left + ", " + right)
+                .orElse(ApplicantAttentionFlag.NORMAL_REVIEW_ITEM.getLabel());
+    }
+
+    private static MatchTier matchTierFromScore(int matchScore) {
+        int safeMatchScore = normalizeMatchScore(matchScore);
+        if (safeMatchScore >= STRONG_MATCH_SCORE) {
+            return MatchTier.STRONG_MATCH;
+        }
+        if (safeMatchScore >= MODERATE_MATCH_SCORE) {
+            return MatchTier.MODERATE_MATCH;
+        }
+        return MatchTier.WEAK_MATCH;
+    }
+
+    private static WorkloadRisk workloadRiskFromHours(int currentWorkloadHours) {
+        int safeHours = Math.max(0, currentWorkloadHours);
+        if (safeHours >= HIGH_WORKLOAD_HOURS) {
+            return WorkloadRisk.HIGH;
+        }
+        if (safeHours >= MEDIUM_WORKLOAD_HOURS) {
+            return WorkloadRisk.MEDIUM;
+        }
+        return WorkloadRisk.LOW;
+    }
+
+    private static DecisionState decisionStateFromStatus(ApplicationStatus status) {
+        if (status == ApplicationStatus.APPLIED) {
+            return DecisionState.APPLIED_NEEDS_REVIEW;
+        }
+        if (status == ApplicationStatus.REVIEWING) {
+            return DecisionState.IN_REVIEW;
+        }
+        if (status == ApplicationStatus.PENDING) {
+            return DecisionState.PENDING_DECISION;
+        }
+        if (status == ApplicationStatus.ACCEPTED) {
+            return DecisionState.ACCEPTED_DONE;
+        }
+        if (status == ApplicationStatus.REJECTED) {
+            return DecisionState.REJECTED_DONE;
+        }
+        if (status == ApplicationStatus.WITHDRAWN) {
+            return DecisionState.WITHDRAWN_DONE;
+        }
+        return DecisionState.UNKNOWN;
+    }
+
+    private static int decisionNeedWeight(ApplicationStatus status) {
+        if (status == ApplicationStatus.PENDING) {
+            return 30;
+        }
+        if (status == ApplicationStatus.REVIEWING) {
+            return 25;
+        }
+        if (status == ApplicationStatus.APPLIED) {
+            return 20;
+        }
+        return 0;
+    }
+
+    private static String safeLabel(String value, String fallback) {
+        if (value == null || value.isBlank()) {
+            return fallback;
+        }
+        return value.trim();
+    }
+
     private static int normalizeMatchScore(int matchScore) {
         return clampToRange(matchScore, 0, 100);
     }
@@ -471,6 +1040,327 @@ public final class MoApplicantRankingFutureExtensions {
 
         public String getLabel() {
             return label;
+        }
+    }
+
+    public enum ApplicantAttentionFlag {
+        HIGH_MATCH_STILL_PENDING("High match still waiting for an MO decision"),
+        LOW_MATCH_STILL_PENDING("Low match still waiting for an MO decision"),
+        JOB_ALMOST_FILLED("Job is close to filled"),
+        JOB_ALREADY_FILLED("Job is already filled"),
+        APPLICANT_POSSIBLY_OVERLOADED("Applicant may be overloaded"),
+        APPLICATION_WAITING_TOO_LONG("Application has waited longer than the future threshold"),
+        APPLICATION_DOES_NOT_NEED_ACTION("Application no longer needs an MO decision"),
+        NORMAL_REVIEW_ITEM("Normal review item"),
+        NO_SIGNAL_DATA("No applicant signal data");
+
+        private final String label;
+
+        ApplicantAttentionFlag(String label) {
+            this.label = label;
+        }
+
+        public String getLabel() {
+            return label;
+        }
+    }
+
+    public enum DecisionSuggestion {
+        STRONGLY_REVIEW("Strongly Review"),
+        REVIEW("Review"),
+        LOW_PRIORITY("Low Priority"),
+        NO_ACTION_NEEDED("No Action Needed");
+
+        private final String label;
+
+        DecisionSuggestion(String label) {
+            this.label = label;
+        }
+
+        public String getLabel() {
+            return label;
+        }
+    }
+
+    public enum JobFillState {
+        EMPTY("No accepted applicants yet"),
+        IN_PROGRESS("Partially filled"),
+        CLOSE_TO_FILLED("Close to filled"),
+        FILLED("Filled");
+
+        private final String label;
+
+        JobFillState(String label) {
+            this.label = label;
+        }
+
+        public String getLabel() {
+            return label;
+        }
+    }
+
+    public enum DecisionState {
+        APPLIED_NEEDS_REVIEW("Applied - needs review"),
+        IN_REVIEW("Reviewing - needs decision"),
+        PENDING_DECISION("Pending - needs decision"),
+        ACCEPTED_DONE("Accepted - completed"),
+        REJECTED_DONE("Rejected - completed"),
+        WITHDRAWN_DONE("Withdrawn - completed"),
+        UNKNOWN("Unknown");
+
+        private final String label;
+
+        DecisionState(String label) {
+            this.label = label;
+        }
+
+        public String getLabel() {
+            return label;
+        }
+    }
+
+    /**
+     * Future-use applicant signal object built from primitive values.
+     *
+     * <p>This avoids depending on UI table columns or adding fields to the current model classes.
+     * A later integration can assemble this object from real services when it is ready.
+     */
+    public static final class FutureApplicantSignal {
+        private final String applicationId;
+        private final String applicantName;
+        private final ApplicationStatus status;
+        private final int matchScore;
+        private final int currentWorkloadHours;
+        private final int acceptedApplicantsForJob;
+        private final int jobPositions;
+        private final int waitingDays;
+        private final JobStatus jobStatus;
+
+        public FutureApplicantSignal(
+                String applicationId,
+                String applicantName,
+                ApplicationStatus status,
+                int matchScore,
+                int currentWorkloadHours,
+                int acceptedApplicantsForJob,
+                int jobPositions,
+                int waitingDays,
+                JobStatus jobStatus) {
+            this.applicationId = applicationId == null ? "" : applicationId.trim();
+            this.applicantName = applicantName == null ? "" : applicantName.trim();
+            this.status = status;
+            this.matchScore = normalizeMatchScore(matchScore);
+            this.currentWorkloadHours = Math.max(0, currentWorkloadHours);
+            this.acceptedApplicantsForJob = Math.max(0, acceptedApplicantsForJob);
+            this.jobPositions = Math.max(0, jobPositions);
+            this.waitingDays = Math.max(0, waitingDays);
+            this.jobStatus = jobStatus;
+        }
+
+        public String getApplicationId() {
+            return applicationId;
+        }
+
+        public String getApplicantName() {
+            return applicantName;
+        }
+
+        public ApplicationStatus getStatus() {
+            return status;
+        }
+
+        public int getMatchScore() {
+            return matchScore;
+        }
+
+        public int getCurrentWorkloadHours() {
+            return currentWorkloadHours;
+        }
+
+        public int getAcceptedApplicantsForJob() {
+            return acceptedApplicantsForJob;
+        }
+
+        public int getJobPositions() {
+            return jobPositions;
+        }
+
+        public int getWaitingDays() {
+            return waitingDays;
+        }
+
+        public JobStatus getJobStatus() {
+            return jobStatus;
+        }
+
+        public int getFillRatioPercent() {
+            return calculateFillRatioPercent(acceptedApplicantsForJob, jobPositions);
+        }
+
+        public DecisionSuggestion getDecisionSuggestion() {
+            return suggestFutureDecision(this);
+        }
+
+        public List<ApplicantAttentionFlag> getAttentionFlags() {
+            return identifyApplicantAttentionFlags(this);
+        }
+
+        public String toReadableLine() {
+            return safeLabel(applicantName, "Unknown applicant")
+                    + " | status=" + readableApplicantDecisionState(status)
+                    + " | match=" + matchScore + "%"
+                    + " | workload=" + currentWorkloadHours + "h/week"
+                    + " | fill=" + getFillRatioPercent() + "%"
+                    + " | suggestion=" + getDecisionSuggestion().getLabel();
+        }
+    }
+
+    /**
+     * Future-use job dashboard item. It intentionally accepts counts as constructor values because
+     * this helper must not reach into repositories or services.
+     */
+    public static final class FutureJobDashboardItem {
+        private final String jobId;
+        private final String jobLabel;
+        private final int pendingApplications;
+        private final int reviewableApplications;
+        private final int acceptedApplicants;
+        private final int positions;
+        private final int highestPendingMatchScore;
+        private final JobStatus jobStatus;
+
+        public FutureJobDashboardItem(
+                String jobId,
+                String jobLabel,
+                int pendingApplications,
+                int reviewableApplications,
+                int acceptedApplicants,
+                int positions,
+                int highestPendingMatchScore,
+                JobStatus jobStatus) {
+            this.jobId = jobId == null ? "" : jobId.trim();
+            this.jobLabel = safeLabel(jobLabel, "Unknown job");
+            this.pendingApplications = Math.max(0, pendingApplications);
+            this.reviewableApplications = Math.max(0, reviewableApplications);
+            this.acceptedApplicants = Math.max(0, acceptedApplicants);
+            this.positions = Math.max(0, positions);
+            this.highestPendingMatchScore = normalizeMatchScore(highestPendingMatchScore);
+            this.jobStatus = jobStatus;
+        }
+
+        public String getJobId() {
+            return jobId;
+        }
+
+        public String getJobLabel() {
+            return jobLabel;
+        }
+
+        public int getPendingApplications() {
+            return pendingApplications;
+        }
+
+        public int getReviewableApplications() {
+            return reviewableApplications;
+        }
+
+        public int getAcceptedApplicants() {
+            return acceptedApplicants;
+        }
+
+        public int getPositions() {
+            return positions;
+        }
+
+        public int getHighestPendingMatchScore() {
+            return highestPendingMatchScore;
+        }
+
+        public JobStatus getJobStatus() {
+            return jobStatus;
+        }
+
+        public boolean isFilled() {
+            return isJobFilledStatus(jobStatus) || isJobFilled(acceptedApplicants, positions);
+        }
+
+        public boolean isCloseToFilled() {
+            return !isFilled()
+                    && (isJobAlmostFilled(acceptedApplicants, positions)
+                    || calculateFillRatioPercent(acceptedApplicants, positions) >= CLOSE_TO_FILLED_PERCENT);
+        }
+
+        public boolean needsAttention() {
+            return isFilled()
+                    || isCloseToFilled()
+                    || pendingApplications > 0
+                    || reviewableApplications >= MANY_REVIEWABLE_APPLICATIONS;
+        }
+
+        public String toReadableLine() {
+            return jobLabel
+                    + " | pending=" + pendingApplications
+                    + " | needsDecision=" + reviewableApplications
+                    + " | fill=" + acceptedApplicants + "/" + positions
+                    + " | highestPendingMatch=" + highestPendingMatchScore + "%"
+                    + " | urgency=" + calculateJobUrgencyScore(this);
+        }
+    }
+
+    public static final class FutureDashboardSummary {
+        private final int totalJobs;
+        private final int jobsNeedingAttention;
+        private final int jobsAlreadyFilled;
+        private final int jobsCloseToFilled;
+        private final int highMatchPendingApplicants;
+        private final int applicantsNeedingDecision;
+
+        private FutureDashboardSummary(
+                int totalJobs,
+                int jobsNeedingAttention,
+                int jobsAlreadyFilled,
+                int jobsCloseToFilled,
+                int highMatchPendingApplicants,
+                int applicantsNeedingDecision) {
+            this.totalJobs = Math.max(0, totalJobs);
+            this.jobsNeedingAttention = Math.max(0, jobsNeedingAttention);
+            this.jobsAlreadyFilled = Math.max(0, jobsAlreadyFilled);
+            this.jobsCloseToFilled = Math.max(0, jobsCloseToFilled);
+            this.highMatchPendingApplicants = Math.max(0, highMatchPendingApplicants);
+            this.applicantsNeedingDecision = Math.max(0, applicantsNeedingDecision);
+        }
+
+        public int getTotalJobs() {
+            return totalJobs;
+        }
+
+        public int getJobsNeedingAttention() {
+            return jobsNeedingAttention;
+        }
+
+        public int getJobsAlreadyFilled() {
+            return jobsAlreadyFilled;
+        }
+
+        public int getJobsCloseToFilled() {
+            return jobsCloseToFilled;
+        }
+
+        public int getHighMatchPendingApplicants() {
+            return highMatchPendingApplicants;
+        }
+
+        public int getApplicantsNeedingDecision() {
+            return applicantsNeedingDecision;
+        }
+
+        public String toReadableText() {
+            return "Total jobs: " + totalJobs
+                    + "\nJobs needing attention: " + jobsNeedingAttention
+                    + "\nJobs already filled: " + jobsAlreadyFilled
+                    + "\nJobs close to filled: " + jobsCloseToFilled
+                    + "\nHigh-match pending applicants: " + highMatchPendingApplicants
+                    + "\nApplicants needing decision: " + applicantsNeedingDecision;
         }
     }
 
