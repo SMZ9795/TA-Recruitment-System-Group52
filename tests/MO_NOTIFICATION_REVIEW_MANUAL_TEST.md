@@ -1,6 +1,7 @@
 # MO Notification & Review Manual Test
 
 1. Start the Swing application and login with an MO account from `data/users.csv`.
+   For seeded data, `MO001` / `mo123456` is a usable MO login.
 2. On the MO Dashboard, check the **MO Notifications** card above the posted jobs table.
    It should show readable reminders with job title, applicant name, application status, match score when available, pending count, and filled-job reminders.
    If the MO has no pending applications or filled jobs, it should show a clear empty-state message.

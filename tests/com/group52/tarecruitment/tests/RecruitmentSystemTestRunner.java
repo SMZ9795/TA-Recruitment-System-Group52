@@ -65,6 +65,7 @@ public final class RecruitmentSystemTestRunner {
         runCase("AI matching handles empty and invalid input", this::testAiMatchingEmptyAndInvalidInput);
         runCase("MO ranking sorts by match score descending", this::testMoRankingSortsByMatchScoreDescending);
         runCase("MO ranking filters pending applications and minimum score", this::testMoRankingFiltersPendingAndMinimumScore);
+        runCase("MO ranking needs-decision filter includes only reviewable applications", this::testMoRankingNeedsDecisionFilter);
         runCase("AdminService risk level respects TA availableHours, not hardcoded 20h", this::testAdminRiskLevelUsesAvailableHours);
         runCase("AdminService getRecruitmentSnapshot counts filled jobs and overloaded TAs", this::testRecruitmentSnapshot);
         runCase("AdminService searchTAWorkload filters by name and ID", this::testSearchTAWorkload);
@@ -452,6 +453,15 @@ public final class RecruitmentSystemTestRunner {
 
             // Expected result
             assertEquals(2, pendingCount, "MO pending count should include only pending applications for that MO's jobs.");
+
+            context.applicationService.updateApplicationStatus(
+                    "APP-MO-PENDING-2",
+                    mo.getId(),
+                    ApplicationStatus.REJECTED);
+            assertEquals(
+                    1,
+                    context.applicationService.getPendingApplicationCountForMo(mo.getId()),
+                    "Rejecting one application should immediately reduce the MO pending count.");
         }
     }
 
@@ -779,6 +789,73 @@ public final class RecruitmentSystemTestRunner {
             assertEquals(1, ranked.size(), "Only pending applicants at or above the threshold should remain.");
             assertEquals("TA-FILTER-PASS", ranked.get(0).getApplicantId(), "Pending applicant above threshold should remain.");
             assertEquals(67, ranked.get(0).getMatchScore(), "Two of three required skills should score 67.");
+        }
+    }
+
+    private void testMoRankingNeedsDecisionFilter() throws Exception {
+        try (TestContext context = new TestContext()) {
+            Job targetJob = new Job(
+                    "JOB-RANK-3",
+                    "ECS7004",
+                    "Review Queue",
+                    "Support labs",
+                    "Java",
+                    4,
+                    3,
+                    LocalDate.now().plusDays(30).toString(),
+                    "MO-RANK",
+                    JobStatus.OPEN);
+            context.jobRepository.save(targetJob);
+
+            User applied = newTa("TA-NEEDS-APPLIED", "Applied Needs", "applied.needs@bupt.cn");
+            User reviewing = newTa("TA-NEEDS-REVIEWING", "Reviewing Needs", "reviewing.needs@bupt.cn");
+            User pending = newTa("TA-NEEDS-PENDING", "Pending Needs", "pending.needs@bupt.cn");
+            User accepted = newTa("TA-NEEDS-ACCEPTED", "Accepted Done", "accepted.needs@bupt.cn");
+            User rejected = newTa("TA-NEEDS-REJECTED", "Rejected Done", "rejected.needs@bupt.cn");
+            context.userRepository.save(applied);
+            context.userRepository.save(reviewing);
+            context.userRepository.save(pending);
+            context.userRepository.save(accepted);
+            context.userRepository.save(rejected);
+
+            context.applicationRepository.save(new Application(
+                    "APP-NEEDS-APPLIED", targetJob.getId(), applied.getId(), ApplicationStatus.APPLIED, "2026-05-01"));
+            context.applicationRepository.save(new Application(
+                    "APP-NEEDS-REVIEWING", targetJob.getId(), reviewing.getId(), ApplicationStatus.REVIEWING, "2026-05-01"));
+            context.applicationRepository.save(new Application(
+                    "APP-NEEDS-PENDING", targetJob.getId(), pending.getId(), ApplicationStatus.PENDING, "2026-05-01"));
+            context.applicationRepository.save(new Application(
+                    "APP-NEEDS-ACCEPTED", targetJob.getId(), accepted.getId(), ApplicationStatus.ACCEPTED, "2026-05-01"));
+            context.applicationRepository.save(new Application(
+                    "APP-NEEDS-REJECTED", targetJob.getId(), rejected.getId(), ApplicationStatus.REJECTED, "2026-05-01"));
+
+            MoApplicantRankingService rankingService = new MoApplicantRankingService(
+                    context.applicationService, new AiMatchingServiceAdapter(new AiMatchingService()));
+            List<MoApplicantRankingService.RankedApplicant> ranked = rankingService.rankApplicants(
+                    targetJob,
+                    context.applicationRepository.findByJobId(targetJob.getId()),
+                    Map.of(
+                            applied.getId(), applied,
+                            reviewing.getId(), reviewing,
+                            pending.getId(), pending,
+                            accepted.getId(), accepted,
+                            rejected.getId(), rejected),
+                    new MoApplicantRankingService.RankingOptions(
+                            false,
+                            true,
+                            0,
+                            MoApplicantRankingService.SortMode.MATCH_SCORE_DESC));
+
+            Set<ApplicationStatus> statuses = new HashSet<>();
+            for (MoApplicantRankingService.RankedApplicant applicant : ranked) {
+                statuses.add(applicant.getStatus());
+            }
+            assertEquals(3, ranked.size(), "Needs-decision filter should keep APPLIED, REVIEWING, and PENDING only.");
+            assertTrue(statuses.contains(ApplicationStatus.APPLIED), "APPLIED applications should need a decision.");
+            assertTrue(statuses.contains(ApplicationStatus.REVIEWING), "REVIEWING applications should need a decision.");
+            assertTrue(statuses.contains(ApplicationStatus.PENDING), "PENDING applications should need a decision.");
+            assertFalse(statuses.contains(ApplicationStatus.ACCEPTED), "ACCEPTED applications should not need a decision.");
+            assertFalse(statuses.contains(ApplicationStatus.REJECTED), "REJECTED applications should not need a decision.");
         }
     }
 
