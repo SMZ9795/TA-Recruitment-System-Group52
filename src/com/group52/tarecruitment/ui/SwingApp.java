@@ -9,6 +9,7 @@ import com.group52.tarecruitment.model.Role;
 import com.group52.tarecruitment.model.User;
 import com.group52.tarecruitment.service.AdminService;
 import com.group52.tarecruitment.service.ApplicationService;
+import com.group52.tarecruitment.service.WorkloadBalancerService;
 import com.group52.tarecruitment.service.AiMatchingService;
 import com.group52.tarecruitment.service.AiMatchingServiceAdapter;
 import com.group52.tarecruitment.service.AuthService;
@@ -143,6 +144,7 @@ public class SwingApp {
     private TaPanel taPanel;
     private MoPanel moPanel;
     private AdminPanel adminPanel;
+    private JTextArea recommendationArea;
 
     public SwingApp(AuthService authService, JobService jobService, ApplicationService applicationService) {
         this(authService, jobService, applicationService, null, null, null);
@@ -3076,6 +3078,7 @@ public class SwingApp {
         private final JTable accountTable;
         private final DefaultTableModel jobsModel;
         private final JTable jobsTable;
+        private JTextArea recommendationArea;
 
         // Summary bar labels
         private final JLabel summaryTotalJobs = new JLabel("--");
@@ -3146,9 +3149,9 @@ public class SwingApp {
                     BorderFactory.createEmptyBorder(4, 8, 4, 8)));
             workloadSearchField.putClientProperty("JTextField.placeholderText", "Search TA name or ID...");
             workloadSearchField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
-                public void insertUpdate(javax.swing.event.DocumentEvent e) { filterWorkloadTable(); }
-                public void removeUpdate(javax.swing.event.DocumentEvent e) { filterWorkloadTable(); }
-                public void changedUpdate(javax.swing.event.DocumentEvent e) { filterWorkloadTable(); }
+                public void insertUpdate(javax.swing.event.DocumentEvent e) { filterWorkloadTable(); updateWorkloadRecommendations(); }
+                public void removeUpdate(javax.swing.event.DocumentEvent e) { filterWorkloadTable(); updateWorkloadRecommendations(); }
+                public void changedUpdate(javax.swing.event.DocumentEvent e) { filterWorkloadTable(); updateWorkloadRecommendations(); }
             });
             JPanel searchWrapper = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 0, 0));
             searchWrapper.setOpaque(false);
@@ -3158,7 +3161,13 @@ public class SwingApp {
             JScrollPane workloadScrollPane = new JScrollPane(workloadTable);
             workloadScrollPane.setBorder(BorderFactory.createEmptyBorder());
             workloadScrollPane.getViewport().setBackground(Color.WHITE);
-            workloadPanel.add(createCardPanel(workloadScrollPane, 0, 0, 0, 0), BorderLayout.CENTER);
+
+            JPanel workloadCenter = new JPanel(new BorderLayout(0, 14));
+            workloadCenter.setOpaque(false);
+            workloadCenter.add(createCardPanel(workloadScrollPane, 0, 0, 0, 0), BorderLayout.CENTER);
+            workloadCenter.add(createCardPanel(buildRecommendationPanel(), 18, 18, 18, 18), BorderLayout.SOUTH);
+            workloadPanel.add(workloadCenter, BorderLayout.CENTER);
+
             JButton refreshWorkloadButton = new JButton("Refresh");
             styleSecondaryButton(refreshWorkloadButton);
             refreshWorkloadButton.addActionListener(e -> refreshWorkload());
@@ -3273,17 +3282,8 @@ public class SwingApp {
         }
 
         private void refreshWorkload() {
-            workloadModel.setRowCount(0);
-            for (AdminService.TAWorkloadSummary s : adminService.getAllTAWorkloads()) {
-                workloadModel.addRow(new Object[] {
-                    s.getTaUserId(),
-                    s.getTaName(),
-                    s.getAvailableHours(),
-                    s.getTotalAssignedHours(),
-                    s.getRemainingHours(),
-                    s.getRiskLevel().label()
-                });
-            }
+            filterWorkloadTable();
+            updateWorkloadRecommendations();
             adminService.publishOverloadAlerts();
             refreshSummaryBar();
         }
@@ -3380,21 +3380,24 @@ public class SwingApp {
                     s.getRiskLevel().label()
                 });
             }
+            updateWorkloadRecommendations();
             if (workloadModel.getRowCount() == 0) {
                 showToast("No Overloaded TAs", "All TAs are within their available hours.", JOptionPane.INFORMATION_MESSAGE);
             }
+            refreshSummaryBar();
         }
 
 
         private void showWorkloadReport() {
-            String report = adminService.getWorkloadReport();
+            String report = adminService.getWorkloadBalancingReport();
             JTextArea textArea = new JTextArea(report);
             textArea.setFont(new Font("Monospaced", Font.PLAIN, 12));
             textArea.setEditable(false);
-            textArea.setRows(20);
-            textArea.setColumns(60);
+            textArea.setRows(22);
+            textArea.setColumns(66);
             JScrollPane scrollPane = new JScrollPane(textArea);
             JOptionPane.showMessageDialog(frame, scrollPane, "Workload Report", JOptionPane.PLAIN_MESSAGE);
+            updateWorkloadRecommendations();
         }
 
         private void filterWorkloadTable() {
@@ -3413,6 +3416,66 @@ public class SwingApp {
                     s.getRiskLevel().label()
                 });
             }
+        }
+
+        private JPanel buildRecommendationPanel() {
+            recommendationArea = new JTextArea();
+            recommendationArea.setEditable(false);
+            recommendationArea.setLineWrap(true);
+            recommendationArea.setWrapStyleWord(true);
+            recommendationArea.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+            recommendationArea.setBackground(new Color(250, 246, 255));
+            recommendationArea.setForeground(new Color(58, 31, 107));
+            recommendationArea.setBorder(BorderFactory.createEmptyBorder(10, 12, 10, 12));
+
+            JPanel panel = new JPanel(new BorderLayout(0, 10));
+            panel.setOpaque(true);
+            panel.setBackground(new Color(248, 244, 255));
+            panel.setBorder(BorderFactory.createCompoundBorder(
+                    BorderFactory.createLineBorder(new Color(199, 177, 255), 1, true),
+                    BorderFactory.createEmptyBorder(14, 16, 14, 16)));
+
+            JLabel title = new JLabel("AI Workload Analysis");
+            title.setFont(new Font("Segoe UI", Font.BOLD, 16));
+            title.setForeground(QMUL_PURPLE_DARK);
+            panel.add(title, BorderLayout.NORTH);
+            panel.add(recommendationArea, BorderLayout.CENTER);
+            return panel;
+        }
+
+        private void updateWorkloadRecommendations() {
+            if (recommendationArea == null) {
+                return;
+            }
+            String summary = adminService.getWorkloadBalancingSummary();
+            List<WorkloadBalancerService.WorkloadRecommendation> recommendations = adminService.getWorkloadRecommendations();
+            StringBuilder sb = new StringBuilder();
+            sb.append(summary).append("\n\n");
+            if (recommendations.isEmpty()) {
+                sb.append("• All TA workloads are balanced.");
+            } else {
+                for (WorkloadBalancerService.WorkloadRecommendation recommendation : recommendations) {
+                    sb.append("• ").append(recommendation.getOverloadedName())
+                            .append(" exceeds their weekly capacity by ")
+                            .append(recommendation.getOverloadHours()).append("h/week.\n");
+                    sb.append("  - ").append(recommendation.getTargetName())
+                            .append(" currently has ")
+                            .append(recommendation.getTargetRemainingCapacityHours()).append("h/week remaining capacity.\n");
+                    sb.append("  - Suggested Action: Move ")
+                            .append(recommendation.getMoveHours()).append("h/week from ")
+                            .append(recommendation.getOverloadedName()).append(" to ")
+                            .append(recommendation.getTargetName()).append(".\n");
+                    sb.append("  - ").append(recommendation.getPriority().label())
+                            .append(" Redistribution Recommended.\n");
+                    sb.append("  - Explainability: ")
+                            .append(recommendation.getOverloadedName())
+                            .append(" exceeds capacity by ")
+                            .append(String.format("%.0f%%", Math.max(0, (recommendation.getOverloadHours() * 100.0) / Math.max(1, recommendation.getTargetRemainingCapacityHours() + recommendation.getOverloadHours()))))
+                            .append(".\n\n");
+                }
+            }
+            recommendationArea.setText(sb.toString().trim());
+            recommendationArea.setCaretPosition(0);
         }
 
         private JPanel buildSummaryBar() {
