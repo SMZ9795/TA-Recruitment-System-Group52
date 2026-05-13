@@ -462,6 +462,233 @@ public class AdminService {
         return WorkloadTrend.NEW;
     }
 
+    // -------------------------------------------------------------------------
+    // WorkloadAlert: structured alert system
+    // -------------------------------------------------------------------------
+
+    /** Severity of a workload alert. */
+    public enum AlertSeverity {
+        CRITICAL, WARNING, INFO;
+
+        public String label() {
+            return switch (this) {
+                case CRITICAL -> "Critical";
+                case WARNING  -> "Warning";
+                case INFO     -> "Info";
+            };
+        }
+    }
+
+    /** A single workload alert entry. */
+    public static class WorkloadAlert {
+        private final AlertSeverity severity;
+        private final String taUserId;
+        private final String taName;
+        private final String message;
+        private final String suggestedAction;
+
+        public WorkloadAlert(AlertSeverity severity, String taUserId, String taName,
+                             String message, String suggestedAction) {
+            this.severity        = severity;
+            this.taUserId        = taUserId;
+            this.taName          = taName;
+            this.message         = message;
+            this.suggestedAction = suggestedAction;
+        }
+
+        public AlertSeverity getSeverity()      { return severity; }
+        public String getTaUserId()             { return taUserId; }
+        public String getTaName()               { return taName; }
+        public String getMessage()              { return message; }
+        public String getSuggestedAction()      { return suggestedAction; }
+    }
+
+    /**
+     * Generates a list of workload alerts for all active TAs.
+     * <ul>
+     *   <li>CRITICAL — TA is overloaded (assigned > availableHours)</li>
+     *   <li>WARNING  — TA is at risk (>= 80 % utilisation)</li>
+     *   <li>INFO     — TA has declared availableHours but has no accepted job yet (idle capacity)</li>
+     * </ul>
+     * Alerts are sorted: CRITICAL first, then WARNING, then INFO.
+     */
+    public List<WorkloadAlert> getWorkloadAlerts() {
+        List<WorkloadAlert> alerts = new ArrayList<>();
+
+        // CRITICAL and WARNING from TAs with accepted jobs
+        for (TAWorkloadSummary s : getAllTAWorkloads()) {
+            if (s.isOverloaded()) {
+                int excess = s.getTotalAssignedHours() - s.getAvailableHours();
+                alerts.add(new WorkloadAlert(
+                        AlertSeverity.CRITICAL,
+                        s.getTaUserId(), s.getTaName(),
+                        String.format("Assigned %dh/week exceeds declared capacity of %dh/week (overloaded by %dh).",
+                                s.getTotalAssignedHours(), s.getAvailableHours(), excess),
+                        "Review accepted applications and consider redistributing workload."));
+            } else if (s.getRiskLevel() == RiskLevel.AT_RISK) {
+                alerts.add(new WorkloadAlert(
+                        AlertSeverity.WARNING,
+                        s.getTaUserId(), s.getTaName(),
+                        String.format("Utilisation at %.0f%% (%dh assigned of %dh available).",
+                                s.getUtilisationPercent(), s.getTotalAssignedHours(), s.getAvailableHours()),
+                        "Monitor closely before assigning additional positions."));
+            }
+        }
+
+        // INFO — idle TAs (available hours declared but no accepted job)
+        for (WorkloadAlert a : getIdleTAAlerts()) {
+            alerts.add(a);
+        }
+
+        alerts.sort(Comparator.comparingInt(a -> a.getSeverity().ordinal()));
+        return alerts;
+    }
+
+    /** INFO-level alerts for TAs with declared capacity but no accepted positions. */
+    private List<WorkloadAlert> getIdleTAAlerts() {
+        List<Application> allApps = applicationRepository.findAll();
+        List<WorkloadAlert> idle = new ArrayList<>();
+        for (User ta : userRepository.findAll()) {
+            if (ta.getRole() != Role.TA || !ta.isActive() || ta.getAvailableHours() <= 0) continue;
+            boolean hasAccepted = allApps.stream()
+                    .anyMatch(app -> app.getTaUserId().equalsIgnoreCase(ta.getId())
+                            && app.getStatus() == ApplicationStatus.ACCEPTED);
+            if (!hasAccepted) {
+                idle.add(new WorkloadAlert(
+                        AlertSeverity.INFO,
+                        ta.getId(), ta.getName(),
+                        String.format("Has %dh/week available but no accepted positions yet.", ta.getAvailableHours()),
+                        "Consider this TA for open positions that match their skills."));
+            }
+        }
+        return idle;
+    }
+
+    /**
+     * Returns active TAs who have declared available hours but hold no accepted positions.
+     * Useful for identifying untapped capacity.
+     */
+    public List<User> getIdleTAs() {
+        List<Application> allApps = applicationRepository.findAll();
+        return userRepository.findAll().stream()
+                .filter(u -> u.getRole() == Role.TA && u.isActive() && u.getAvailableHours() > 0)
+                .filter(ta -> allApps.stream()
+                        .noneMatch(app -> app.getTaUserId().equalsIgnoreCase(ta.getId())
+                                && app.getStatus() == ApplicationStatus.ACCEPTED))
+                .toList();
+    }
+
+    // -------------------------------------------------------------------------
+    // Department / module-level statistics
+    // -------------------------------------------------------------------------
+
+    /** Aggregated statistics for a single module (department). */
+    public static class ModuleStats {
+        public final String moduleCode;
+        public final String moduleName;
+        public final int totalPositions;
+        public final int filledPositions;
+        public final int assignedTAs;
+        public final int totalAssignedHours;
+
+        public ModuleStats(String moduleCode, String moduleName,
+                           int totalPositions, int filledPositions,
+                           int assignedTAs, int totalAssignedHours) {
+            this.moduleCode          = moduleCode;
+            this.moduleName          = moduleName;
+            this.totalPositions      = totalPositions;
+            this.filledPositions     = filledPositions;
+            this.assignedTAs         = assignedTAs;
+            this.totalAssignedHours  = totalAssignedHours;
+        }
+
+        /** Percentage of positions filled (0–100). */
+        public double fillRate() {
+            if (totalPositions <= 0) return 0.0;
+            return Math.min(100.0, (double) filledPositions / totalPositions * 100.0);
+        }
+
+        public String filledRatio() {
+            return filledPositions + "/" + totalPositions;
+        }
+    }
+
+    /**
+     * Returns per-module statistics: how many positions exist, how many are filled,
+     * how many distinct TAs are assigned, and total assigned hours for that module.
+     * Only includes OPEN or CLOSED jobs (excludes DRAFT).
+     */
+    public List<ModuleStats> getDepartmentStats() {
+        List<Application> allApps = applicationRepository.findAll();
+        List<Job> jobs = jobRepository.findAll().stream()
+                .filter(j -> j.getStatus() == JobStatus.OPEN || j.getStatus() == JobStatus.FILLED)
+                .toList();
+
+        // Group by moduleCode, accumulating positions, filled count, assigned TAs, and hours
+        java.util.Map<String, int[]> totals = new java.util.LinkedHashMap<>(); // [positions, filled, hours]
+        java.util.Map<String, String> names = new java.util.LinkedHashMap<>();
+        java.util.Map<String, java.util.Set<String>> tasByModule = new java.util.LinkedHashMap<>();
+
+        for (Job job : jobs) {
+            String code = job.getModuleCode();
+            names.putIfAbsent(code, job.getModuleName());
+            totals.putIfAbsent(code, new int[3]);
+            tasByModule.putIfAbsent(code, new java.util.HashSet<>());
+
+            List<Application> accepted = allApps.stream()
+                    .filter(a -> a.getJobId().equals(job.getId())
+                            && a.getStatus() == ApplicationStatus.ACCEPTED)
+                    .toList();
+            totals.get(code)[0] += job.getPositions();
+            totals.get(code)[1] += accepted.size();
+            totals.get(code)[2] += accepted.size() * job.getHoursPerWeek();
+            for (Application a : accepted) tasByModule.get(code).add(a.getTaUserId());
+        }
+
+        List<ModuleStats> result = new ArrayList<>();
+        for (String code : totals.keySet()) {
+            int[] t = totals.get(code);
+            result.add(new ModuleStats(code, names.get(code), t[0], t[1],
+                    tasByModule.get(code).size(), t[2]));
+        }
+        result.sort(Comparator.comparing(s -> s.moduleCode));
+        return result;
+    }
+
+    // -------------------------------------------------------------------------
+    // Capacity planning helpers
+    // -------------------------------------------------------------------------
+
+    /**
+     * Total declared available hours across all active TAs.
+     * Represents the system's maximum weekly TA capacity.
+     */
+    public int getTotalAvailableCapacity() {
+        return userRepository.findAll().stream()
+                .filter(u -> u.getRole() == Role.TA && u.isActive())
+                .mapToInt(User::getAvailableHours)
+                .sum();
+    }
+
+    /**
+     * Total hours currently assigned (accepted) across all active TAs.
+     */
+    public int getTotalAssignedHours() {
+        return getAllTAWorkloads().stream()
+                .mapToInt(TAWorkloadSummary::getTotalAssignedHours)
+                .sum();
+    }
+
+    /**
+     * System-wide utilisation percentage: totalAssigned / totalAvailable * 100.
+     * Returns 0 if no capacity is declared.
+     */
+    public double getSystemUtilisation() {
+        int capacity = getTotalAvailableCapacity();
+        if (capacity <= 0) return 0.0;
+        return Math.min(100.0, (double) getTotalAssignedHours() / capacity * 100.0);
+    }
+
     /**
      * Optimised buildSummary: resolves each job only once per accepted application
      * instead of calling findById twice per app.
