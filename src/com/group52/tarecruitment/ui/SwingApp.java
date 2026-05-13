@@ -2730,6 +2730,7 @@ public class SwingApp {
         private static final String TAB_WORKLOAD = "workload";
         private static final String TAB_ACCOUNTS = "accounts";
         private static final String TAB_JOBS = "jobs";
+        private static final String TAB_ALERTS = "alerts";
 
         private final JLabel titleLabel;
         private final CardLayout contentLayout;
@@ -2740,6 +2741,9 @@ public class SwingApp {
         private final JTable accountTable;
         private final DefaultTableModel jobsModel;
         private final JTable jobsTable;
+        private final DefaultTableModel alertsModel;
+        private final JTable alertsTable;
+        private final JLabel alertsSummaryLabel = new JLabel(" ");
 
         // Summary bar labels
         private final JLabel summaryTotalJobs = new JLabel("--");
@@ -2762,7 +2766,7 @@ public class SwingApp {
             contentLayout = new CardLayout();
             contentPanel = new JPanel(contentLayout);
 
-            String[] navLabels = {"Workload Overview", "Manage Accounts", "Jobs Overview"};
+            String[] navLabels = {"Workload Overview", "Manage Accounts", "Jobs Overview", "Alerts"};
             Runnable[] navActions = {
                 () -> {
                     refreshWorkload();
@@ -2775,6 +2779,10 @@ public class SwingApp {
                 () -> {
                     refreshJobs();
                     contentLayout.show(contentPanel, TAB_JOBS);
+                },
+                () -> {
+                    refreshAlerts();
+                    contentLayout.show(contentPanel, TAB_ALERTS);
                 }
             };
             add(buildNavigationPanel(navLabels, navActions), BorderLayout.WEST);
@@ -2925,6 +2933,65 @@ public class SwingApp {
             contentPanel.add(workloadPanel, TAB_WORKLOAD);
             contentPanel.add(accountsPanel, TAB_ACCOUNTS);
             contentPanel.add(jobsPanel, TAB_JOBS);
+
+            // ---- Alerts panel ----
+            alertsModel = new DefaultTableModel(
+                    new Object[]{"Severity", "TA ID", "TA Name", "Message", "Suggested Action"}, 0) {
+                @Override public boolean isCellEditable(int r, int c) { return false; }
+            };
+            alertsTable = new JTable(alertsModel);
+            styleDataTable(alertsTable);
+            installTableRowHover(alertsTable);
+            alertsTable.getColumnModel().getColumn(0).setPreferredWidth(80);
+            alertsTable.getColumnModel().getColumn(1).setPreferredWidth(90);
+            alertsTable.getColumnModel().getColumn(2).setPreferredWidth(120);
+            alertsTable.getColumnModel().getColumn(3).setPreferredWidth(300);
+            alertsTable.getColumnModel().getColumn(4).setPreferredWidth(260);
+            // Colour-code severity column
+            alertsTable.getColumnModel().getColumn(0).setCellRenderer(new DefaultTableCellRenderer() {
+                @Override
+                public java.awt.Component getTableCellRendererComponent(
+                        JTable t, Object v, boolean sel, boolean foc, int row, int col) {
+                    super.getTableCellRendererComponent(t, v, sel, foc, row, col);
+                    String val = v == null ? "" : v.toString();
+                    if (!sel) {
+                        switch (val) {
+                            case "Critical" -> { setBackground(new Color(254, 226, 226)); setForeground(new Color(185, 28, 28)); }
+                            case "Warning"  -> { setBackground(new Color(254, 243, 199)); setForeground(new Color(146, 64, 14)); }
+                            default         -> { setBackground(new Color(219, 234, 254)); setForeground(new Color(30, 64, 175)); }
+                        }
+                    }
+                    setFont(getFont().deriveFont(Font.BOLD));
+                    return this;
+                }
+            });
+            JPanel alertsPanel = new JPanel(new BorderLayout(0, 16));
+            alertsPanel.setOpaque(false);
+            JPanel alertsHeader = new JPanel(new BorderLayout());
+            alertsHeader.setOpaque(false);
+            alertsHeader.add(createSectionTitle("Workload Alerts",
+                    "Critical: overloaded  |  Warning: ≥80% utilisation  |  Info: idle capacity"), BorderLayout.WEST);
+            alertsSummaryLabel.setFont(new Font("Segoe UI", Font.PLAIN, 12));
+            alertsSummaryLabel.setForeground(MUTED_TEXT_COLOR);
+            alertsHeader.add(alertsSummaryLabel, BorderLayout.EAST);
+            alertsPanel.add(createCardPanel(alertsHeader, 18, 18, 18, 18), BorderLayout.NORTH);
+            JScrollPane alertsScroll = new JScrollPane(alertsTable);
+            alertsScroll.setBorder(BorderFactory.createEmptyBorder());
+            alertsScroll.getViewport().setBackground(Color.WHITE);
+            alertsPanel.add(createCardPanel(alertsScroll, 0, 0, 0, 0), BorderLayout.CENTER);
+            JPanel alertsActions = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
+            alertsActions.setOpaque(false);
+            JButton refreshAlertsButton = new JButton("Refresh");
+            styleSecondaryButton(refreshAlertsButton);
+            refreshAlertsButton.addActionListener(e -> refreshAlerts());
+            JButton exportAlertsButton = new JButton("Export Report");
+            styleSecondaryButton(exportAlertsButton);
+            exportAlertsButton.addActionListener(e -> exportWorkloadReport());
+            alertsActions.add(refreshAlertsButton);
+            alertsActions.add(exportAlertsButton);
+            alertsPanel.add(alertsActions, BorderLayout.SOUTH);
+            contentPanel.add(alertsPanel, TAB_ALERTS);
+
             add(contentPanel, BorderLayout.CENTER);
         }
 
@@ -2932,6 +2999,7 @@ public class SwingApp {
             refreshWorkload();
             refreshAccounts();
             refreshJobs();
+            refreshAlerts();
             updateTopBarAvatar(user == null ? "" : user.getAvatarFilePath());
             contentLayout.show(contentPanel, TAB_WORKLOAD);
         }
@@ -2973,6 +3041,35 @@ public class SwingApp {
                     overview.status.name()
                 });
             }
+        }
+
+        private void refreshAlerts() {
+            alertsModel.setRowCount(0);
+            List<AdminService.WorkloadAlert> alerts = adminService.getWorkloadAlerts();
+            for (AdminService.WorkloadAlert a : alerts) {
+                alertsModel.addRow(new Object[]{
+                    a.getSeverity().label(),
+                    a.getTaUserId(),
+                    a.getTaName(),
+                    a.getMessage(),
+                    a.getSuggestedAction()
+                });
+            }
+            long critical = alerts.stream().filter(a -> a.getSeverity() == AdminService.AlertSeverity.CRITICAL).count();
+            long warning  = alerts.stream().filter(a -> a.getSeverity() == AdminService.AlertSeverity.WARNING).count();
+            long info     = alerts.stream().filter(a -> a.getSeverity() == AdminService.AlertSeverity.INFO).count();
+            alertsSummaryLabel.setText(String.format(
+                    "Critical: %d  |  Warning: %d  |  Info: %d  |  System utilisation: %.0f%%",
+                    critical, warning, info, adminService.getSystemUtilisation()));
+        }
+
+        private void exportWorkloadReport() {
+            String report = adminService.getWorkloadReport();
+            JTextArea area = new JTextArea(report, 20, 60);
+            area.setEditable(false);
+            area.setFont(new Font("Monospaced", Font.PLAIN, 12));
+            JOptionPane.showMessageDialog(frame, new JScrollPane(area),
+                    "Workload Report", JOptionPane.INFORMATION_MESSAGE);
         }
 
         private void applyRiskLevelRenderer(JTable table, int col) {

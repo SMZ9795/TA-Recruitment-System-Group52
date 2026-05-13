@@ -63,6 +63,9 @@ public final class RecruitmentSystemTestRunner {
         runCase("AdminService getRecruitmentSnapshot counts filled jobs and overloaded TAs", this::testRecruitmentSnapshot);
         runCase("AdminService searchTAWorkload filters by name and ID", this::testSearchTAWorkload);
         runCase("AdminService getWorkloadTrend returns correct label by job count", this::testWorkloadTrend);
+        runCase("AdminService getWorkloadAlerts generates CRITICAL for overloaded and WARNING for at-risk TAs", this::testWorkloadAlerts);
+        runCase("AdminService getIdleTAs returns TAs with available hours but no accepted positions", this::testIdleTAs);
+        runCase("AdminService getDepartmentStats aggregates positions and hours per module", this::testDepartmentStats);
 
         System.out.println();
         System.out.println("==== TEST SUMMARY ====");
@@ -862,6 +865,165 @@ public final class RecruitmentSystemTestRunner {
             AdminService.TAWorkloadSummary s3 = svc3.getTAWorkload("ta1");
             assert svc3.getWorkloadTrend(s3) == AdminService.WorkloadTrend.ESTABLISHED
                 : "3 jobs should be ESTABLISHED, got " + svc3.getWorkloadTrend(s3);
+        } finally {
+            try (var walk = Files.walk(tmp)) {
+                walk.sorted(Comparator.reverseOrder()).forEach(p -> {
+                    try { Files.deleteIfExists(p); } catch (Exception ignored) {}
+                });
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // New tests: WorkloadAlerts, IdleTAs, DepartmentStats
+    // -------------------------------------------------------------------------
+
+    private void testWorkloadAlerts() throws Exception {
+        Path tmp = Files.createTempDirectory("ta-test-alerts");
+        try {
+            Path usersPath = tmp.resolve("users.csv");
+            Path jobsPath  = tmp.resolve("jobs.csv");
+            Path appsPath  = tmp.resolve("applications.csv");
+
+            // ta1: availableHours=10, will be assigned 14h → OVERLOADED → CRITICAL alert
+            // ta2: availableHours=10, will be assigned 9h  → AT_RISK (90%) → WARNING alert
+            // ta3: availableHours=8,  no accepted job       → idle → INFO alert
+            Files.writeString(usersPath,
+                "id,role,name,email,password,major,yearOfStudy,skills,availableHours,active,cvFilePath\n"
+                + "ta1,TA,Alice,alice@test.com,pass1234,CS,2,Java,10,true,\n"
+                + "ta2,TA,Bob,bob@test.com,pass1234,CS,2,Java,10,true,\n"
+                + "ta3,TA,Carol,carol@test.com,pass1234,CS,2,Java,8,true,\n");
+            Files.writeString(jobsPath,
+                "id,moduleCode,moduleName,description,requiredSkills,hoursPerWeek,positions,deadline,postedByMoId,status\n"
+                + "j1,CS101,A,Desc,Java,7,2,2099-12-31,mo1,OPEN\n"
+                + "j2,CS102,B,Desc,Java,7,2,2099-12-31,mo1,OPEN\n"
+                + "j3,CS103,C,Desc,Java,9,2,2099-12-31,mo1,OPEN\n");
+            Files.writeString(appsPath,
+                "id,jobId,taUserId,status,appliedDate\n"
+                + "app1,j1,ta1,ACCEPTED,2024-01-01\n"
+                + "app2,j2,ta1,ACCEPTED,2024-01-02\n"
+                + "app3,j3,ta2,ACCEPTED,2024-01-03\n");
+
+            AdminService svc = new AdminService(
+                new UserRepository(usersPath), new JobRepository(jobsPath), new ApplicationRepository(appsPath));
+
+            List<AdminService.WorkloadAlert> alerts = svc.getWorkloadAlerts();
+
+            // Must contain at least one CRITICAL (ta1 overloaded: 14h > 10h)
+            boolean hasCritical = alerts.stream()
+                .anyMatch(a -> a.getSeverity() == AdminService.AlertSeverity.CRITICAL
+                            && a.getTaUserId().equals("ta1"));
+            assertTrue(hasCritical, "Expected CRITICAL alert for overloaded ta1.");
+
+            // Must contain at least one WARNING (ta2 at 90%)
+            boolean hasWarning = alerts.stream()
+                .anyMatch(a -> a.getSeverity() == AdminService.AlertSeverity.WARNING
+                            && a.getTaUserId().equals("ta2"));
+            assertTrue(hasWarning, "Expected WARNING alert for at-risk ta2.");
+
+            // Must contain INFO for idle ta3
+            boolean hasInfo = alerts.stream()
+                .anyMatch(a -> a.getSeverity() == AdminService.AlertSeverity.INFO
+                            && a.getTaUserId().equals("ta3"));
+            assertTrue(hasInfo, "Expected INFO alert for idle ta3.");
+
+            // CRITICAL must come before WARNING in sorted list
+            int critIdx = -1, warnIdx = -1;
+            for (int i = 0; i < alerts.size(); i++) {
+                if (alerts.get(i).getSeverity() == AdminService.AlertSeverity.CRITICAL && critIdx < 0) critIdx = i;
+                if (alerts.get(i).getSeverity() == AdminService.AlertSeverity.WARNING  && warnIdx < 0) warnIdx = i;
+            }
+            assertTrue(critIdx < warnIdx, "CRITICAL alerts should appear before WARNING alerts.");
+
+        } finally {
+            try (var walk = Files.walk(tmp)) {
+                walk.sorted(Comparator.reverseOrder()).forEach(p -> {
+                    try { Files.deleteIfExists(p); } catch (Exception ignored) {}
+                });
+            }
+        }
+    }
+
+    private void testIdleTAs() throws Exception {
+        Path tmp = Files.createTempDirectory("ta-test-idle");
+        try {
+            Path usersPath = tmp.resolve("users.csv");
+            Path jobsPath  = tmp.resolve("jobs.csv");
+            Path appsPath  = tmp.resolve("applications.csv");
+
+            // ta1 has accepted job → not idle
+            // ta2 has available hours but no accepted job → idle
+            // ta3 has availableHours=0 → excluded from idle list
+            Files.writeString(usersPath,
+                "id,role,name,email,password,major,yearOfStudy,skills,availableHours,active,cvFilePath\n"
+                + "ta1,TA,Alice,alice@test.com,pass1234,CS,2,Java,10,true,\n"
+                + "ta2,TA,Bob,bob@test.com,pass1234,CS,2,Java,8,true,\n"
+                + "ta3,TA,Carol,carol@test.com,pass1234,CS,2,Java,0,true,\n");
+            Files.writeString(jobsPath,
+                "id,moduleCode,moduleName,description,requiredSkills,hoursPerWeek,positions,deadline,postedByMoId,status\n"
+                + "j1,CS101,A,Desc,Java,5,2,2099-12-31,mo1,OPEN\n");
+            Files.writeString(appsPath,
+                "id,jobId,taUserId,status,appliedDate\n"
+                + "app1,j1,ta1,ACCEPTED,2024-01-01\n");
+
+            AdminService svc = new AdminService(
+                new UserRepository(usersPath), new JobRepository(jobsPath), new ApplicationRepository(appsPath));
+
+            List<User> idle = svc.getIdleTAs();
+
+            assertEquals(1, idle.size(), "Only ta2 should be idle.");
+            assertEquals("ta2", idle.get(0).getId(), "Idle TA should be ta2.");
+
+        } finally {
+            try (var walk = Files.walk(tmp)) {
+                walk.sorted(Comparator.reverseOrder()).forEach(p -> {
+                    try { Files.deleteIfExists(p); } catch (Exception ignored) {}
+                });
+            }
+        }
+    }
+
+    private void testDepartmentStats() throws Exception {
+        Path tmp = Files.createTempDirectory("ta-test-dept");
+        try {
+            Path usersPath = tmp.resolve("users.csv");
+            Path jobsPath  = tmp.resolve("jobs.csv");
+            Path appsPath  = tmp.resolve("applications.csv");
+
+            // Two jobs in CS101, one job in CS102
+            Files.writeString(usersPath,
+                "id,role,name,email,password,major,yearOfStudy,skills,availableHours,active,cvFilePath\n"
+                + "ta1,TA,Alice,alice@test.com,pass1234,CS,2,Java,20,true,\n");
+            Files.writeString(jobsPath,
+                "id,moduleCode,moduleName,description,requiredSkills,hoursPerWeek,positions,deadline,postedByMoId,status\n"
+                + "j1,CS101,Algorithms,Desc,Java,5,2,2099-12-31,mo1,OPEN\n"
+                + "j2,CS101,Algorithms,Desc,Java,3,1,2099-12-31,mo1,OPEN\n"
+                + "j3,CS102,Databases,Desc,SQL,4,3,2099-12-31,mo1,OPEN\n");
+            Files.writeString(appsPath,
+                "id,jobId,taUserId,status,appliedDate\n"
+                + "app1,j1,ta1,ACCEPTED,2024-01-01\n"
+                + "app2,j3,ta1,ACCEPTED,2024-01-02\n");
+
+            AdminService svc = new AdminService(
+                new UserRepository(usersPath), new JobRepository(jobsPath), new ApplicationRepository(appsPath));
+
+            List<AdminService.ModuleStats> stats = svc.getDepartmentStats();
+
+            assertEquals(2, stats.size(), "Should have stats for 2 modules.");
+
+            // Stats are sorted by moduleCode: CS101 first
+            AdminService.ModuleStats cs101 = stats.get(0);
+            assertEquals("CS101", cs101.moduleCode, "First module should be CS101.");
+            assertEquals(3, cs101.totalPositions, "CS101 total positions: 2+1=3.");
+            assertEquals(1, cs101.assignedTAs, "CS101 has 1 accepted TA (ta1 via j1).");
+            assertEquals(5, cs101.totalAssignedHours, "CS101 assigned hours: 5h from j1.");
+
+            AdminService.ModuleStats cs102 = stats.get(1);
+            assertEquals("CS102", cs102.moduleCode, "Second module should be CS102.");
+            assertEquals(3, cs102.totalPositions, "CS102 total positions: 3.");
+            assertEquals(1, cs102.assignedTAs, "CS102 has 1 accepted TA (ta1 via j3).");
+            assertEquals(4, cs102.totalAssignedHours, "CS102 assigned hours: 4h from j3.");
+
         } finally {
             try (var walk = Files.walk(tmp)) {
                 walk.sorted(Comparator.reverseOrder()).forEach(p -> {
