@@ -42,9 +42,380 @@ public final class MoApplicantRankingFutureExtensions {
     private static final int JOB_URGENCY_PENDING_POINTS = 4;
     private static final int JOB_URGENCY_REVIEWABLE_POINTS = 3;
     private static final int JOB_URGENCY_HIGH_MATCH_POINTS = 15;
+    private static final int RANKING_TREND_STABLE_DELTA = 2;
+    private static final int SOME_MATCHED_SKILLS = 2;
+    private static final int MANY_MISSING_SKILLS = 3;
+    private static final int CRITICAL_MISSING_SKILLS = 5;
 
     private MoApplicantRankingFutureExtensions() {
         throw new UnsupportedOperationException("Utility class");
+    }
+
+    /**
+     * Future-use helper for comparing ranking scores between two ranking runs.
+     *
+     * <p>This is not currently integrated into the MO workflow. A later dashboard could use it to
+     * show whether a candidate moved up, moved down, or stayed broadly stable after job criteria or
+     * applicant details changed.
+     */
+    public static RankingTrend classifyRankingTrend(Integer previousScore, Integer currentScore) {
+        if (previousScore == null || currentScore == null || previousScore < 0 || currentScore < 0) {
+            return RankingTrend.UNKNOWN;
+        }
+
+        int difference = normalizeMatchScore(currentScore) - normalizeMatchScore(previousScore);
+        if (difference > RANKING_TREND_STABLE_DELTA) {
+            return RankingTrend.IMPROVED;
+        }
+        if (difference < -RANKING_TREND_STABLE_DELTA) {
+            return RankingTrend.DECLINED;
+        }
+        return RankingTrend.STABLE;
+    }
+
+    /**
+     * Primitive overload for future callers that already have validated score values.
+     */
+    public static RankingTrend classifyRankingTrend(int previousScore, int currentScore) {
+        return classifyRankingTrend(Integer.valueOf(previousScore), Integer.valueOf(currentScore));
+    }
+
+    /**
+     * Future-use review priority recommendation based on a compact candidate snapshot.
+     *
+     * <p>The result is intentionally advisory and deterministic. It is not connected to current
+     * services, repositories, Swing screens, or hiring decisions.
+     */
+    public static ReviewPriority recommendReviewPriority(FutureCandidateSnapshot candidate) {
+        if (candidate == null) {
+            return ReviewPriority.SKIP_FOR_NOW;
+        }
+        return recommendReviewPriority(
+                candidate.getMatchScore(),
+                candidate.getMissingSkillsCount(),
+                candidate.getCurrentWorkloadHours(),
+                candidate.getStatus());
+    }
+
+    /**
+     * Future-use review priority recommendation using primitive values.
+     */
+    public static ReviewPriority recommendReviewPriority(
+            int matchScore,
+            int missingSkillsCount,
+            int currentWorkloadHours,
+            ApplicationStatus status) {
+        if (!needsDecision(status)) {
+            return ReviewPriority.SKIP_FOR_NOW;
+        }
+
+        int safeMatchScore = normalizeMatchScore(matchScore);
+        int safeMissingSkills = Math.max(0, missingSkillsCount);
+        int safeWorkload = Math.max(0, currentWorkloadHours);
+
+        if (safeMatchScore >= STRONG_MATCH_SCORE
+                && safeMissingSkills <= 1
+                && safeWorkload < HIGH_WORKLOAD_HOURS) {
+            return ReviewPriority.URGENT;
+        }
+        if (safeWorkload >= HIGH_WORKLOAD_HOURS
+                || safeMissingSkills >= CRITICAL_MISSING_SKILLS
+                || safeMatchScore < LOW_MATCH_SCORE) {
+            return ReviewPriority.LATER;
+        }
+        if (safeMatchScore >= MODERATE_MATCH_SCORE || safeMissingSkills <= MANY_MISSING_SKILLS) {
+            return ReviewPriority.NORMAL;
+        }
+        return ReviewPriority.LATER;
+    }
+
+    /**
+     * Future-use risk label generator for an MO review screen.
+     *
+     * <p>These flags are deliberately human-readable strings so a later UI can display them without
+     * having to know this helper's enum details. This method is currently not wired into production
+     * code.
+     */
+    public static List<String> identifyApplicantRiskFlags(FutureCandidateSnapshot candidate) {
+        if (candidate == null) {
+            return List.of("Incomplete applicant information");
+        }
+        return identifyApplicantRiskFlags(
+                candidate.getApplicationId(),
+                candidate.getApplicantName(),
+                candidate.getMatchScore(),
+                candidate.getMissingSkillsCount(),
+                candidate.getCurrentWorkloadHours(),
+                candidate.getStatus());
+    }
+
+    /**
+     * Future-use risk label generator using primitive values.
+     */
+    public static List<String> identifyApplicantRiskFlags(
+            String applicationId,
+            String applicantName,
+            int matchScore,
+            int missingSkillsCount,
+            int currentWorkloadHours,
+            ApplicationStatus status) {
+        List<String> flags = new ArrayList<>();
+        int safeMatchScore = normalizeMatchScore(matchScore);
+        int safeMissingSkills = Math.max(0, missingSkillsCount);
+        int safeWorkload = Math.max(0, currentWorkloadHours);
+
+        if (applicationId == null || applicationId.isBlank()
+                || applicantName == null || applicantName.isBlank()) {
+            flags.add("Incomplete applicant information");
+        }
+        if (safeMatchScore < LOW_MATCH_SCORE) {
+            flags.add("Low match score");
+        }
+        if (safeMissingSkills >= MANY_MISSING_SKILLS) {
+            flags.add("Many missing skills");
+        }
+        if (safeWorkload >= HIGH_WORKLOAD_HOURS) {
+            flags.add("High current workload");
+        }
+        if (status == null) {
+            flags.add("Unknown application status");
+        } else if (!needsDecision(status)) {
+            flags.add("Status not pending or reviewable: " + readableStatusLabel(status));
+        }
+        if (flags.isEmpty()) {
+            flags.add("No major future risk flags");
+        }
+        return List.copyOf(flags);
+    }
+
+    /**
+     * Future-use risk level summary that groups the human-readable flags into a coarse severity.
+     */
+    public static CandidateRiskLevel classifyCandidateRiskLevel(FutureCandidateSnapshot candidate) {
+        if (candidate == null) {
+            return CandidateRiskLevel.HIGH;
+        }
+        if (!needsDecision(candidate.getStatus())) {
+            return CandidateRiskLevel.NOT_APPLICABLE;
+        }
+        int safeMatchScore = candidate.getMatchScore();
+        int safeMissingSkills = candidate.getMissingSkillsCount();
+        int safeWorkload = candidate.getCurrentWorkloadHours();
+
+        if (safeMatchScore < LOW_MATCH_SCORE
+                || safeMissingSkills >= CRITICAL_MISSING_SKILLS
+                || safeWorkload >= HIGH_WORKLOAD_HOURS) {
+            return CandidateRiskLevel.HIGH;
+        }
+        if (safeMatchScore < MODERATE_MATCH_SCORE
+                || safeMissingSkills >= MANY_MISSING_SKILLS
+                || safeWorkload >= MEDIUM_WORKLOAD_HOURS) {
+            return CandidateRiskLevel.MEDIUM;
+        }
+        return CandidateRiskLevel.LOW;
+    }
+
+    /**
+     * Future-use interview recommendation text for MO-facing review notes.
+     *
+     * <p>This method intentionally returns short deterministic text and is not used by the current
+     * ranking workflow.
+     */
+    public static String buildInterviewRecommendation(FutureCandidateSnapshot candidate) {
+        if (candidate == null) {
+            return "Not applicable - applicant information is incomplete";
+        }
+        return buildInterviewRecommendation(
+                candidate.getMatchScore(),
+                candidate.getMissingSkillsCount(),
+                candidate.getCurrentWorkloadHours(),
+                candidate.getStatus());
+    }
+
+    /**
+     * Future-use interview recommendation text using primitive values.
+     */
+    public static String buildInterviewRecommendation(
+            int matchScore,
+            int missingSkillsCount,
+            int currentWorkloadHours,
+            ApplicationStatus status) {
+        if (!needsDecision(status)) {
+            return "Not applicable - application is not pending";
+        }
+
+        int safeMatchScore = normalizeMatchScore(matchScore);
+        int safeMissingSkills = Math.max(0, missingSkillsCount);
+        int safeWorkload = Math.max(0, currentWorkloadHours);
+
+        if (safeMatchScore >= STRONG_MATCH_SCORE
+                && safeMissingSkills <= 1
+                && safeWorkload < HIGH_WORKLOAD_HOURS) {
+            return "Strong candidate - schedule interview";
+        }
+        if (safeMatchScore >= MODERATE_MATCH_SCORE && safeMissingSkills <= MANY_MISSING_SKILLS) {
+            return "Potential candidate - review missing skills";
+        }
+        return "Weak fit - consider rejection";
+    }
+
+    /**
+     * Future-use batch summary for candidate-like records.
+     *
+     * <p>The current application does not call this method. It is reserved for a later MO dashboard
+     * or export panel that needs aggregate statistics without touching repositories.
+     */
+    public static FutureRankingSummary summarizeFutureCandidates(List<FutureCandidateSnapshot> candidates) {
+        List<FutureCandidateSnapshot> safeCandidates = safeFutureCandidateSnapshots(candidates);
+        if (safeCandidates.isEmpty()) {
+            return new FutureRankingSummary(0, 0, 0, 0, 0.0, 0, 0);
+        }
+
+        int strongCandidates = 0;
+        int mediumCandidates = 0;
+        int weakCandidates = 0;
+        int totalScore = 0;
+        int highestScore = 0;
+        int lowestScore = 100;
+
+        for (FutureCandidateSnapshot candidate : safeCandidates) {
+            int score = candidate.getMatchScore();
+            MatchTier tier = matchTierFromScore(score);
+            if (tier == MatchTier.STRONG_MATCH) {
+                strongCandidates++;
+            } else if (tier == MatchTier.MODERATE_MATCH) {
+                mediumCandidates++;
+            } else {
+                weakCandidates++;
+            }
+            totalScore += score;
+            highestScore = Math.max(highestScore, score);
+            lowestScore = Math.min(lowestScore, score);
+        }
+
+        double averageScore = totalScore / (double) safeCandidates.size();
+        return new FutureRankingSummary(
+                safeCandidates.size(),
+                strongCandidates,
+                mediumCandidates,
+                weakCandidates,
+                averageScore,
+                highestScore,
+                lowestScore);
+    }
+
+    /**
+     * Future-use explanation template for MO users.
+     *
+     * <p>This combines score level, skill quality, missing-skill concern, workload concern, status
+     * concern, risk level, and a final recommendation. It is intentionally kept out of the current
+     * workflow until the team decides to expose richer explanations.
+     */
+    public static String buildFutureMoExplanation(FutureCandidateSnapshot candidate) {
+        if (candidate == null) {
+            return "No future explanation can be built because candidate information is missing.";
+        }
+
+        StringBuilder explanation = new StringBuilder();
+        explanation.append("Candidate: ")
+                .append(safeLabel(candidate.getApplicantName(), "Unknown applicant"))
+                .append("\n");
+        explanation.append("Application ID: ")
+                .append(safeLabel(candidate.getApplicationId(), "Unknown application"))
+                .append("\n");
+        explanation.append("Score level: ")
+                .append(buildFutureScoreLevelText(candidate.getMatchScore()))
+                .append("\n");
+        explanation.append("Matched skill quality: ")
+                .append(buildFutureMatchedSkillQualityText(candidate.getMatchedSkillsCount()))
+                .append("\n");
+        explanation.append("Missing skill concern: ")
+                .append(buildFutureMissingSkillConcernText(candidate.getMissingSkillsCount()))
+                .append("\n");
+        explanation.append("Workload concern: ")
+                .append(buildFutureWorkloadConcernText(candidate.getCurrentWorkloadHours()))
+                .append("\n");
+        explanation.append("Status concern: ")
+                .append(buildFutureStatusConcernText(candidate.getStatus()))
+                .append("\n");
+        explanation.append("Risk level: ")
+                .append(classifyCandidateRiskLevel(candidate).getLabel())
+                .append("\n");
+        explanation.append("Final recommendation: ")
+                .append(buildInterviewRecommendation(candidate));
+        return explanation.toString();
+    }
+
+    /**
+     * Future-use score-level text for richer MO explanations.
+     */
+    public static String buildFutureScoreLevelText(int matchScore) {
+        MatchTier tier = matchTierFromScore(matchScore);
+        if (tier == MatchTier.STRONG_MATCH) {
+            return "Strong score; applicant appears to match most ranking criteria.";
+        }
+        if (tier == MatchTier.MODERATE_MATCH) {
+            return "Medium score; applicant may be suitable after closer MO review.";
+        }
+        return "Weak score; applicant may not fit the current job requirements.";
+    }
+
+    /**
+     * Future-use matched-skill text for richer MO explanations.
+     */
+    public static String buildFutureMatchedSkillQualityText(int matchedSkillsCount) {
+        int safeMatchedSkills = Math.max(0, matchedSkillsCount);
+        if (safeMatchedSkills >= SOME_MATCHED_SKILLS) {
+            return "Matched skills are present and should be checked for relevance.";
+        }
+        if (safeMatchedSkills == 1) {
+            return "Only one matched skill is visible, so the match may be narrow.";
+        }
+        return "No matched skills are visible in the future snapshot.";
+    }
+
+    /**
+     * Future-use missing-skill text for richer MO explanations.
+     */
+    public static String buildFutureMissingSkillConcernText(int missingSkillsCount) {
+        int safeMissingSkills = Math.max(0, missingSkillsCount);
+        if (safeMissingSkills >= CRITICAL_MISSING_SKILLS) {
+            return "Critical concern; many required skills appear to be missing.";
+        }
+        if (safeMissingSkills >= MANY_MISSING_SKILLS) {
+            return "Moderate concern; several required skills need review.";
+        }
+        if (safeMissingSkills > 0) {
+            return "Low concern; a small number of skills may need follow-up.";
+        }
+        return "No missing skills are recorded in the future snapshot.";
+    }
+
+    /**
+     * Future-use workload text for richer MO explanations.
+     */
+    public static String buildFutureWorkloadConcernText(int currentWorkloadHours) {
+        int safeWorkload = Math.max(0, currentWorkloadHours);
+        if (safeWorkload >= HIGH_WORKLOAD_HOURS) {
+            return "High concern; applicant may be overloaded.";
+        }
+        if (safeWorkload >= MEDIUM_WORKLOAD_HOURS) {
+            return "Medium concern; workload should be checked before assignment.";
+        }
+        return "Low concern; workload does not currently block review.";
+    }
+
+    /**
+     * Future-use status text for richer MO explanations.
+     */
+    public static String buildFutureStatusConcernText(ApplicationStatus status) {
+        if (status == null) {
+            return "Unknown status; MO should verify the application state first.";
+        }
+        if (needsDecision(status)) {
+            return readableStatusLabel(status) + " status can still be reviewed by an MO.";
+        }
+        return readableStatusLabel(status) + " status is not pending review.";
     }
 
     public static String buildRichExplanation(
@@ -854,6 +1225,16 @@ public final class MoApplicantRankingFutureExtensions {
                 .toList();
     }
 
+    private static List<FutureCandidateSnapshot> safeFutureCandidateSnapshots(
+            List<FutureCandidateSnapshot> candidates) {
+        if (candidates == null || candidates.isEmpty()) {
+            return List.of();
+        }
+        return candidates.stream()
+                .filter(Objects::nonNull)
+                .toList();
+    }
+
     private static String readableAttentionFlags(List<ApplicantAttentionFlag> flags) {
         if (flags == null || flags.isEmpty()) {
             return ApplicantAttentionFlag.NORMAL_REVIEW_ITEM.getLabel();
@@ -994,6 +1375,11 @@ public final class MoApplicantRankingFutureExtensions {
         return mustQuote ? "\"" + escaped + "\"" : escaped;
     }
 
+    private static String formatOneDecimal(double value) {
+        int scaled = (int) Math.round(Math.max(0.0, value) * 10.0);
+        return (scaled / 10) + "." + (scaled % 10);
+    }
+
     public enum MatchTier {
         STRONG_MATCH("Strong Match"),
         MODERATE_MATCH("Moderate Match"),
@@ -1119,6 +1505,57 @@ public final class MoApplicantRankingFutureExtensions {
         }
     }
 
+    public enum RankingTrend {
+        IMPROVED("Improved"),
+        DECLINED("Declined"),
+        STABLE("Stable"),
+        UNKNOWN("Unknown");
+
+        private final String label;
+
+        RankingTrend(String label) {
+            this.label = label;
+        }
+
+        public String getLabel() {
+            return label;
+        }
+    }
+
+    public enum ReviewPriority {
+        URGENT("Review urgently"),
+        NORMAL("Review normally"),
+        LATER("Review later"),
+        SKIP_FOR_NOW("Skip for now");
+
+        private final String label;
+
+        ReviewPriority(String label) {
+            this.label = label;
+        }
+
+        public String getLabel() {
+            return label;
+        }
+    }
+
+    public enum CandidateRiskLevel {
+        LOW("Low risk"),
+        MEDIUM("Medium risk"),
+        HIGH("High risk"),
+        NOT_APPLICABLE("Not applicable");
+
+        private final String label;
+
+        CandidateRiskLevel(String label) {
+            this.label = label;
+        }
+
+        public String getLabel() {
+            return label;
+        }
+    }
+
     /**
      * Future-use applicant signal object built from primitive values.
      *
@@ -1212,6 +1649,171 @@ public final class MoApplicantRankingFutureExtensions {
                     + " | workload=" + currentWorkloadHours + "h/week"
                     + " | fill=" + getFillRatioPercent() + "%"
                     + " | suggestion=" + getDecisionSuggestion().getLabel();
+        }
+    }
+
+    /**
+     * Future-use candidate snapshot for optional MO ranking review helpers.
+     *
+     * <p>This class is intentionally small and self-contained. It is not a replacement for current
+     * domain models and is not integrated with the active workflow.
+     */
+    public static final class FutureCandidateSnapshot {
+        private final String applicationId;
+        private final String applicantName;
+        private final ApplicationStatus status;
+        private final int matchScore;
+        private final int previousMatchScore;
+        private final int matchedSkillsCount;
+        private final int missingSkillsCount;
+        private final int currentWorkloadHours;
+
+        public FutureCandidateSnapshot(
+                String applicationId,
+                String applicantName,
+                ApplicationStatus status,
+                int matchScore,
+                int previousMatchScore,
+                int matchedSkillsCount,
+                int missingSkillsCount,
+                int currentWorkloadHours) {
+            this.applicationId = applicationId == null ? "" : applicationId.trim();
+            this.applicantName = applicantName == null ? "" : applicantName.trim();
+            this.status = status;
+            this.matchScore = normalizeMatchScore(matchScore);
+            this.previousMatchScore = previousMatchScore < 0 ? -1 : normalizeMatchScore(previousMatchScore);
+            this.matchedSkillsCount = Math.max(0, matchedSkillsCount);
+            this.missingSkillsCount = Math.max(0, missingSkillsCount);
+            this.currentWorkloadHours = Math.max(0, currentWorkloadHours);
+        }
+
+        public String getApplicationId() {
+            return applicationId;
+        }
+
+        public String getApplicantName() {
+            return applicantName;
+        }
+
+        public ApplicationStatus getStatus() {
+            return status;
+        }
+
+        public int getMatchScore() {
+            return matchScore;
+        }
+
+        public int getPreviousMatchScore() {
+            return previousMatchScore;
+        }
+
+        public int getMatchedSkillsCount() {
+            return matchedSkillsCount;
+        }
+
+        public int getMissingSkillsCount() {
+            return missingSkillsCount;
+        }
+
+        public int getCurrentWorkloadHours() {
+            return currentWorkloadHours;
+        }
+
+        public RankingTrend getRankingTrend() {
+            if (previousMatchScore < 0) {
+                return RankingTrend.UNKNOWN;
+            }
+            return classifyRankingTrend(previousMatchScore, matchScore);
+        }
+
+        public ReviewPriority getReviewPriority() {
+            return recommendReviewPriority(this);
+        }
+
+        public CandidateRiskLevel getRiskLevel() {
+            return classifyCandidateRiskLevel(this);
+        }
+
+        public List<String> getRiskFlags() {
+            return identifyApplicantRiskFlags(this);
+        }
+
+        public String toReadableLine() {
+            return safeLabel(applicantName, "Unknown applicant")
+                    + " | status=" + readableStatusLabel(status)
+                    + " | match=" + matchScore + "%"
+                    + " | trend=" + getRankingTrend().getLabel()
+                    + " | missingSkills=" + missingSkillsCount
+                    + " | workload=" + currentWorkloadHours + "h/week"
+                    + " | priority=" + getReviewPriority().getLabel();
+        }
+    }
+
+    /**
+     * Future-use immutable summary for batches of candidate-like records.
+     */
+    public static final class FutureRankingSummary {
+        private final int totalCandidates;
+        private final int strongCandidates;
+        private final int mediumCandidates;
+        private final int weakCandidates;
+        private final double averageScore;
+        private final int highestScore;
+        private final int lowestScore;
+
+        private FutureRankingSummary(
+                int totalCandidates,
+                int strongCandidates,
+                int mediumCandidates,
+                int weakCandidates,
+                double averageScore,
+                int highestScore,
+                int lowestScore) {
+            this.totalCandidates = Math.max(0, totalCandidates);
+            this.strongCandidates = Math.max(0, strongCandidates);
+            this.mediumCandidates = Math.max(0, mediumCandidates);
+            this.weakCandidates = Math.max(0, weakCandidates);
+            this.averageScore = averageScore < 0 ? 0.0 : averageScore;
+            this.highestScore = normalizeMatchScore(highestScore);
+            this.lowestScore = normalizeMatchScore(lowestScore);
+        }
+
+        public int getTotalCandidates() {
+            return totalCandidates;
+        }
+
+        public int getStrongCandidates() {
+            return strongCandidates;
+        }
+
+        public int getMediumCandidates() {
+            return mediumCandidates;
+        }
+
+        public int getWeakCandidates() {
+            return weakCandidates;
+        }
+
+        public double getAverageScore() {
+            return averageScore;
+        }
+
+        public int getHighestScore() {
+            return highestScore;
+        }
+
+        public int getLowestScore() {
+            return lowestScore;
+        }
+
+        public String toReadableText() {
+            return "Total candidates: " + totalCandidates
+                    + "\nStrong candidates: " + strongCandidates
+                    + "\nMedium candidates: " + mediumCandidates
+                    + "\nWeak candidates: " + weakCandidates
+                    + "\nAverage score: " + formatOneDecimal(averageScore)
+                    + "\nHighest score: " + highestScore
+                    + "\nLowest score: " + lowestScore;
         }
     }
 
