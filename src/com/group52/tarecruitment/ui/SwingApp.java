@@ -1071,13 +1071,15 @@ public class SwingApp {
                 roleCombo.setSelectedItem(loginUser.getRole());
                 statusLabel.setText("Login success.");
                 onLoginSuccess(loginUser);
+            } catch (IllegalArgumentException ex) {
+                String msg = (ex.getMessage() != null && !ex.getMessage().isBlank())
+                        ? ex.getMessage() : "Invalid credentials. Please try again.";
+                JOptionPane.showMessageDialog(frame, msg, "Login Failed", JOptionPane.WARNING_MESSAGE);
+                statusLabel.setText("Login failed.");
             } catch (RuntimeException ex) {
                 ex.printStackTrace();
-                String detail = ex.getClass().getSimpleName();
-                if (ex.getMessage() != null && !ex.getMessage().isBlank()) {
-                    detail += ": " + ex.getMessage();
-                }
-                JOptionPane.showMessageDialog(frame, "Login error: " + detail);
+                JOptionPane.showMessageDialog(frame, "An unexpected error occurred. Please try again.",
+                        "Login Error", JOptionPane.ERROR_MESSAGE);
                 statusLabel.setText("Login error.");
             }
         }
