@@ -4,16 +4,22 @@ import com.group52.tarecruitment.model.Application;
 import com.group52.tarecruitment.model.ApplicationStatus;
 import com.group52.tarecruitment.model.Job;
 import com.group52.tarecruitment.model.JobStatus;
+import com.group52.tarecruitment.model.Notification;
+import com.group52.tarecruitment.model.NotificationType;
 import com.group52.tarecruitment.model.Role;
 import com.group52.tarecruitment.model.User;
 import com.group52.tarecruitment.repository.ApplicationRepository;
 import com.group52.tarecruitment.repository.JobRepository;
+import com.group52.tarecruitment.repository.NotificationRepository;
 import com.group52.tarecruitment.repository.UserRepository;
 import com.group52.tarecruitment.service.AdminService;
 import com.group52.tarecruitment.service.ApplicationService;
 import com.group52.tarecruitment.service.AiMatchingService;
+import com.group52.tarecruitment.service.AiMatchingServiceAdapter;
 import com.group52.tarecruitment.service.AuthService;
 import com.group52.tarecruitment.service.JobService;
+import com.group52.tarecruitment.service.MoApplicantRankingService;
+import com.group52.tarecruitment.service.NotificationService;
 import com.group52.tarecruitment.util.CvValidationUtil;
 import com.group52.tarecruitment.util.FileUtil;
 import com.group52.tarecruitment.util.JobFilterUtil;
@@ -26,6 +32,7 @@ import java.time.LocalDate;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
@@ -47,6 +54,8 @@ public final class RecruitmentSystemTestRunner {
         runCase("Auth register/login success and validation failures", this::testAuthFlows);
         runCase("Job creation/update validation includes deadline and capacity", this::testJobValidationFlows);
         runCase("Application authorization and state transition rules", this::testApplicationAuthorizationAndTransitions);
+        runCase("MO pending application count uses only the MO's pending applications", this::testMoPendingApplicationCount);
+        runCase("MO accept fills job when final position is accepted", this::testMoAcceptFillsJobWhenCapacityReached);
         runCase("Job deletion is blocked when applications exist", this::testDeleteJobGuard);
         runCase("TA notification filtering and unread count", this::testTaNotificationFilteringAndUnreadCount);
         runCase("TA notification status summary and closed-job message", this::testTaNotificationSummaryAndClosedMessage);
@@ -54,10 +63,19 @@ public final class RecruitmentSystemTestRunner {
         runCase("AI matching returns 100 for complete matches", this::testAiMatchingCompleteMatch);
         runCase("AI matching returns partial score with missing skills", this::testAiMatchingPartialMatch);
         runCase("AI matching handles empty and invalid input", this::testAiMatchingEmptyAndInvalidInput);
+        runCase("MO ranking sorts by match score descending", this::testMoRankingSortsByMatchScoreDescending);
+        runCase("MO ranking filters pending applications and minimum score", this::testMoRankingFiltersPendingAndMinimumScore);
+        runCase("MO ranking needs-decision filter includes only reviewable applications", this::testMoRankingNeedsDecisionFilter);
         runCase("AdminService risk level respects TA availableHours, not hardcoded 20h", this::testAdminRiskLevelUsesAvailableHours);
         runCase("AdminService getRecruitmentSnapshot counts filled jobs and overloaded TAs", this::testRecruitmentSnapshot);
         runCase("AdminService searchTAWorkload filters by name and ID", this::testSearchTAWorkload);
         runCase("AdminService getWorkloadTrend returns correct label by job count", this::testWorkloadTrend);
+        runCase("Job lifecycle: closing a job blocks new applications", this::testJobLifecycleCloseBlocksApplication);
+        runCase("Job lifecycle: reopen restores apply, respects deadline and capacity", this::testJobLifecycleReopenAllowsApplication);
+        runCase("Job lifecycle: expired deadline auto-closes the job and rejects applications", this::testJobLifecycleAutoCloseOnDeadline);
+        runCase("Notification persistence survives repository restart", this::testNotificationPersistenceAfterRestart);
+        runCase("Application and job lifecycle events create persistent notifications", this::testApplicationAndJobEventsCreateNotifications);
+        runCase("Admin overload alert notification is persisted and de-duplicated", this::testAdminOverloadAlertNotification);
 
         System.out.println();
         System.out.println("==== TEST SUMMARY ====");
@@ -363,6 +381,126 @@ public final class RecruitmentSystemTestRunner {
         }
     }
 
+    private void testMoPendingApplicationCount() throws Exception {
+        try (TestContext context = new TestContext()) {
+            // Setup
+            User mo = newMo("MO-PENDING-1", "MO Pending", "mo.pending@bupt.cn");
+            User otherMo = newMo("MO-PENDING-2", "Other MO Pending", "other.pending@bupt.cn");
+            User ta1 = newTa("TA-PENDING-1", "Iris Pending", "iris.pending@bupt.cn");
+            User ta2 = newTa("TA-PENDING-2", "Jack Pending", "jack.pending@bupt.cn");
+            User ta3 = newTa("TA-PENDING-3", "Kara Pending", "kara.pending@bupt.cn");
+            context.userRepository.save(mo);
+            context.userRepository.save(otherMo);
+            context.userRepository.save(ta1);
+            context.userRepository.save(ta2);
+            context.userRepository.save(ta3);
+
+            Job moJobOne = context.jobService.createJob(
+                    "CS-MO-101",
+                    "MO Pending One",
+                    "desc",
+                    "Java",
+                    "6",
+                    "2",
+                    LocalDate.now().plusDays(7).toString(),
+                    mo.getId());
+            Job moJobTwo = context.jobService.createJob(
+                    "CS-MO-102",
+                    "MO Pending Two",
+                    "desc",
+                    "Python",
+                    "4",
+                    "1",
+                    LocalDate.now().plusDays(7).toString(),
+                    mo.getId());
+            Job otherMoJob = context.jobService.createJob(
+                    "CS-MO-103",
+                    "Other MO Job",
+                    "desc",
+                    "Java",
+                    "4",
+                    "1",
+                    LocalDate.now().plusDays(7).toString(),
+                    otherMo.getId());
+
+            context.applicationRepository.save(new Application(
+                    "APP-MO-PENDING-1",
+                    moJobOne.getId(),
+                    ta1.getId(),
+                    ApplicationStatus.PENDING,
+                    LocalDate.now().toString()));
+            context.applicationRepository.save(new Application(
+                    "APP-MO-PENDING-2",
+                    moJobTwo.getId(),
+                    ta2.getId(),
+                    ApplicationStatus.PENDING,
+                    LocalDate.now().toString()));
+            context.applicationRepository.save(new Application(
+                    "APP-MO-REJECTED-1",
+                    moJobOne.getId(),
+                    ta3.getId(),
+                    ApplicationStatus.REJECTED,
+                    LocalDate.now().toString()));
+            context.applicationRepository.save(new Application(
+                    "APP-OTHER-MO-PENDING-1",
+                    otherMoJob.getId(),
+                    ta3.getId(),
+                    ApplicationStatus.PENDING,
+                    LocalDate.now().toString()));
+
+            // Action
+            int pendingCount = context.applicationService.getPendingApplicationCountForMo(mo.getId());
+
+            // Expected result
+            assertEquals(2, pendingCount, "MO pending count should include only pending applications for that MO's jobs.");
+
+            context.applicationService.updateApplicationStatus(
+                    "APP-MO-PENDING-2",
+                    mo.getId(),
+                    ApplicationStatus.REJECTED);
+            assertEquals(
+                    1,
+                    context.applicationService.getPendingApplicationCountForMo(mo.getId()),
+                    "Rejecting one application should immediately reduce the MO pending count.");
+        }
+    }
+
+    private void testMoAcceptFillsJobWhenCapacityReached() throws Exception {
+        try (TestContext context = new TestContext()) {
+            // Setup
+            User mo = newMo("MO-FILL-1", "MO Fill", "mo.fill@bupt.cn");
+            User ta = newTa("TA-FILL-1", "Lena Fill", "lena.fill@bupt.cn");
+            context.userRepository.save(mo);
+            context.userRepository.save(ta);
+
+            Job job = context.jobService.createJob(
+                    "CS-FILL-101",
+                    "Capacity Lab",
+                    "desc",
+                    "Java",
+                    "6",
+                    "1",
+                    LocalDate.now().plusDays(7).toString(),
+                    mo.getId());
+            Application application = context.applicationService.applyForJob(job.getId(), ta.getId());
+
+            // Action
+            context.applicationService.updateApplicationStatus(
+                    application.getId(),
+                    mo.getId(),
+                    ApplicationStatus.ACCEPTED);
+
+            // Expected result
+            Job reloadedJob = context.jobRepository.findById(job.getId())
+                    .orElseThrow(() -> new AssertionError("Job should still exist after accepting an applicant."));
+            assertEquals(JobStatus.FILLED, reloadedJob.getStatus(), "Job should become FILLED when capacity is reached.");
+            assertEquals(
+                    0,
+                    context.applicationService.getPendingApplicationCountForMo(mo.getId()),
+                    "Pending count should refresh to zero after the only pending application is accepted.");
+        }
+    }
+
     private void testTaNotificationFilteringAndUnreadCount() {
         Job openJob = new Job(
                 "JOB-NOTIFY-1",
@@ -549,6 +687,176 @@ public final class RecruitmentSystemTestRunner {
                 "Match score must be between 0 and 100.",
                 () -> new AiMatchingService.MatchResult(120, List.of("java"), List.of(), "invalid"),
                 "Out-of-range score should be rejected.");
+    }
+
+    private void testMoRankingSortsByMatchScoreDescending() throws Exception {
+        try (TestContext context = new TestContext()) {
+            Job targetJob = new Job(
+                    "JOB-RANK-1",
+                    "ECS7001",
+                    "Software Engineering",
+                    "Support labs",
+                    "Java;Python;SQL",
+                    4,
+                    2,
+                    LocalDate.now().plusDays(30).toString(),
+                    "MO-RANK",
+                    JobStatus.OPEN);
+            Job workloadJob = new Job(
+                    "JOB-WORKLOAD-1",
+                    "ECS7002",
+                    "Databases",
+                    "Support tutorials",
+                    "SQL",
+                    6,
+                    1,
+                    LocalDate.now().plusDays(30).toString(),
+                    "MO-RANK",
+                    JobStatus.OPEN);
+            context.jobRepository.save(targetJob);
+            context.jobRepository.save(workloadJob);
+
+            User high = newTa("TA-RANK-HIGH", "High Match", "high.rank@bupt.cn");
+            high.setSkills("Java;Python;SQL");
+            User mid = newTa("TA-RANK-MID", "Mid Match", "mid.rank@bupt.cn");
+            mid.setSkills("Java;Python");
+            User low = newTa("TA-RANK-LOW", "Low Match", "low.rank@bupt.cn");
+            low.setSkills("Java");
+            context.userRepository.save(high);
+            context.userRepository.save(mid);
+            context.userRepository.save(low);
+
+            context.applicationRepository.save(new Application("APP-RANK-HIGH", targetJob.getId(), high.getId(), ApplicationStatus.PENDING, "2026-05-01"));
+            context.applicationRepository.save(new Application("APP-RANK-MID", targetJob.getId(), mid.getId(), ApplicationStatus.PENDING, "2026-05-01"));
+            context.applicationRepository.save(new Application("APP-RANK-LOW", targetJob.getId(), low.getId(), ApplicationStatus.PENDING, "2026-05-01"));
+            context.applicationRepository.save(new Application("APP-RANK-WORKLOAD", workloadJob.getId(), high.getId(), ApplicationStatus.ACCEPTED, "2026-04-01"));
+
+            MoApplicantRankingService rankingService = new MoApplicantRankingService(
+                    context.applicationService, new AiMatchingServiceAdapter(new AiMatchingService()));
+            List<MoApplicantRankingService.RankedApplicant> ranked = rankingService.rankApplicants(
+                    targetJob,
+                    context.applicationRepository.findByJobId(targetJob.getId()),
+                    Map.of(high.getId(), high, mid.getId(), mid, low.getId(), low),
+                    new MoApplicantRankingService.RankingOptions(
+                            true, 0, MoApplicantRankingService.SortMode.MATCH_SCORE_DESC));
+
+            assertEquals(3, ranked.size(), "All pending applicants should be included.");
+            assertEquals("TA-RANK-HIGH", ranked.get(0).getApplicantId(), "Highest match should be first.");
+            assertEquals("TA-RANK-MID", ranked.get(1).getApplicantId(), "Second-highest match should be second.");
+            assertEquals("TA-RANK-LOW", ranked.get(2).getApplicantId(), "Lowest match should be last.");
+            assertEquals(6, ranked.get(0).getCurrentWorkload(), "Current workload should be calculated from accepted applications.");
+        }
+    }
+
+    private void testMoRankingFiltersPendingAndMinimumScore() throws Exception {
+        try (TestContext context = new TestContext()) {
+            Job targetJob = new Job(
+                    "JOB-RANK-2",
+                    "ECS7003",
+                    "AI Methods",
+                    "Support labs",
+                    "Java;Python;SQL",
+                    4,
+                    2,
+                    LocalDate.now().plusDays(30).toString(),
+                    "MO-RANK",
+                    JobStatus.OPEN);
+            context.jobRepository.save(targetJob);
+
+            User pendingPass = newTa("TA-FILTER-PASS", "Pending Pass", "pass.filter@bupt.cn");
+            pendingPass.setSkills("Java;Python");
+            User pendingLow = newTa("TA-FILTER-LOW", "Pending Low", "low.filter@bupt.cn");
+            pendingLow.setSkills("Java");
+            User acceptedHigh = newTa("TA-FILTER-ACCEPTED", "Accepted High", "accepted.filter@bupt.cn");
+            acceptedHigh.setSkills("Java;Python;SQL");
+            context.userRepository.save(pendingPass);
+            context.userRepository.save(pendingLow);
+            context.userRepository.save(acceptedHigh);
+
+            context.applicationRepository.save(new Application("APP-FILTER-PASS", targetJob.getId(), pendingPass.getId(), ApplicationStatus.PENDING, "2026-05-01"));
+            context.applicationRepository.save(new Application("APP-FILTER-LOW", targetJob.getId(), pendingLow.getId(), ApplicationStatus.PENDING, "2026-05-01"));
+            context.applicationRepository.save(new Application("APP-FILTER-ACCEPTED", targetJob.getId(), acceptedHigh.getId(), ApplicationStatus.ACCEPTED, "2026-05-01"));
+
+            MoApplicantRankingService rankingService = new MoApplicantRankingService(
+                    context.applicationService, new AiMatchingServiceAdapter(new AiMatchingService()));
+            List<MoApplicantRankingService.RankedApplicant> ranked = rankingService.rankApplicants(
+                    targetJob,
+                    context.applicationRepository.findByJobId(targetJob.getId()),
+                    Map.of(pendingPass.getId(), pendingPass, pendingLow.getId(), pendingLow, acceptedHigh.getId(), acceptedHigh),
+                    new MoApplicantRankingService.RankingOptions(
+                            true, 60, MoApplicantRankingService.SortMode.MATCH_SCORE_DESC));
+
+            assertEquals(1, ranked.size(), "Only pending applicants at or above the threshold should remain.");
+            assertEquals("TA-FILTER-PASS", ranked.get(0).getApplicantId(), "Pending applicant above threshold should remain.");
+            assertEquals(67, ranked.get(0).getMatchScore(), "Two of three required skills should score 67.");
+        }
+    }
+
+    private void testMoRankingNeedsDecisionFilter() throws Exception {
+        try (TestContext context = new TestContext()) {
+            Job targetJob = new Job(
+                    "JOB-RANK-3",
+                    "ECS7004",
+                    "Review Queue",
+                    "Support labs",
+                    "Java",
+                    4,
+                    3,
+                    LocalDate.now().plusDays(30).toString(),
+                    "MO-RANK",
+                    JobStatus.OPEN);
+            context.jobRepository.save(targetJob);
+
+            User applied = newTa("TA-NEEDS-APPLIED", "Applied Needs", "applied.needs@bupt.cn");
+            User reviewing = newTa("TA-NEEDS-REVIEWING", "Reviewing Needs", "reviewing.needs@bupt.cn");
+            User pending = newTa("TA-NEEDS-PENDING", "Pending Needs", "pending.needs@bupt.cn");
+            User accepted = newTa("TA-NEEDS-ACCEPTED", "Accepted Done", "accepted.needs@bupt.cn");
+            User rejected = newTa("TA-NEEDS-REJECTED", "Rejected Done", "rejected.needs@bupt.cn");
+            context.userRepository.save(applied);
+            context.userRepository.save(reviewing);
+            context.userRepository.save(pending);
+            context.userRepository.save(accepted);
+            context.userRepository.save(rejected);
+
+            context.applicationRepository.save(new Application(
+                    "APP-NEEDS-APPLIED", targetJob.getId(), applied.getId(), ApplicationStatus.APPLIED, "2026-05-01"));
+            context.applicationRepository.save(new Application(
+                    "APP-NEEDS-REVIEWING", targetJob.getId(), reviewing.getId(), ApplicationStatus.REVIEWING, "2026-05-01"));
+            context.applicationRepository.save(new Application(
+                    "APP-NEEDS-PENDING", targetJob.getId(), pending.getId(), ApplicationStatus.PENDING, "2026-05-01"));
+            context.applicationRepository.save(new Application(
+                    "APP-NEEDS-ACCEPTED", targetJob.getId(), accepted.getId(), ApplicationStatus.ACCEPTED, "2026-05-01"));
+            context.applicationRepository.save(new Application(
+                    "APP-NEEDS-REJECTED", targetJob.getId(), rejected.getId(), ApplicationStatus.REJECTED, "2026-05-01"));
+
+            MoApplicantRankingService rankingService = new MoApplicantRankingService(
+                    context.applicationService, new AiMatchingServiceAdapter(new AiMatchingService()));
+            List<MoApplicantRankingService.RankedApplicant> ranked = rankingService.rankApplicants(
+                    targetJob,
+                    context.applicationRepository.findByJobId(targetJob.getId()),
+                    Map.of(
+                            applied.getId(), applied,
+                            reviewing.getId(), reviewing,
+                            pending.getId(), pending,
+                            accepted.getId(), accepted,
+                            rejected.getId(), rejected),
+                    new MoApplicantRankingService.RankingOptions(
+                            false,
+                            true,
+                            0,
+                            MoApplicantRankingService.SortMode.MATCH_SCORE_DESC));
+
+            Set<ApplicationStatus> statuses = new HashSet<>();
+            for (MoApplicantRankingService.RankedApplicant applicant : ranked) {
+                statuses.add(applicant.getStatus());
+            }
+            assertEquals(3, ranked.size(), "Needs-decision filter should keep APPLIED, REVIEWING, and PENDING only.");
+            assertTrue(statuses.contains(ApplicationStatus.APPLIED), "APPLIED applications should need a decision.");
+            assertTrue(statuses.contains(ApplicationStatus.REVIEWING), "REVIEWING applications should need a decision.");
+            assertTrue(statuses.contains(ApplicationStatus.PENDING), "PENDING applications should need a decision.");
+            assertFalse(statuses.contains(ApplicationStatus.ACCEPTED), "ACCEPTED applications should not need a decision.");
+            assertFalse(statuses.contains(ApplicationStatus.REJECTED), "REJECTED applications should not need a decision.");
+        }
     }
 
     private void runCase(String caseName, ThrowingRunnable testCase) throws Exception {
@@ -763,6 +1071,296 @@ public final class RecruitmentSystemTestRunner {
         }
     }
 
+    private void testJobLifecycleCloseBlocksApplication() throws Exception {
+        try (TestContext context = new TestContext()) {
+            User mo = newMo("MO-LC-1", "MO Lifecycle One", "mo.lc1@bupt.cn");
+            User ta = newTa("TA-LC-1", "TA Lifecycle One", "ta.lc1@bupt.cn");
+            context.userRepository.save(mo);
+            context.userRepository.save(ta);
+
+            Job job = context.jobService.createJob(
+                    "CS-LC-101",
+                    "Lifecycle Lab",
+                    "desc",
+                    "Java",
+                    "6",
+                    "1",
+                    LocalDate.now().plusDays(7).toString(),
+                    mo.getId());
+            assertEquals(JobStatus.OPEN, job.getStatus(), "Newly created job should be OPEN.");
+
+            Job closed = context.jobService.closeJob(job.getId(), mo.getId());
+            assertEquals(JobStatus.CLOSED, closed.getStatus(), "closeJob should move OPEN job to CLOSED.");
+            assertEquals(
+                    JobStatus.CLOSED,
+                    context.jobRepository.findById(job.getId()).orElseThrow().getStatus(),
+                    "CLOSED status must be persisted.");
+
+            assertThrowsContains(
+                    "closed and no longer accepts applications",
+                    () -> context.applicationService.applyForJob(job.getId(), ta.getId()),
+                    "TA must not be able to apply after the job is closed.");
+
+            assertThrowsContains(
+                    "already closed",
+                    () -> context.jobService.closeJob(job.getId(), mo.getId()),
+                    "Closing an already-closed job must be rejected.");
+
+            User otherMo = newMo("MO-LC-OTHER", "Other MO", "mo.other@bupt.cn");
+            context.userRepository.save(otherMo);
+            assertThrowsContains(
+                    "You can only edit jobs that you posted",
+                    () -> context.jobService.closeJob(job.getId(), otherMo.getId()),
+                    "Other MOs must not be able to close a job they did not post.");
+        }
+    }
+
+    private void testJobLifecycleReopenAllowsApplication() throws Exception {
+        try (TestContext context = new TestContext()) {
+            User mo = newMo("MO-LC-2", "MO Lifecycle Two", "mo.lc2@bupt.cn");
+            User ta = newTa("TA-LC-2", "TA Lifecycle Two", "ta.lc2@bupt.cn");
+            context.userRepository.save(mo);
+            context.userRepository.save(ta);
+
+            Job job = context.jobService.createJob(
+                    "CS-LC-201",
+                    "Reopen Lab",
+                    "desc",
+                    "Java",
+                    "6",
+                    "1",
+                    LocalDate.now().plusDays(10).toString(),
+                    mo.getId());
+            context.jobService.closeJob(job.getId(), mo.getId());
+
+            Job reopened = context.jobService.reopenJob(job.getId(), mo.getId());
+            assertEquals(JobStatus.OPEN, reopened.getStatus(), "reopenJob should restore status to OPEN.");
+
+            Application application = context.applicationService.applyForJob(job.getId(), ta.getId());
+            assertEquals(
+                    ApplicationStatus.PENDING,
+                    application.getStatus(),
+                    "TA should be able to apply once the job is reopened.");
+
+            assertThrowsContains(
+                    "already open",
+                    () -> context.jobService.reopenJob(job.getId(), mo.getId()),
+                    "Reopening an already-open job must be rejected.");
+
+            // Reopening must respect deadline; rewrite the row with an expired deadline and try again.
+            Job expired = context.jobRepository.findById(job.getId()).orElseThrow();
+            expired.setStatus(JobStatus.CLOSED);
+            expired.setDeadline(LocalDate.now().minusDays(1).toString());
+            context.jobRepository.save(expired);
+            assertThrowsContains(
+                    "deadline has passed",
+                    () -> context.jobService.reopenJob(job.getId(), mo.getId()),
+                    "Reopening past-deadline jobs must be rejected.");
+
+            // Reopening a job whose offers fill all positions should be rejected too.
+            Job filledJob = context.jobService.createJob(
+                    "CS-LC-202",
+                    "Filled Lab",
+                    "desc",
+                    "Java",
+                    "6",
+                    "1",
+                    LocalDate.now().plusDays(12).toString(),
+                    mo.getId());
+            context.applicationRepository.save(new Application(
+                    "APP-LC-FILL",
+                    filledJob.getId(),
+                    ta.getId(),
+                    ApplicationStatus.ACCEPTED,
+                    LocalDate.now().toString()));
+            Job persistedFilled = context.jobRepository.findById(filledJob.getId()).orElseThrow();
+            persistedFilled.setStatus(JobStatus.CLOSED);
+            context.jobRepository.save(persistedFilled);
+            assertThrowsContains(
+                    "filled",
+                    () -> context.jobService.reopenJob(filledJob.getId(), mo.getId()),
+                    "Reopening a fully-filled job must be rejected.");
+        }
+    }
+
+    private void testJobLifecycleAutoCloseOnDeadline() throws Exception {
+        try (TestContext context = new TestContext()) {
+            User mo = newMo("MO-LC-3", "MO Lifecycle Three", "mo.lc3@bupt.cn");
+            User ta = newTa("TA-LC-3", "TA Lifecycle Three", "ta.lc3@bupt.cn");
+            context.userRepository.save(mo);
+            context.userRepository.save(ta);
+
+            // Jobs created via the service must have a future deadline, so we plant the expired row directly.
+            Job expired = new Job(
+                    "JOB-LC-EXPIRED",
+                    "CS-LC-301",
+                    "Expired Lab",
+                    "desc",
+                    "Java",
+                    6,
+                    1,
+                    LocalDate.now().minusDays(2).toString(),
+                    mo.getId(),
+                    JobStatus.OPEN);
+            Job futureOpen = new Job(
+                    "JOB-LC-FUTURE",
+                    "CS-LC-302",
+                    "Future Lab",
+                    "desc",
+                    "Java",
+                    6,
+                    1,
+                    LocalDate.now().plusDays(5).toString(),
+                    mo.getId(),
+                    JobStatus.OPEN);
+            context.jobRepository.save(expired);
+            context.jobRepository.save(futureOpen);
+
+            List<Job> swept = context.jobService.autoCloseExpiredJobs();
+            assertEquals(1, swept.size(), "Only the expired job should be swept.");
+            assertEquals(
+                    JobStatus.CLOSED,
+                    context.jobRepository.findById(expired.getId()).orElseThrow().getStatus(),
+                    "Expired job must be persisted as CLOSED.");
+            assertEquals(
+                    JobStatus.OPEN,
+                    context.jobRepository.findById(futureOpen.getId()).orElseThrow().getStatus(),
+                    "Future-deadline jobs must remain OPEN.");
+
+            // Sweeping again should be a no-op.
+            assertEquals(0, context.jobService.autoCloseExpiredJobs().size(), "Second sweep should find nothing.");
+
+            // End-to-end: an expired OPEN job must self-heal to CLOSED when a TA tries to apply.
+            Job stale = new Job(
+                    "JOB-LC-STALE",
+                    "CS-LC-303",
+                    "Stale Lab",
+                    "desc",
+                    "Java",
+                    6,
+                    1,
+                    LocalDate.now().minusDays(1).toString(),
+                    mo.getId(),
+                    JobStatus.OPEN);
+            context.jobRepository.save(stale);
+            assertThrowsContains(
+                    "passed its deadline",
+                    () -> context.applicationService.applyForJob(stale.getId(), ta.getId()),
+                    "Applying to an expired job should be rejected.");
+            assertEquals(
+                    JobStatus.CLOSED,
+                    context.jobRepository.findById(stale.getId()).orElseThrow().getStatus(),
+                    "Apply-time validation should self-heal stale OPEN jobs to CLOSED.");
+        }
+    }
+
+    private void testNotificationPersistenceAfterRestart() throws Exception {
+        try (TestContext context = new TestContext()) {
+            context.notificationService.publish(
+                    Role.TA,
+                    NotificationType.APPLY,
+                    "TA-NTF-01",
+                    "Application submitted.",
+                    "APP-NTF-01");
+            context.notificationService.publish(
+                    Role.TA,
+                    NotificationType.ACCEPT,
+                    "TA-NTF-01",
+                    "Application accepted.",
+                    "APP-NTF-01");
+
+            NotificationRepository restartedRepository = new NotificationRepository(context.notificationsFilePath);
+            NotificationService restartedService = new NotificationService(restartedRepository);
+            List<Notification> restored = restartedService.getNotificationsForUser("TA-NTF-01");
+            assertEquals(2, restored.size(), "Notifications should still exist after restarting repository.");
+
+            boolean hasApply = restored.stream().anyMatch(n -> n.getType() == NotificationType.APPLY);
+            boolean hasAccept = restored.stream().anyMatch(n -> n.getType() == NotificationType.ACCEPT);
+            assertTrue(hasApply, "Restored notifications should include APPLY.");
+            assertTrue(hasAccept, "Restored notifications should include ACCEPT.");
+        }
+    }
+
+    private void testApplicationAndJobEventsCreateNotifications() throws Exception {
+        try (TestContext context = new TestContext()) {
+            User mo = newMo("MO-NTF-01", "MO NTF", "mo.ntf@bupt.cn");
+            User ta = newTa("TA-NTF-02", "TA NTF", "ta.ntf@bupt.cn");
+            context.userRepository.save(mo);
+            context.userRepository.save(ta);
+
+            Job job = context.jobService.createJob(
+                    "CS-NTF-101",
+                    "Notification Integration Lab",
+                    "desc",
+                    "Java",
+                    "6",
+                    "2",
+                    LocalDate.now().plusDays(8).toString(),
+                    mo.getId());
+
+            Application application = context.applicationService.applyForJob(job.getId(), ta.getId());
+            context.applicationService.updateApplicationStatus(application.getId(), mo.getId(), ApplicationStatus.ACCEPTED);
+            context.jobService.closeJob(job.getId(), mo.getId());
+            context.jobService.reopenJob(job.getId(), mo.getId());
+
+            List<Notification> notifications = context.notificationService.getNotificationsForUser(ta.getId());
+            Set<NotificationType> types = new HashSet<>();
+            for (Notification notification : notifications) {
+                types.add(notification.getType());
+            }
+
+            assertTrue(types.contains(NotificationType.APPLY), "TA should receive APPLY notification.");
+            assertTrue(types.contains(NotificationType.ACCEPT), "TA should receive ACCEPT notification.");
+            assertTrue(types.contains(NotificationType.JOB_CLOSE), "TA should receive JOB_CLOSE notification.");
+            assertTrue(types.contains(NotificationType.JOB_REOPEN), "TA should receive JOB_REOPEN notification.");
+        }
+    }
+
+    private void testAdminOverloadAlertNotification() throws Exception {
+        try (TestContext context = new TestContext()) {
+            User mo = newMo("MO-NTF-02", "MO Alert", "mo.alert@bupt.cn");
+            User ta = new User(
+                    "TA-NTF-03",
+                    Role.TA,
+                    "TA Alert",
+                    "ta.alert@bupt.cn",
+                    "password1",
+                    "Computer Science",
+                    2,
+                    "Java",
+                    4,
+                    true,
+                    "");
+            context.userRepository.save(mo);
+            context.userRepository.save(ta);
+
+            Job heavyJob = context.jobService.createJob(
+                    "CS-NTF-201",
+                    "Heavy Lab",
+                    "desc",
+                    "Java",
+                    "6",
+                    "1",
+                    LocalDate.now().plusDays(10).toString(),
+                    mo.getId());
+            Application application = context.applicationService.applyForJob(heavyJob.getId(), ta.getId());
+            context.applicationService.updateApplicationStatus(application.getId(), mo.getId(), ApplicationStatus.ACCEPTED);
+
+            int createdOnce = context.adminService.publishOverloadAlerts();
+            int createdTwice = context.adminService.publishOverloadAlerts();
+            assertEquals(1, createdOnce, "First overload publish should create exactly one alert.");
+            assertEquals(0, createdTwice, "Second overload publish should be de-duplicated.");
+
+            NotificationRepository restartedRepository = new NotificationRepository(context.notificationsFilePath);
+            NotificationService restartedService = new NotificationService(restartedRepository);
+            List<Notification> persisted = restartedService.getNotificationsForUser(ta.getId());
+            long overloadCount = persisted.stream()
+                    .filter(notification -> notification.getType() == NotificationType.OVERLOAD_ALERT)
+                    .count();
+            assertEquals(1L, overloadCount, "Overload alert should persist and remain unique after restart.");
+        }
+    }
+
     private interface ThrowingRunnable {
         void run() throws Exception;
     }
@@ -834,10 +1432,13 @@ public final class RecruitmentSystemTestRunner {
         private final Path usersFilePath;
         private final Path jobsFilePath;
         private final Path applicationsFilePath;
+        private final Path notificationsFilePath;
         private final UserRepository userRepository;
         private final JobRepository jobRepository;
         private final ApplicationRepository applicationRepository;
+        private final NotificationRepository notificationRepository;
         private final AuthService authService;
+        private final NotificationService notificationService;
         private final JobService jobService;
         private final ApplicationService applicationService;
         private final AdminService adminService;
@@ -847,14 +1448,17 @@ public final class RecruitmentSystemTestRunner {
             this.usersFilePath = tempDirectory.resolve("users.csv");
             this.jobsFilePath = tempDirectory.resolve("jobs.csv");
             this.applicationsFilePath = tempDirectory.resolve("applications.csv");
+            this.notificationsFilePath = tempDirectory.resolve("notifications.csv");
 
             this.userRepository = new UserRepository(usersFilePath);
             this.jobRepository = new JobRepository(jobsFilePath);
             this.applicationRepository = new ApplicationRepository(applicationsFilePath);
+            this.notificationRepository = new NotificationRepository(notificationsFilePath);
             this.authService = new AuthService(userRepository);
-            this.jobService = new JobService(jobRepository, applicationRepository);
-            this.applicationService = new ApplicationService(applicationRepository, jobRepository);
-            this.adminService = new AdminService(userRepository, jobRepository, applicationRepository);
+            this.notificationService = new NotificationService(notificationRepository);
+            this.jobService = new JobService(jobRepository, applicationRepository, notificationService);
+            this.applicationService = new ApplicationService(applicationRepository, jobRepository, null, notificationService);
+            this.adminService = new AdminService(userRepository, jobRepository, applicationRepository, notificationService);
         }
 
         @Override

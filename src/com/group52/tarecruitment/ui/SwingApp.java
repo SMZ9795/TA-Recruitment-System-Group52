@@ -4,13 +4,18 @@ import com.group52.tarecruitment.model.Application;
 import com.group52.tarecruitment.model.ApplicationStatus;
 import com.group52.tarecruitment.model.Job;
 import com.group52.tarecruitment.model.JobStatus;
+import com.group52.tarecruitment.model.Notification;
 import com.group52.tarecruitment.model.Role;
 import com.group52.tarecruitment.model.User;
 import com.group52.tarecruitment.service.AdminService;
 import com.group52.tarecruitment.service.ApplicationService;
+import com.group52.tarecruitment.service.WorkloadBalancerService;
 import com.group52.tarecruitment.service.AiMatchingService;
+import com.group52.tarecruitment.service.AiMatchingServiceAdapter;
 import com.group52.tarecruitment.service.AuthService;
 import com.group52.tarecruitment.service.JobService;
+import com.group52.tarecruitment.service.MoApplicantRankingService;
+import com.group52.tarecruitment.service.NotificationService;
 import com.group52.tarecruitment.util.CvValidationUtil;
 import com.group52.tarecruitment.util.JobFilterUtil;
 import com.group52.tarecruitment.util.TaNotificationUtil;
@@ -41,13 +46,16 @@ import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
 import javax.swing.JButton;
+import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
 import javax.swing.JFileChooser;
@@ -57,19 +65,18 @@ import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JPasswordField;
 import javax.swing.JScrollPane;
+import javax.swing.JSpinner;
 import javax.swing.JTable;
 import javax.swing.JTextArea;
 import javax.swing.JTextField;
 import javax.swing.SwingUtilities;
-import javax.swing.RowSorter;
-import javax.swing.SortOrder;
 import javax.swing.ImageIcon;
+import javax.swing.SpinnerNumberModel;
 import javax.swing.JToggleButton;
 import javax.swing.SwingConstants;
 import javax.swing.filechooser.FileNameExtensionFilter;
 import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.table.DefaultTableModel;
-import javax.swing.table.TableRowSorter;
 
 public class SwingApp {
     private static final String PAGE_LOGIN = "login";
@@ -78,6 +85,7 @@ public class SwingApp {
     private static final String PAGE_MO = "mo";
     private static final String PAGE_ADMIN = "admin";
     private static final String BRAND_TAGLINE = "BUPT x QMUL TA Recruitment";
+    private static final int DEFAULT_MO_MATCH_THRESHOLD = MoApplicantRankingService.DEFAULT_MINIMUM_MATCH_SCORE;
     private static final Color QMUL_PURPLE = new Color(75, 46, 131);
     private static final Color QMUL_PURPLE_DARK = new Color(58, 31, 107);
     private static final Color QMUL_PURPLE_LIGHT = new Color(123, 92, 240);
@@ -121,7 +129,9 @@ public class SwingApp {
     private final JobService jobService;
     private final ApplicationService applicationService;
     private final AiMatchingService aiMatchingService;
+    private final MoApplicantRankingService moApplicantRankingService;
     private final AdminService adminService;
+    private final NotificationService notificationService;
     private final Path dataDirectory;
 
     private JFrame frame;
@@ -134,23 +144,32 @@ public class SwingApp {
     private TaPanel taPanel;
     private MoPanel moPanel;
     private AdminPanel adminPanel;
+    private JTextArea recommendationArea;
 
     public SwingApp(AuthService authService, JobService jobService, ApplicationService applicationService) {
-        this(authService, jobService, applicationService, null, null);
+        this(authService, jobService, applicationService, null, null, null);
     }
 
     public SwingApp(AuthService authService, JobService jobService, ApplicationService applicationService, Path dataDirectory) {
-        this(authService, jobService, applicationService, dataDirectory, null);
+        this(authService, jobService, applicationService, dataDirectory, null, null);
     }
 
     public SwingApp(AuthService authService, JobService jobService, ApplicationService applicationService,
                     Path dataDirectory, AdminService adminService) {
+        this(authService, jobService, applicationService, dataDirectory, adminService, null);
+    }
+
+    public SwingApp(AuthService authService, JobService jobService, ApplicationService applicationService,
+                    Path dataDirectory, AdminService adminService, NotificationService notificationService) {
         this.authService = authService;
         this.jobService = jobService;
         this.applicationService = applicationService;
         this.aiMatchingService = new AiMatchingService();
+        this.moApplicantRankingService = new MoApplicantRankingService(
+                applicationService, new AiMatchingServiceAdapter(this.aiMatchingService));
         this.dataDirectory = dataDirectory;
         this.adminService = adminService;
+        this.notificationService = notificationService;
     }
 
     public void start() {
@@ -493,16 +512,6 @@ public class SwingApp {
         return findUserById(job.getPostedByMoId()).map(User::getName).orElse("Unknown MO");
     }
 
-    private int acceptedHoursForTa(String taUserId) {
-        int total = 0;
-        for (Application application : applicationService.getApplicationsByTaUserId(taUserId)) {
-            if (application.getStatus() == ApplicationStatus.ACCEPTED) {
-                total += findJobById(application.getJobId()).map(Job::getHoursPerWeek).orElse(0);
-            }
-        }
-        return total;
-    }
-
     private int acceptedApplicantsForJob(String jobId) {
         int count = 0;
         for (Application application : applicationService.getApplicationsByJobId(jobId)) {
@@ -674,6 +683,40 @@ public class SwingApp {
                 if (!isSelected) {
                     setForeground(fg);
                     setBackground(bg);
+                }
+                return this;
+            }
+        });
+    }
+
+    private void applyIntegerSuffixRenderer(JTable table, int columnIndex, String suffix) {
+        table.getColumnModel().getColumn(columnIndex).setCellRenderer(new DefaultTableCellRenderer() {
+            @Override
+            public java.awt.Component getTableCellRendererComponent(
+                    JTable table, Object value, boolean isSelected, boolean hasFocus, int row, int column) {
+                super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
+                setHorizontalAlignment(CENTER);
+                setText(value == null ? "" : value + suffix);
+                return this;
+            }
+        });
+    }
+
+    private void applyRecommendationRenderer(JTable table, int columnIndex) {
+        table.getColumnModel().getColumn(columnIndex).setCellRenderer(new DefaultTableCellRenderer() {
+            @Override
+            public java.awt.Component getTableCellRendererComponent(
+                    JTable table, Object value, boolean isSelected, boolean hasFocus, int row, int column) {
+                super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
+                String recommendation = value == null ? "" : String.valueOf(value).trim();
+                setHorizontalAlignment(CENTER);
+                setFont(new Font("Segoe UI", Font.BOLD, 12));
+                if (!isSelected) {
+                    if ("Recommended".equalsIgnoreCase(recommendation)) {
+                        setForeground(new Color(31, 122, 78));
+                    } else {
+                        setForeground(new Color(183, 77, 77));
+                    }
                 }
                 return this;
             }
@@ -1028,13 +1071,15 @@ public class SwingApp {
                 roleCombo.setSelectedItem(loginUser.getRole());
                 statusLabel.setText("Login success.");
                 onLoginSuccess(loginUser);
+            } catch (IllegalArgumentException ex) {
+                String msg = (ex.getMessage() != null && !ex.getMessage().isBlank())
+                        ? ex.getMessage() : "Invalid credentials. Please try again.";
+                JOptionPane.showMessageDialog(frame, msg, "Login Failed", JOptionPane.WARNING_MESSAGE);
+                statusLabel.setText("Login failed.");
             } catch (RuntimeException ex) {
                 ex.printStackTrace();
-                String detail = ex.getClass().getSimpleName();
-                if (ex.getMessage() != null && !ex.getMessage().isBlank()) {
-                    detail += ": " + ex.getMessage();
-                }
-                JOptionPane.showMessageDialog(frame, "Login error: " + detail);
+                JOptionPane.showMessageDialog(frame, "An unexpected error occurred. Please try again.",
+                        "Login Error", JOptionPane.ERROR_MESSAGE);
                 statusLabel.setText("Login error.");
             }
         }
@@ -1811,7 +1856,9 @@ public class SwingApp {
         private void refreshNotifications() {
             notificationModel.setRowCount(0);
             List<NotificationEntry> notifications = buildTaNotifications();
-            int unreadCount = TaNotificationUtil.countUnread(notifications, readNotificationIds);
+            int unreadCount = notificationService == null
+                    ? TaNotificationUtil.countUnread(notifications, readNotificationIds)
+                    : notificationService.countUnreadForUser(user.getId());
             unreadCountLabel.setText("Unread: " + unreadCount);
             updateDashboardNotificationSummary(notifications, unreadCount);
 
@@ -1831,6 +1878,22 @@ public class SwingApp {
         }
 
         private List<NotificationEntry> buildTaNotifications() {
+            if (notificationService != null) {
+                List<Notification> persisted = notificationService.getNotificationsForUser(user.getId());
+                readNotificationIds.clear();
+                List<NotificationEntry> entries = new ArrayList<>();
+                for (Notification notification : persisted) {
+                    if (notification.isReadStatus()) {
+                        readNotificationIds.add(notification.getId());
+                    }
+                    entries.add(new NotificationEntry(
+                            notification.getId(),
+                            notificationTypeLabel(notification),
+                            safeText(notification.getMessage()),
+                            safeText(notification.getCreatedAt())));
+                }
+                return entries;
+            }
             return TaNotificationUtil.buildNotifications(
                     applicationService.getApplicationsByTaUserId(user.getId()),
                     jobService.getAllJobs());
@@ -1853,12 +1916,36 @@ public class SwingApp {
                 return;
             }
             String notificationId = String.valueOf(notificationModel.getValueAt(selected, 0));
-            if (read) {
-                readNotificationIds.add(notificationId);
+            if (notificationService != null) {
+                try {
+                    notificationService.setReadStatus(notificationId, read);
+                } catch (IllegalArgumentException ex) {
+                    JOptionPane.showMessageDialog(frame, ex.getMessage());
+                    return;
+                }
             } else {
-                readNotificationIds.remove(notificationId);
+                if (read) {
+                    readNotificationIds.add(notificationId);
+                } else {
+                    readNotificationIds.remove(notificationId);
+                }
             }
             refreshNotifications();
+        }
+
+        private String notificationTypeLabel(Notification notification) {
+            if (notification == null || notification.getType() == null) {
+                return "Notification";
+            }
+            return switch (notification.getType()) {
+                case APPLY -> "Application Submitted";
+                case WITHDRAW -> "Application Withdrawn";
+                case ACCEPT -> "Application Accepted";
+                case REJECT -> "Application Rejected";
+                case JOB_CLOSE -> "Job Closed";
+                case JOB_REOPEN -> "Job Reopened";
+                case OVERLOAD_ALERT -> "Overload Alert";
+            };
         }
 
         private void refreshJobs() {
@@ -2133,12 +2220,19 @@ public class SwingApp {
         private final DefaultTableModel applicantsModel;
         private final JTable applicantsTable;
         private final JLabel applicantsTitle;
+        private final JLabel moNotificationSummaryLabel;
+        private final JTextArea moNotificationArea;
+        private JCheckBox pendingOnlyCheckBox;
+        private JCheckBox needsDecisionCheckBox;
+        private final JSpinner matchThresholdSpinner;
+        private final Map<String, MoApplicantRankingService.RankedApplicant> rankedApplicantsByApplicationId;
         private final JTextField profileNameField;
         private final JTextField profileProgrammeField;
         private final JTextField profileEmailField;
         private final JTextField profileHoursField;
         private User user;
         private String selectedJobId;
+        private MoApplicantRankingService.SortMode applicantSortMode;
 
         private MoPanel() {
             setLayout(new BorderLayout());
@@ -2166,6 +2260,8 @@ public class SwingApp {
                 }
             };
             add(buildNavigationPanel(navLabels, navActions), BorderLayout.WEST);
+            applicantSortMode = MoApplicantRankingService.SortMode.MATCH_SCORE_DESC;
+            rankedApplicantsByApplicationId = new LinkedHashMap<>();
 
             jobsModel = new DefaultTableModel(
                     new Object[] {"Job ID", "Module", "Positions", "Filled", "Status", "Deadline"}, 0) {
@@ -2180,11 +2276,50 @@ public class SwingApp {
             installTableRowHover(jobsTable);
             JPanel dashboardPanel = new JPanel(new BorderLayout(0, 16));
             dashboardPanel.setOpaque(false);
+            JPanel dashboardTopStack = new JPanel();
+            dashboardTopStack.setOpaque(false);
+            dashboardTopStack.setLayout(new BoxLayout(dashboardTopStack, BoxLayout.Y_AXIS));
+
+            JPanel moNotificationPanel = new JPanel(new BorderLayout(0, 10));
+            moNotificationPanel.setOpaque(false);
+            JPanel moNotificationHeader = new JPanel(new BorderLayout());
+            moNotificationHeader.setOpaque(false);
+            moNotificationHeader.add(createSectionTitle(
+                    "MO Notifications",
+                    "New applications, pending decisions, and filled jobs for your posted jobs."), BorderLayout.WEST);
+            JPanel moNotificationActions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0));
+            moNotificationActions.setOpaque(false);
+            moNotificationSummaryLabel = new JLabel("Pending applications: 0 | Filled jobs: 0");
+            moNotificationSummaryLabel.setFont(new Font("Segoe UI", Font.BOLD, 13));
+            moNotificationSummaryLabel.setForeground(MUTED_TEXT_COLOR);
+            JButton refreshMoNotificationsButton = new JButton("Refresh");
+            styleSecondaryButton(refreshMoNotificationsButton);
+            refreshMoNotificationsButton.addActionListener(e -> refreshMoNotifications());
+            moNotificationActions.add(moNotificationSummaryLabel);
+            moNotificationActions.add(refreshMoNotificationsButton);
+            moNotificationHeader.add(moNotificationActions, BorderLayout.EAST);
+            moNotificationArea = new JTextArea(5, 60);
+            moNotificationArea.setEditable(false);
+            moNotificationArea.setLineWrap(true);
+            moNotificationArea.setWrapStyleWord(true);
+            moNotificationArea.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+            moNotificationArea.setForeground(HEADER_TEXT);
+            moNotificationArea.setBackground(Color.WHITE);
+            moNotificationArea.setBorder(BorderFactory.createEmptyBorder(8, 10, 8, 10));
+            JScrollPane moNotificationScrollPane = new JScrollPane(moNotificationArea);
+            moNotificationScrollPane.setBorder(BorderFactory.createLineBorder(CARD_BORDER));
+            moNotificationScrollPane.setPreferredSize(new Dimension(0, 126));
+            moNotificationPanel.add(moNotificationHeader, BorderLayout.NORTH);
+            moNotificationPanel.add(moNotificationScrollPane, BorderLayout.CENTER);
+            dashboardTopStack.add(createCardPanel(moNotificationPanel, 18, 18, 18, 18));
+            dashboardTopStack.add(Box.createVerticalStrut(12));
+
             JPanel dashboardHeader = new JPanel(new BorderLayout());
             dashboardHeader.setOpaque(false);
             JPanel dashboardHeaderText = createSectionTitle("My Posted Jobs", "Overview of jobs, applicants, and statuses.");
             dashboardHeader.add(dashboardHeaderText, BorderLayout.WEST);
-            dashboardPanel.add(createCardPanel(dashboardHeader, 18, 18, 18, 18), BorderLayout.NORTH);
+            dashboardTopStack.add(createCardPanel(dashboardHeader, 18, 18, 18, 18));
+            dashboardPanel.add(dashboardTopStack, BorderLayout.NORTH);
             JScrollPane jobsScrollPane = new JScrollPane(jobsTable);
             jobsScrollPane.setBorder(BorderFactory.createEmptyBorder());
             jobsScrollPane.getViewport().setBackground(Color.WHITE);
@@ -2197,6 +2332,12 @@ public class SwingApp {
             JButton editButton = new JButton("Edit");
             styleSecondaryButton(editButton);
             editButton.addActionListener(e -> editSelectedJob());
+            JButton closeButton = new JButton("Close Job");
+            styleDangerButton(closeButton);
+            closeButton.addActionListener(e -> closeSelectedJob());
+            JButton reopenButton = new JButton("Reopen Job");
+            styleSecondaryButton(reopenButton);
+            reopenButton.addActionListener(e -> reopenSelectedJob());
             JButton deleteButton = new JButton("Delete");
             styleDangerButton(deleteButton);
             deleteButton.addActionListener(e -> deleteSelectedJob());
@@ -2208,32 +2349,85 @@ public class SwingApp {
             refreshButton.addActionListener(e -> refreshJobs());
             jobActions.add(postButton);
             jobActions.add(editButton);
+            jobActions.add(closeButton);
+            jobActions.add(reopenButton);
             jobActions.add(deleteButton);
             jobActions.add(applicantsButton);
             jobActions.add(refreshButton);
             dashboardPanel.add(jobActions, BorderLayout.SOUTH);
 
             applicantsModel = new DefaultTableModel(
-                    new Object[] {"App ID", "Applicant", "Year", "AI Match", "Workload", "Status"}, 0) {
+                    new Object[] {
+                        "App ID", "Applicant", "Year", "Match Score", "Missing Skills",
+                        "Current Workload", "Recommendation", "Status"
+                    }, 0) {
                 @Override
                 public boolean isCellEditable(int row, int column) {
                     return false;
                 }
+
+                @Override
+                public Class<?> getColumnClass(int columnIndex) {
+                    switch (columnIndex) {
+                        case 2:
+                        case 3:
+                        case 5:
+                            return Integer.class;
+                        default:
+                            return String.class;
+                    }
+                }
             };
             applicantsTable = new JTable(applicantsModel);
             styleDataTable(applicantsTable);
-            applyStatusRenderer(applicantsTable, 5);
+            applyIntegerSuffixRenderer(applicantsTable, 3, "%");
+            applyIntegerSuffixRenderer(applicantsTable, 5, "h/week");
+            applyRecommendationRenderer(applicantsTable, 6);
+            applyStatusRenderer(applicantsTable, 7);
             installTableRowHover(applicantsTable);
-            TableRowSorter<DefaultTableModel> applicantsSorter =
-                    (TableRowSorter<DefaultTableModel>) applicantsTable.getRowSorter();
-            applicantsSorter.setComparator(3, (left, right) ->
-                    Integer.compare(extractMatchScore(String.valueOf(left)), extractMatchScore(String.valueOf(right))));
             JPanel applicantsPanel = new JPanel(new BorderLayout(0, 16));
             applicantsPanel.setOpaque(false);
             applicantsTitle = new JLabel("Applicants List");
+            applicantsTitle.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+            applicantsTitle.setForeground(MUTED_TEXT_COLOR);
             JPanel applicantsHeader = new JPanel(new BorderLayout());
             applicantsHeader.setOpaque(false);
-            applicantsHeader.add(createSectionTitle("Applicants", "Review candidates and AI match scores."), BorderLayout.WEST);
+            JPanel applicantsHeaderText = new JPanel();
+            applicantsHeaderText.setOpaque(false);
+            applicantsHeaderText.setLayout(new BoxLayout(applicantsHeaderText, BoxLayout.Y_AXIS));
+            applicantsHeaderText.add(createSectionTitle(
+                    "Applicants", "Review pending candidates with match score, missing skills, and workload."));
+            applicantsHeaderText.add(Box.createVerticalStrut(6));
+            applicantsHeaderText.add(applicantsTitle);
+            applicantsHeader.add(applicantsHeaderText, BorderLayout.WEST);
+            JPanel applicantsControls = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0));
+            applicantsControls.setOpaque(false);
+            pendingOnlyCheckBox = new JCheckBox("Pending only", true);
+            pendingOnlyCheckBox.setOpaque(false);
+            pendingOnlyCheckBox.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+            pendingOnlyCheckBox.addActionListener(e -> {
+                if (pendingOnlyCheckBox.isSelected()) {
+                    needsDecisionCheckBox.setSelected(false);
+                }
+                refreshApplicants();
+            });
+            applicantsControls.add(pendingOnlyCheckBox);
+            needsDecisionCheckBox = new JCheckBox("Needs decision", false);
+            needsDecisionCheckBox.setOpaque(false);
+            needsDecisionCheckBox.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+            needsDecisionCheckBox.addActionListener(e -> {
+                if (needsDecisionCheckBox.isSelected()) {
+                    pendingOnlyCheckBox.setSelected(false);
+                }
+                refreshApplicants();
+            });
+            applicantsControls.add(needsDecisionCheckBox);
+            applicantsControls.add(new JLabel("Min match score"));
+            matchThresholdSpinner = new JSpinner(new SpinnerNumberModel(DEFAULT_MO_MATCH_THRESHOLD, 0, 100, 5));
+            matchThresholdSpinner.setPreferredSize(new Dimension(70, 32));
+            matchThresholdSpinner.addChangeListener(e -> refreshApplicants());
+            applicantsControls.add(matchThresholdSpinner);
+            applicantsHeader.add(applicantsControls, BorderLayout.EAST);
             applicantsPanel.add(createCardPanel(applicantsHeader, 18, 18, 18, 18), BorderLayout.NORTH);
             JScrollPane applicantsScrollPane = new JScrollPane(applicantsTable);
             applicantsScrollPane.setBorder(BorderFactory.createEmptyBorder());
@@ -2253,17 +2447,25 @@ public class SwingApp {
             JButton viewCvButton = new JButton("View Applicant CV");
             styleSecondaryButton(viewCvButton);
             viewCvButton.addActionListener(e -> viewSelectedApplicantCv());
+            JButton explanationButton = new JButton("View Explanation");
+            styleSecondaryButton(explanationButton);
+            explanationButton.addActionListener(e -> viewSelectedApplicantExplanation());
             JButton refreshApplicantsButton = new JButton("Refresh");
             styleSecondaryButton(refreshApplicantsButton);
             refreshApplicantsButton.addActionListener(e -> refreshApplicants());
-            JButton sortAiButton = new JButton("Sort by AI Match");
-            stylePrimaryButton(sortAiButton);
-            sortAiButton.addActionListener(e -> sortApplicantsByAiMatch());
+            JButton sortMatchButton = new JButton("High match first");
+            stylePrimaryButton(sortMatchButton);
+            sortMatchButton.addActionListener(e -> sortApplicantsByMatchScore());
+            JButton sortWorkloadButton = new JButton("Sort by Workload");
+            styleSecondaryButton(sortWorkloadButton);
+            sortWorkloadButton.addActionListener(e -> sortApplicantsByWorkload());
             applicantActions.add(acceptButton);
             applicantActions.add(rejectButton);
             applicantActions.add(viewProfileButton);
             applicantActions.add(viewCvButton);
-            applicantActions.add(sortAiButton);
+            applicantActions.add(explanationButton);
+            applicantActions.add(sortMatchButton);
+            applicantActions.add(sortWorkloadButton);
             applicantActions.add(refreshApplicantsButton);
             applicantsPanel.add(applicantActions, BorderLayout.SOUTH);
 
@@ -2301,12 +2503,24 @@ public class SwingApp {
             this.selectedJobId = null;
             refreshJobs();
             refreshApplicants();
+            refreshMoNotifications();
             loadProfile();
             updateTopBarAvatar(user == null ? "" : user.getAvatarFilePath());
             contentLayout.show(contentPanel, TAB_DASHBOARD);
         }
 
         private void refreshJobs() {
+            try {
+                List<Job> closed = jobService.autoCloseExpiredJobs();
+                if (!closed.isEmpty()) {
+                    showToast(
+                            "Jobs Auto-Closed",
+                            closed.size() + " job(s) past their deadline were closed automatically.",
+                            JOptionPane.INFORMATION_MESSAGE);
+                }
+            } catch (RuntimeException ignored) {
+                // Don't block dashboard rendering if the sweep fails; the latest data still loads below.
+            }
             jobsModel.setRowCount(0);
             for (Job job : jobService.getJobsByMoId(user.getId())) {
                 jobsModel.addRow(new Object[] {
@@ -2318,6 +2532,130 @@ public class SwingApp {
                     job.getDeadline()
                 });
             }
+            refreshMoNotifications();
+        }
+
+        private void refreshMoNotifications() {
+            if (user == null) {
+                moNotificationSummaryLabel.setText("Pending applications: 0 | Filled jobs: 0");
+                moNotificationArea.setText("Login as an MO to see notifications for your jobs.");
+                return;
+            }
+
+            int pendingCount = applicationService.getPendingApplicationCountForMo(user.getId());
+            int filledJobCount = countFilledJobsForCurrentMo();
+            moNotificationSummaryLabel.setText(
+                    "Pending applications: " + pendingCount + " | Filled jobs: " + filledJobCount);
+
+            List<String> notificationLines = buildMoNotificationLines(pendingCount);
+            if (notificationLines.isEmpty()) {
+                moNotificationArea.setText(
+                        "No MO notifications right now. New applications, pending decisions, and filled jobs will appear here.");
+            } else {
+                moNotificationArea.setText(String.join("\n\n", notificationLines));
+            }
+            moNotificationArea.setCaretPosition(0);
+        }
+
+        private List<String> buildMoNotificationLines(int pendingCount) {
+            List<String> lines = new ArrayList<>();
+            List<Job> jobs = jobService.getJobsByMoId(user.getId());
+            Map<String, Job> jobsById = new LinkedHashMap<>();
+            for (Job job : jobs) {
+                jobsById.put(job.getId(), job);
+            }
+
+            // Pending count gives the MO an immediate workload summary before they inspect individual rows.
+            if (pendingCount > 0) {
+                int jobsWithPendingApplications = countJobsWithPendingApplications(jobs);
+                lines.add("Pending review: " + pendingCount + " application(s) across "
+                        + jobsWithPendingApplications + " job(s) need your decision.");
+            }
+
+            // Pending applications are treated as new reminders because the MO still needs to review them.
+            int remindersAdded = 0;
+            for (Application application : applicationService.getApplicationsForMo(user.getId())) {
+                if (application.getStatus() != ApplicationStatus.PENDING) {
+                    continue;
+                }
+                Job job = jobsById.get(application.getJobId());
+                User applicant = findUserById(application.getTaUserId()).orElse(null);
+                lines.add(buildPendingApplicationReminder(application, job, applicant));
+                remindersAdded++;
+                if (remindersAdded >= 8) {
+                    int remaining = pendingCount - remindersAdded;
+                    if (remaining > 0) {
+                        lines.add("More pending applications: " + remaining
+                                + " additional application(s) are waiting in the Applicants list.");
+                    }
+                    break;
+                }
+            }
+
+            // Filled-job reminders are regenerated from live accepted counts so they refresh after every decision.
+            for (Job job : jobs) {
+                int acceptedCount = acceptedApplicantsForJob(job.getId());
+                if (job.getStatus() == JobStatus.FILLED || acceptedCount >= job.getPositions()) {
+                    lines.add("Job filled: " + jobLabel(job) + " has " + acceptedCount + "/"
+                            + job.getPositions() + " accepted applicant(s). Status: FILLED.");
+                }
+            }
+            return lines;
+        }
+
+        private String buildPendingApplicationReminder(Application application, Job job, User applicant) {
+            String applicantName = applicant == null ? "Unknown applicant" : safeText(applicant.getName());
+            String jobText = job == null ? "an unknown job" : jobLabel(job);
+            String appliedDate = safeText(application.getAppliedDate()).isBlank()
+                    ? "an unknown date"
+                    : application.getAppliedDate();
+            String matchScoreText = "not available";
+            if (job != null && applicant != null) {
+                AiMatchingService.MatchResult matchResult =
+                        aiMatchingService.analyzeSkills(applicant.getSkills(), job.getRequiredSkills());
+                matchScoreText = matchResult.getScore() + "%";
+            }
+            return "New application: " + applicantName + " applied for " + jobText + " on " + appliedDate
+                    + ". Status: " + application.getStatus().name()
+                    + ". Match score: " + matchScoreText + ".";
+        }
+
+        private int countJobsWithPendingApplications(List<Job> jobs) {
+            int count = 0;
+            for (Job job : jobs) {
+                boolean hasPendingApplication = false;
+                for (Application application : applicationService.getApplicationsByJobId(job.getId())) {
+                    if (application.getStatus() == ApplicationStatus.PENDING) {
+                        hasPendingApplication = true;
+                        break;
+                    }
+                }
+                if (hasPendingApplication) {
+                    count++;
+                }
+            }
+            return count;
+        }
+
+        private int countFilledJobsForCurrentMo() {
+            if (user == null) {
+                return 0;
+            }
+            int count = 0;
+            for (Job job : jobService.getJobsByMoId(user.getId())) {
+                int acceptedCount = acceptedApplicantsForJob(job.getId());
+                if (job.getStatus() == JobStatus.FILLED || acceptedCount >= job.getPositions()) {
+                    count++;
+                }
+            }
+            return count;
+        }
+
+        private String jobLabel(Job job) {
+            if (job == null) {
+                return "Unknown job";
+            }
+            return safeText(job.getModuleCode()) + " - " + safeText(job.getModuleName());
         }
 
         private void createJob() {
@@ -2326,7 +2664,7 @@ public class SwingApp {
                 return;
             }
             try {
-                Job job = jobService.createJob(
+                jobService.createJob(
                         input.moduleCode,
                         input.moduleName,
                         input.description,
@@ -2335,9 +2673,8 @@ public class SwingApp {
                         input.positions,
                         input.deadline,
                         user.getId());
-                job.setStatus(input.status);
-                jobService.updateJob(job);
                 refreshJobs();
+                refreshMoNotifications();
             } catch (IllegalArgumentException ex) {
                 JOptionPane.showMessageDialog(frame, ex.getMessage());
             }
@@ -2349,7 +2686,8 @@ public class SwingApp {
                 JOptionPane.showMessageDialog(frame, "Please select a job first.");
                 return;
             }
-            String jobId = String.valueOf(jobsModel.getValueAt(row, 0));
+            int modelRow = jobsTable.convertRowIndexToModel(row);
+            String jobId = String.valueOf(jobsModel.getValueAt(modelRow, 0));
             Job job = findJobById(jobId).orElse(null);
             if (job == null) {
                 JOptionPane.showMessageDialog(frame, "Job not found.");
@@ -2359,17 +2697,101 @@ public class SwingApp {
             if (input == null) {
                 return;
             }
-            job.setModuleCode(input.moduleCode);
-            job.setModuleName(input.moduleName);
-            job.setDescription(input.description);
-            job.setRequiredSkills(input.requiredSkills);
-            job.setHoursPerWeek(input.hoursPerWeek);
-            job.setPositions(input.positions);
-            job.setDeadline(input.deadline);
-            job.setStatus(input.status);
-            jobService.updateJob(job);
-            refreshJobs();
-            refreshApplicants();
+            try {
+                jobService.updateJob(
+                        job.getId(),
+                        user.getId(),
+                        input.moduleCode,
+                        input.moduleName,
+                        input.description,
+                        input.requiredSkills,
+                        String.valueOf(input.hoursPerWeek),
+                        String.valueOf(input.positions),
+                        input.deadline);
+                refreshJobs();
+                refreshApplicants();
+                refreshMoNotifications();
+            } catch (IllegalArgumentException ex) {
+                JOptionPane.showMessageDialog(frame, ex.getMessage());
+            }
+        }
+
+        private void closeSelectedJob() {
+            int row = jobsTable.getSelectedRow();
+            if (row < 0) {
+                JOptionPane.showMessageDialog(frame, "Please select a job first.");
+                return;
+            }
+            int modelRow = jobsTable.convertRowIndexToModel(row);
+            String jobId = String.valueOf(jobsModel.getValueAt(modelRow, 0));
+            Job job = findJobById(jobId).orElse(null);
+            if (job == null) {
+                JOptionPane.showMessageDialog(frame, "Job not found.");
+                return;
+            }
+            if (job.getStatus() == JobStatus.CLOSED) {
+                JOptionPane.showMessageDialog(frame, "This job is already closed.");
+                return;
+            }
+            String label = job.getModuleCode() + " - " + job.getModuleName();
+            String prompt = "Close " + label + "?\n"
+                    + "New TAs will not be able to apply.\n"
+                    + "Pending applications keep their current status.";
+            int confirm = JOptionPane.showConfirmDialog(
+                    frame, prompt, "Confirm Close Job", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
+            if (confirm != JOptionPane.YES_OPTION) {
+                return;
+            }
+            try {
+                jobService.closeJob(job.getId(), user.getId());
+                showToast("Job Closed", label + " is now closed.", JOptionPane.INFORMATION_MESSAGE);
+                refreshJobs();
+                refreshApplicants();
+                refreshMoNotifications();
+            } catch (IllegalArgumentException ex) {
+                JOptionPane.showMessageDialog(frame, ex.getMessage());
+            }
+        }
+
+        private void reopenSelectedJob() {
+            int row = jobsTable.getSelectedRow();
+            if (row < 0) {
+                JOptionPane.showMessageDialog(frame, "Please select a job first.");
+                return;
+            }
+            int modelRow = jobsTable.convertRowIndexToModel(row);
+            String jobId = String.valueOf(jobsModel.getValueAt(modelRow, 0));
+            Job job = findJobById(jobId).orElse(null);
+            if (job == null) {
+                JOptionPane.showMessageDialog(frame, "Job not found.");
+                return;
+            }
+            if (job.getStatus() == JobStatus.OPEN) {
+                JOptionPane.showMessageDialog(frame, "This job is already open.");
+                return;
+            }
+            String label = job.getModuleCode() + " - " + job.getModuleName();
+            int confirm = JOptionPane.showConfirmDialog(
+                    frame,
+                    "Reopen " + label + "?\nTAs will be able to apply again until the deadline.",
+                    "Confirm Reopen Job",
+                    JOptionPane.YES_NO_OPTION,
+                    JOptionPane.QUESTION_MESSAGE);
+            if (confirm != JOptionPane.YES_OPTION) {
+                return;
+            }
+            try {
+                Job reopened = jobService.reopenJob(job.getId(), user.getId());
+                showToast(
+                        "Job Reopened",
+                        label + " is now " + reopened.getStatus().name() + ".",
+                        JOptionPane.INFORMATION_MESSAGE);
+                refreshJobs();
+                refreshApplicants();
+                refreshMoNotifications();
+            } catch (IllegalArgumentException ex) {
+                JOptionPane.showMessageDialog(frame, ex.getMessage());
+            }
         }
 
         private void deleteSelectedJob() {
@@ -2378,7 +2800,8 @@ public class SwingApp {
                 JOptionPane.showMessageDialog(frame, "Please select a job first.");
                 return;
             }
-            String jobId = String.valueOf(jobsModel.getValueAt(row, 0));
+            int modelRow = jobsTable.convertRowIndexToModel(row);
+            String jobId = String.valueOf(jobsModel.getValueAt(modelRow, 0));
             int confirm = JOptionPane.showConfirmDialog(
                     frame, "Delete selected job?", "Confirm", JOptionPane.YES_NO_OPTION);
             if (confirm != JOptionPane.YES_OPTION) {
@@ -2390,6 +2813,7 @@ public class SwingApp {
             }
             refreshJobs();
             refreshApplicants();
+            refreshMoNotifications();
         }
 
         private void openApplicantsForSelectedJob() {
@@ -2398,13 +2822,16 @@ public class SwingApp {
                 JOptionPane.showMessageDialog(frame, "Please select a job first.");
                 return;
             }
-            selectedJobId = String.valueOf(jobsModel.getValueAt(row, 0));
+            int modelRow = jobsTable.convertRowIndexToModel(row);
+            selectedJobId = String.valueOf(jobsModel.getValueAt(modelRow, 0));
             refreshApplicants();
             contentLayout.show(contentPanel, TAB_APPLICANTS);
         }
 
         private void refreshApplicants() {
+            String selectedApplicationId = selectedApplicantApplicationId();
             applicantsModel.setRowCount(0);
+            rankedApplicantsByApplicationId.clear();
             if (selectedJobId == null || selectedJobId.isBlank()) {
                 applicantsTitle.setText("Applicants List (Select a job in Dashboard first)");
                 return;
@@ -2415,58 +2842,89 @@ public class SwingApp {
                 return;
             }
             applicantsTitle.setText("Applicants for " + selectedJob.getModuleCode() + " - " + selectedJob.getModuleName());
-            for (Application application : applicationService.getApplicationsByJobId(selectedJobId)) {
-                User ta = findUserById(application.getTaUserId()).orElse(null);
-                if (ta == null) {
-                    continue;
-                }
-                AiMatchingService.MatchResult matchResult =
-                        aiMatchingService.analyzeSkills(ta.getSkills(), selectedJob.getRequiredSkills());
-                String missingSkills = matchResult.getMissingSkills().isEmpty()
-                        ? "None"
-                        : String.join(", ", matchResult.getMissingSkills());
+            List<Application> applications = applicationService.getApplicationsByJobId(selectedJobId);
+            Map<String, User> applicantsById = new LinkedHashMap<>();
+            for (Application application : applications) {
+                findUserById(application.getTaUserId())
+                        .ifPresent(user -> applicantsById.put(user.getId(), user));
+            }
+            MoApplicantRankingService.RankingOptions options = new MoApplicantRankingService.RankingOptions(
+                    pendingOnlyCheckBox.isSelected(),
+                    needsDecisionCheckBox.isSelected(),
+                    (Integer) matchThresholdSpinner.getValue(),
+                    applicantSortMode);
+            for (MoApplicantRankingService.RankedApplicant applicant : moApplicantRankingService.rankApplicants(
+                    selectedJob, applications, applicantsById, options)) {
+                rankedApplicantsByApplicationId.put(applicant.getApplicationId(), applicant);
                 applicantsModel.addRow(new Object[] {
-                    application.getId(),
-                    ta.getName(),
-                    ta.getYearOfStudy(),
-                    scoreProgressBar(matchResult.getScore()) + " (" + missingSkills + ")",
-                    acceptedHoursForTa(ta.getId()) + "h/week",
-                    application.getStatus().name()
+                    applicant.getApplicationId(),
+                    applicant.getApplicantName(),
+                    applicant.getYearOfStudy(),
+                    applicant.getMatchScore(),
+                    applicant.getMissingSkillsText(),
+                    applicant.getCurrentWorkload(),
+                    applicant.getRecommendationLabel(),
+                    applicant.getStatus().name()
                 });
             }
+            selectApplicantByApplicationId(selectedApplicationId);
         }
 
-        private int extractMatchScore(String scoreText) {
-            if (scoreText == null || scoreText.isBlank()) {
-                return 0;
-            }
-            int percentIndex = scoreText.indexOf('%');
-            String numeric = percentIndex >= 0 ? scoreText.substring(0, percentIndex) : scoreText;
-            try {
-                return Integer.parseInt(numeric.trim());
-            } catch (NumberFormatException ex) {
-                return 0;
+        private void sortApplicantsByMatchScore() {
+            applicantSortMode = MoApplicantRankingService.SortMode.MATCH_SCORE_DESC;
+            clearApplicantsTableSortKeys();
+            refreshApplicants();
+        }
+
+        private void sortApplicantsByWorkload() {
+            applicantSortMode = MoApplicantRankingService.SortMode.WORKLOAD_ASC;
+            clearApplicantsTableSortKeys();
+            refreshApplicants();
+        }
+
+        private void clearApplicantsTableSortKeys() {
+            if (applicantsTable.getRowSorter() != null) {
+                applicantsTable.getRowSorter().setSortKeys(List.of());
             }
         }
 
-        private void sortApplicantsByAiMatch() {
-            @SuppressWarnings("unchecked")
-            TableRowSorter<DefaultTableModel> sorter = (TableRowSorter<DefaultTableModel>) applicantsTable.getRowSorter();
-            sorter.setSortKeys(List.of(new RowSorter.SortKey(3, SortOrder.DESCENDING)));
-            sorter.sort();
+        private String selectedApplicantApplicationId() {
+            int row = applicantsTable.getSelectedRow();
+            if (row < 0) {
+                return null;
+            }
+            int modelRow = applicantsTable.convertRowIndexToModel(row);
+            return String.valueOf(applicantsModel.getValueAt(modelRow, 0));
+        }
+
+        private void selectApplicantByApplicationId(String applicationId) {
+            if (applicationId == null || applicationId.isBlank()) {
+                return;
+            }
+            for (int modelRow = 0; modelRow < applicantsModel.getRowCount(); modelRow++) {
+                if (!applicationId.equalsIgnoreCase(String.valueOf(applicantsModel.getValueAt(modelRow, 0)))) {
+                    continue;
+                }
+                int viewRow = applicantsTable.convertRowIndexToView(modelRow);
+                if (viewRow >= 0) {
+                    applicantsTable.getSelectionModel().setSelectionInterval(viewRow, viewRow);
+                    applicantsTable.scrollRectToVisible(applicantsTable.getCellRect(viewRow, 0, true));
+                }
+                return;
+            }
         }
 
         private void updateApplicantStatus(ApplicationStatus status) {
-            int row = applicantsTable.getSelectedRow();
-            if (row < 0) {
+            String appId = selectedApplicantApplicationId();
+            if (appId == null) {
                 JOptionPane.showMessageDialog(frame, "Please select an applicant first.");
                 return;
             }
-            String appId = String.valueOf(applicantsModel.getValueAt(row, 0));
             try {
                 applicationService.updateApplicationStatus(appId, user.getId(), status);
                 refreshApplicants();
                 refreshJobs();
+                refreshMoNotifications();
                 showToast(
                         "Application Reviewed",
                         "Application has been marked as " + status.name() + ".",
@@ -2477,12 +2935,11 @@ public class SwingApp {
         }
 
         private void viewSelectedApplicantCv() {
-            int row = applicantsTable.getSelectedRow();
-            if (row < 0) {
+            String appId = selectedApplicantApplicationId();
+            if (appId == null) {
                 JOptionPane.showMessageDialog(frame, "Please select an applicant first.");
                 return;
             }
-            String appId = String.valueOf(applicantsModel.getValueAt(row, 0));
             Optional<Application> application = applicationService.getApplicationById(appId);
             if (application.isEmpty()) {
                 JOptionPane.showMessageDialog(frame, "Application not found.");
@@ -2496,13 +2953,38 @@ public class SwingApp {
             openCvFile(ta.getCvFilePath());
         }
 
-        private void viewSelectedApplicantProfile() {
-            int row = applicantsTable.getSelectedRow();
-            if (row < 0) {
+        private void viewSelectedApplicantExplanation() {
+            String appId = selectedApplicantApplicationId();
+            if (appId == null) {
                 JOptionPane.showMessageDialog(frame, "Please select an applicant first.");
                 return;
             }
-            String appId = String.valueOf(applicantsModel.getValueAt(row, 0));
+            Job selectedJob = selectedJobId == null ? null : findJobById(selectedJobId).orElse(null);
+            MoApplicantRankingService.RankedApplicant applicant = rankedApplicantsByApplicationId.get(appId);
+            if (applicant == null) {
+                JOptionPane.showMessageDialog(frame, "Applicant ranking details are no longer available. Please refresh the list.");
+                return;
+            }
+
+            String explanation = moApplicantRankingService.buildExplanation(
+                    selectedJob, applicant, (Integer) matchThresholdSpinner.getValue());
+            JTextArea explanationArea = new JTextArea(explanation, 14, 58);
+            explanationArea.setEditable(false);
+            explanationArea.setLineWrap(true);
+            explanationArea.setWrapStyleWord(true);
+            explanationArea.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+            explanationArea.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
+            JScrollPane scrollPane = new JScrollPane(explanationArea);
+            scrollPane.setBorder(BorderFactory.createLineBorder(CARD_BORDER));
+            JOptionPane.showMessageDialog(frame, scrollPane, "Applicant Match Explanation", JOptionPane.INFORMATION_MESSAGE);
+        }
+
+        private void viewSelectedApplicantProfile() {
+            String appId = selectedApplicantApplicationId();
+            if (appId == null) {
+                JOptionPane.showMessageDialog(frame, "Please select an applicant first.");
+                return;
+            }
             Optional<Application> application = applicationService.getApplicationById(appId);
             if (application.isEmpty()) {
                 JOptionPane.showMessageDialog(frame, "Application not found.");
@@ -2554,11 +3036,6 @@ public class SwingApp {
             JTextField hoursField = new JTextField(existing == null ? "" : String.valueOf(existing.getHoursPerWeek()));
             JTextField positionsField = new JTextField(existing == null ? "" : String.valueOf(existing.getPositions()));
             JTextField deadlineField = new JTextField(existing == null ? "" : existing.getDeadline());
-            JComboBox<JobStatus> statusBox =
-                    new JComboBox<>(new JobStatus[] {JobStatus.OPEN, JobStatus.CLOSED, JobStatus.FILLED});
-            if (existing != null) {
-                statusBox.setSelectedItem(existing.getStatus());
-            }
 
             JPanel panel = new JPanel(new GridLayout(0, 1, 6, 6));
             panel.add(new JLabel("Module Code"));
@@ -2575,8 +3052,12 @@ public class SwingApp {
             panel.add(positionsField);
             panel.add(new JLabel("Deadline (YYYY-MM-DD)"));
             panel.add(deadlineField);
-            panel.add(new JLabel("Status"));
-            panel.add(statusBox);
+            if (existing != null) {
+                JLabel statusHint = new JLabel(
+                        "Status: " + existing.getStatus().name() + "  (use Close / Reopen to change)");
+                statusHint.setForeground(MUTED_TEXT_COLOR);
+                panel.add(statusHint);
+            }
 
             int option = JOptionPane.showConfirmDialog(
                     frame,
@@ -2595,8 +3076,7 @@ public class SwingApp {
                         requiredSkillsField.getText().trim(),
                         Integer.parseInt(hoursField.getText().trim()),
                         Integer.parseInt(positionsField.getText().trim()),
-                        deadlineField.getText().trim(),
-                        (JobStatus) statusBox.getSelectedItem());
+                        deadlineField.getText().trim());
             } catch (NumberFormatException ex) {
                 JOptionPane.showMessageDialog(frame, "Hours and positions must be numbers.");
                 return null;
@@ -2618,6 +3098,7 @@ public class SwingApp {
         private final JTable accountTable;
         private final DefaultTableModel jobsModel;
         private final JTable jobsTable;
+        private JTextArea recommendationArea;
 
         // Summary bar labels
         private final JLabel summaryTotalJobs = new JLabel("--");
@@ -2688,9 +3169,9 @@ public class SwingApp {
                     BorderFactory.createEmptyBorder(4, 8, 4, 8)));
             workloadSearchField.putClientProperty("JTextField.placeholderText", "Search TA name or ID...");
             workloadSearchField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
-                public void insertUpdate(javax.swing.event.DocumentEvent e) { filterWorkloadTable(); }
-                public void removeUpdate(javax.swing.event.DocumentEvent e) { filterWorkloadTable(); }
-                public void changedUpdate(javax.swing.event.DocumentEvent e) { filterWorkloadTable(); }
+                public void insertUpdate(javax.swing.event.DocumentEvent e) { filterWorkloadTable(); updateWorkloadRecommendations(); }
+                public void removeUpdate(javax.swing.event.DocumentEvent e) { filterWorkloadTable(); updateWorkloadRecommendations(); }
+                public void changedUpdate(javax.swing.event.DocumentEvent e) { filterWorkloadTable(); updateWorkloadRecommendations(); }
             });
             JPanel searchWrapper = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 0, 0));
             searchWrapper.setOpaque(false);
@@ -2700,7 +3181,13 @@ public class SwingApp {
             JScrollPane workloadScrollPane = new JScrollPane(workloadTable);
             workloadScrollPane.setBorder(BorderFactory.createEmptyBorder());
             workloadScrollPane.getViewport().setBackground(Color.WHITE);
-            workloadPanel.add(createCardPanel(workloadScrollPane, 0, 0, 0, 0), BorderLayout.CENTER);
+
+            JPanel workloadCenter = new JPanel(new BorderLayout(0, 14));
+            workloadCenter.setOpaque(false);
+            workloadCenter.add(createCardPanel(workloadScrollPane, 0, 0, 0, 0), BorderLayout.CENTER);
+            workloadCenter.add(createCardPanel(buildRecommendationPanel(), 18, 18, 18, 18), BorderLayout.SOUTH);
+            workloadPanel.add(workloadCenter, BorderLayout.CENTER);
+
             JButton refreshWorkloadButton = new JButton("Refresh");
             styleSecondaryButton(refreshWorkloadButton);
             refreshWorkloadButton.addActionListener(e -> refreshWorkload());
@@ -2815,17 +3302,9 @@ public class SwingApp {
         }
 
         private void refreshWorkload() {
-            workloadModel.setRowCount(0);
-            for (AdminService.TAWorkloadSummary s : adminService.getAllTAWorkloads()) {
-                workloadModel.addRow(new Object[] {
-                    s.getTaUserId(),
-                    s.getTaName(),
-                    s.getAvailableHours(),
-                    s.getTotalAssignedHours(),
-                    s.getRemainingHours(),
-                    s.getRiskLevel().label()
-                });
-            }
+            filterWorkloadTable();
+            updateWorkloadRecommendations();
+            adminService.publishOverloadAlerts();
             refreshSummaryBar();
         }
 
@@ -2921,20 +3400,24 @@ public class SwingApp {
                     s.getRiskLevel().label()
                 });
             }
+            updateWorkloadRecommendations();
             if (workloadModel.getRowCount() == 0) {
                 showToast("No Overloaded TAs", "All TAs are within their available hours.", JOptionPane.INFORMATION_MESSAGE);
             }
+            refreshSummaryBar();
         }
 
+
         private void showWorkloadReport() {
-            String report = adminService.getWorkloadReport();
+            String report = adminService.getWorkloadBalancingReport();
             JTextArea textArea = new JTextArea(report);
             textArea.setFont(new Font("Monospaced", Font.PLAIN, 12));
             textArea.setEditable(false);
-            textArea.setRows(20);
-            textArea.setColumns(60);
+            textArea.setRows(22);
+            textArea.setColumns(66);
             JScrollPane scrollPane = new JScrollPane(textArea);
             JOptionPane.showMessageDialog(frame, scrollPane, "Workload Report", JOptionPane.PLAIN_MESSAGE);
+            updateWorkloadRecommendations();
         }
 
         private void filterWorkloadTable() {
@@ -2955,41 +3438,64 @@ public class SwingApp {
             }
         }
 
-        private void showTADetailDialogDuplicate() {
-            int row = workloadTable.getSelectedRow();
-            if (row < 0) return;
-            String taId = String.valueOf(workloadModel.getValueAt(row, 0));
-            AdminService.TAWorkloadSummary s;
-            try {
-                s = adminService.getTAWorkload(taId);
-            } catch (IllegalArgumentException ex) {
-                JOptionPane.showMessageDialog(frame, ex.getMessage());
+        private JPanel buildRecommendationPanel() {
+            recommendationArea = new JTextArea();
+            recommendationArea.setEditable(false);
+            recommendationArea.setLineWrap(true);
+            recommendationArea.setWrapStyleWord(true);
+            recommendationArea.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+            recommendationArea.setBackground(new Color(250, 246, 255));
+            recommendationArea.setForeground(new Color(58, 31, 107));
+            recommendationArea.setBorder(BorderFactory.createEmptyBorder(10, 12, 10, 12));
+
+            JPanel panel = new JPanel(new BorderLayout(0, 10));
+            panel.setOpaque(true);
+            panel.setBackground(new Color(248, 244, 255));
+            panel.setBorder(BorderFactory.createCompoundBorder(
+                    BorderFactory.createLineBorder(new Color(199, 177, 255), 1, true),
+                    BorderFactory.createEmptyBorder(14, 16, 14, 16)));
+
+            JLabel title = new JLabel("AI Workload Analysis");
+            title.setFont(new Font("Segoe UI", Font.BOLD, 16));
+            title.setForeground(QMUL_PURPLE_DARK);
+            panel.add(title, BorderLayout.NORTH);
+            panel.add(recommendationArea, BorderLayout.CENTER);
+            return panel;
+        }
+
+        private void updateWorkloadRecommendations() {
+            if (recommendationArea == null) {
                 return;
             }
-            AdminService.WorkloadTrend trend = adminService.getWorkloadTrend(s);
+            String summary = adminService.getWorkloadBalancingSummary();
+            List<WorkloadBalancerService.WorkloadRecommendation> recommendations = adminService.getWorkloadRecommendations();
             StringBuilder sb = new StringBuilder();
-            sb.append("TA ID:           ").append(s.getTaUserId()).append("\n");
-            sb.append("Name:            ").append(s.getTaName()).append("\n");
-            sb.append("Available h/wk:  ").append(s.getAvailableHours()).append("h\n");
-            sb.append("Assigned h/wk:   ").append(s.getTotalAssignedHours()).append("h\n");
-            sb.append("Remaining h/wk:  ").append(s.getRemainingHours()).append("h\n");
-            sb.append("Utilisation:     ").append(String.format("%.0f%%", s.getUtilisationPercent())).append("\n");
-            sb.append("Risk Level:      ").append(s.getRiskLevel().label()).append("\n");
-            sb.append("Workload Trend:  ").append(trend.label()).append("\n");
-            sb.append("\nAccepted Positions (").append(s.getAcceptedJobCount()).append("):\n");
-            if (s.getAcceptedJobDescriptions().isEmpty()) {
-                sb.append("  (none)\n");
+            sb.append(summary).append("\n\n");
+            if (recommendations.isEmpty()) {
+                sb.append("• All TA workloads are balanced.");
             } else {
-                for (String desc : s.getAcceptedJobDescriptions()) {
-                    sb.append("  • ").append(desc).append("\n");
+                for (WorkloadBalancerService.WorkloadRecommendation recommendation : recommendations) {
+                    sb.append("• ").append(recommendation.getOverloadedName())
+                            .append(" exceeds their weekly capacity by ")
+                            .append(recommendation.getOverloadHours()).append("h/week.\n");
+                    sb.append("  - ").append(recommendation.getTargetName())
+                            .append(" currently has ")
+                            .append(recommendation.getTargetRemainingCapacityHours()).append("h/week remaining capacity.\n");
+                    sb.append("  - Suggested Action: Move ")
+                            .append(recommendation.getMoveHours()).append("h/week from ")
+                            .append(recommendation.getOverloadedName()).append(" to ")
+                            .append(recommendation.getTargetName()).append(".\n");
+                    sb.append("  - ").append(recommendation.getPriority().label())
+                            .append(" Redistribution Recommended.\n");
+                    sb.append("  - Explainability: ")
+                            .append(recommendation.getOverloadedName())
+                            .append(" exceeds capacity by ")
+                            .append(String.format("%.0f%%", Math.max(0, (recommendation.getOverloadHours() * 100.0) / Math.max(1, recommendation.getTargetRemainingCapacityHours() + recommendation.getOverloadHours()))))
+                            .append(".\n\n");
                 }
             }
-            JTextArea area = new JTextArea(sb.toString());
-            area.setFont(new Font("Monospaced", Font.PLAIN, 13));
-            area.setEditable(false);
-            area.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
-            JOptionPane.showMessageDialog(frame, new JScrollPane(area),
-                    "TA Detail — " + s.getTaName(), JOptionPane.PLAIN_MESSAGE);
+            recommendationArea.setText(sb.toString().trim());
+            recommendationArea.setCaretPosition(0);
         }
 
         private void showTADetailDialog() {
@@ -3027,43 +3533,6 @@ public class SwingApp {
             area.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
             JOptionPane.showMessageDialog(frame, new JScrollPane(area),
                     "TA Detail — " + s.getTaName(), JOptionPane.PLAIN_MESSAGE);
-        }
-
-        private JPanel buildSummaryBar() {
-            JPanel bar = new JPanel(new java.awt.GridLayout(1, 4, 12, 0));
-            bar.setBackground(new Color(245, 246, 250));
-            bar.setBorder(BorderFactory.createCompoundBorder(
-                    BorderFactory.createMatteBorder(0, 0, 1, 0, new Color(220, 223, 230)),
-                    BorderFactory.createEmptyBorder(10, 20, 10, 20)));
-            bar.add(buildSummaryCard("Total Jobs", summaryTotalJobs, new Color(99, 102, 241)));
-            bar.add(buildSummaryCard("Filled Jobs", summaryFilledJobs, new Color(16, 185, 129)));
-            bar.add(buildSummaryCard("Overloaded TAs", summaryOverloaded, new Color(239, 68, 68)));
-            bar.add(buildSummaryCard("High-Risk TAs", summaryHighRisk, new Color(245, 158, 11)));
-            return bar;
-        }
-
-        private JPanel buildSummaryCard(String title, JLabel valueLabel, Color accent) {
-            JPanel card = new JPanel(new BorderLayout(4, 4));
-            card.setBackground(Color.WHITE);
-            card.setBorder(BorderFactory.createCompoundBorder(
-                    BorderFactory.createLineBorder(new Color(220, 223, 230), 1, true),
-                    BorderFactory.createEmptyBorder(8, 14, 8, 14)));
-            JLabel titleLbl = new JLabel(title);
-            titleLbl.setFont(new Font("Segoe UI", Font.PLAIN, 11));
-            titleLbl.setForeground(new Color(107, 114, 128));
-            valueLabel.setFont(new Font("Segoe UI", Font.BOLD, 22));
-            valueLabel.setForeground(accent);
-            card.add(titleLbl, BorderLayout.NORTH);
-            card.add(valueLabel, BorderLayout.CENTER);
-            return card;
-        }
-
-        private void refreshSummaryBar() {
-            AdminService.RecruitmentSnapshot snap = adminService.getRecruitmentSnapshot();
-            summaryTotalJobs.setText(String.valueOf(snap.totalJobs));
-            summaryFilledJobs.setText(String.valueOf(snap.filledJobs));
-            summaryOverloaded.setText(String.valueOf(snap.overloadedTAs));
-            summaryHighRisk.setText(String.valueOf(snap.atRiskTAs));
         }
 
         private void createMoAccount() {
@@ -3143,10 +3612,9 @@ public class SwingApp {
         private final int hoursPerWeek;
         private final int positions;
         private final String deadline;
-        private final JobStatus status;
 
         private JobInput(String moduleCode, String moduleName, String description, String requiredSkills,
-                int hoursPerWeek, int positions, String deadline, JobStatus status) {
+                int hoursPerWeek, int positions, String deadline) {
             this.moduleCode = moduleCode;
             this.moduleName = moduleName;
             this.description = description;
@@ -3154,7 +3622,6 @@ public class SwingApp {
             this.hoursPerWeek = hoursPerWeek;
             this.positions = positions;
             this.deadline = deadline;
-            this.status = status;
         }
     }
 

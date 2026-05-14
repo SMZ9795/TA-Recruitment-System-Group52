@@ -203,4 +203,32 @@ public class AuthService {
         user.setPassword(normalizedPassword);
         userRepository.save(user);
     }
+
+    /**
+     * Self-service password change: verifies old password before updating.
+     * Available to TA, MO, and Admin.
+     */
+    public void changePassword(String userId, String oldPassword, String newPassword, String confirmPassword) {
+        String normalizedUserId = ValidationUtil.requireText(userId, "User ID");
+        ValidationUtil.requireText(oldPassword, "Current password");
+        String normalizedNew = ValidationUtil.requirePassword(newPassword);
+        ValidationUtil.requireText(confirmPassword, "Confirm password");
+
+        if (!normalizedNew.equals(confirmPassword.trim())) {
+            throw new IllegalArgumentException("New password and confirmation do not match.");
+        }
+
+        User user = userRepository.findById(normalizedUserId)
+                .orElseThrow(() -> new IllegalArgumentException("User not found."));
+
+        if (!user.getPassword().equals(oldPassword.trim())) {
+            throw new IllegalArgumentException("Current password is incorrect.");
+        }
+        if (user.getPassword().equals(normalizedNew)) {
+            throw new IllegalArgumentException("New password must differ from the current password.");
+        }
+
+        user.setPassword(normalizedNew);
+        userRepository.save(user);
+    }
 }

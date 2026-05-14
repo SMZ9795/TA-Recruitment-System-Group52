@@ -4,11 +4,13 @@ import com.group52.tarecruitment.model.Application;
 import com.group52.tarecruitment.model.ApplicationStatus;
 import com.group52.tarecruitment.model.Job;
 import com.group52.tarecruitment.model.JobStatus;
+import com.group52.tarecruitment.model.NotificationType;
 import com.group52.tarecruitment.model.Role;
 import com.group52.tarecruitment.model.User;
 import com.group52.tarecruitment.repository.ApplicationRepository;
 import com.group52.tarecruitment.repository.JobRepository;
 import com.group52.tarecruitment.repository.UserRepository;
+import com.group52.tarecruitment.service.WorkloadBalancerService.WorkloadRecommendation;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -21,12 +23,21 @@ public class AdminService {
     private final UserRepository userRepository;
     private final JobRepository jobRepository;
     private final ApplicationRepository applicationRepository;
+    private final NotificationService notificationService;
+    private final WorkloadBalancerService workloadBalancerService;
 
     public AdminService(UserRepository userRepository, JobRepository jobRepository,
                         ApplicationRepository applicationRepository) {
+        this(userRepository, jobRepository, applicationRepository, null);
+    }
+
+    public AdminService(UserRepository userRepository, JobRepository jobRepository,
+                        ApplicationRepository applicationRepository, NotificationService notificationService) {
         this.userRepository = userRepository;
         this.jobRepository = jobRepository;
         this.applicationRepository = applicationRepository;
+        this.notificationService = notificationService;
+        this.workloadBalancerService = new WorkloadBalancerService(userRepository, jobRepository, applicationRepository);
     }
 
     public enum RiskLevel {
@@ -192,11 +203,112 @@ public class AdminService {
                 .toList();
     }
 
+    /**
+     * Deterministic redistribution recommendations for the workload page.
+     *
+     * The method pairs each overloaded TA with the underused TA that has the
+     * largest remaining capacity at that moment. This keeps the logic easy to
+     * explain in viva/demo settings and avoids any ML/AI dependency.
+     */
+    public List<String> getWorkloadBalancingRecommendations() {
+        List<TAWorkloadSummary> workloads = new ArrayList<>(getAllTAWorkloads());
+        List<TAWorkloadSummary> overloaded = workloads.stream()
+                .filter(TAWorkloadSummary::isOverloaded)
+                .toList();
+        List<TAWorkloadSummary> available = workloads.stream()
+                .filter(s -> !s.isOverloaded())
+                .filter(s -> s.getRemainingHours() > 0)
+                .toList();
+
+        List<String> recommendations = new ArrayList<>();
+        if (overloaded.isEmpty()) {
+            recommendations.add("All TA workloads are balanced.");
+            return recommendations;
+        }
+
+        List<TAWorkloadSummary> mutableAvailable = new ArrayList<>(available);
+        for (TAWorkloadSummary source : overloaded) {
+            int overloadHours = source.getTotalAssignedHours() - source.getAvailableHours();
+            if (overloadHours <= 0) {
+                continue;
+            }
+
+            TAWorkloadSummary target = mutableAvailable.stream()
+                    .filter(candidate -> candidate.getRemainingHours() > 0)
+                    .max(Comparator
+                            .comparingInt(TAWorkloadSummary::getRemainingHours)
+                            .thenComparing(TAWorkloadSummary::getTaName, String.CASE_INSENSITIVE_ORDER))
+                    .orElse(null);
+
+            if (target == null) {
+                recommendations.add(String.format("%s is overloaded by %dh/week.",
+                        source.getTaName(), overloadHours));
+                recommendations.add("No available TA has remaining capacity for redistribution.");
+                continue;
+            }
+
+            int moveHours = Math.min(overloadHours, target.getRemainingHours());
+            recommendations.add(String.format("%s is overloaded by %dh/week.",
+                    source.getTaName(), overloadHours));
+            recommendations.add(String.format("%s has %dh/week remaining capacity.",
+                    target.getTaName(), target.getRemainingHours()));
+            recommendations.add(String.format("Suggested action: Move %dh/week from %s to %s.",
+                    moveHours, source.getTaName(), target.getTaName()));
+
+            int updatedRemaining = target.getRemainingHours() - moveHours;
+            if (updatedRemaining <= 0) {
+                mutableAvailable.remove(target);
+            }
+        }
+
+        if (recommendations.isEmpty()) {
+            recommendations.add("All TA workloads are balanced.");
+        }
+        return recommendations;
+    }
+
+    public int publishOverloadAlerts() {
+        if (notificationService == null) {
+            return 0;
+        }
+        int createdCount = 0;
+        for (TAWorkloadSummary summary : getOverloadedTAs()) {
+            String message = "Overload alert: you are assigned "
+                    + summary.getTotalAssignedHours() + "h/week, exceeding your available "
+                    + summary.getAvailableHours() + "h/week.";
+            String relatedId = "OVERLOAD:" + summary.getTaUserId();
+            int before = notificationService.countUnreadForUser(summary.getTaUserId());
+            notificationService.publishIfNotExists(
+                    Role.TA,
+                    NotificationType.OVERLOAD_ALERT,
+                    summary.getTaUserId(),
+                    message,
+                    relatedId);
+            int after = notificationService.countUnreadForUser(summary.getTaUserId());
+            if (after > before) {
+                createdCount++;
+            }
+        }
+        return createdCount;
+    }
+
     /** TAs at risk (>= 80% utilisation) or already overloaded. */
     public List<TAWorkloadSummary> getHighRiskTAs() {
         return getAllTAWorkloads().stream()
                 .filter(s -> s.getRiskLevel() != RiskLevel.OK)
                 .toList();
+    }
+
+    public List<WorkloadBalancerService.WorkloadRecommendation> getWorkloadRecommendations() {
+        return workloadBalancerService.generateRecommendations();
+    }
+
+    public String getWorkloadBalancingSummary() {
+        return workloadBalancerService.buildAutoSummary();
+    }
+
+    public String getWorkloadBalancingReport() {
+        return workloadBalancerService.buildReport();
     }
 
     /** Per-job overview list sorted: full jobs last so open slots appear first. */

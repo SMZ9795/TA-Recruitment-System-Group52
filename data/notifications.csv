@@ -1,0 +1,2 @@
+id,recipientUserId,role,type,message,relatedId,createdAt,readStatus
+"NTF051243B1","TA231267380","TA","OVERLOAD_ALERT","Overload alert: you are assigned 18h/week, exceeding your available 15h/week.","OVERLOAD:TA231267380","2026-05-12T15:44:26.453993600","false"

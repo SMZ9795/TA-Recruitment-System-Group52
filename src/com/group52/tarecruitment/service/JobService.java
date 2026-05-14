@@ -1,22 +1,37 @@
 package com.group52.tarecruitment.service;
 
+import com.group52.tarecruitment.model.Application;
 import com.group52.tarecruitment.model.Job;
 import com.group52.tarecruitment.model.JobStatus;
 import com.group52.tarecruitment.model.ApplicationStatus;
+import com.group52.tarecruitment.model.NotificationType;
+import com.group52.tarecruitment.model.Role;
 import com.group52.tarecruitment.repository.ApplicationRepository;
 import com.group52.tarecruitment.repository.JobRepository;
 import com.group52.tarecruitment.util.IdGenerator;
 import com.group52.tarecruitment.util.ValidationUtil;
+import java.time.LocalDate;
+import java.time.format.DateTimeParseException;
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 public class JobService {
     private final JobRepository jobRepository;
     private final ApplicationRepository applicationRepository;
+    private final NotificationService notificationService;
 
     public JobService(JobRepository jobRepository, ApplicationRepository applicationRepository) {
+        this(jobRepository, applicationRepository, null);
+    }
+
+    public JobService(JobRepository jobRepository, ApplicationRepository applicationRepository,
+            NotificationService notificationService) {
         this.jobRepository = jobRepository;
         this.applicationRepository = applicationRepository;
+        this.notificationService = notificationService;
     }
 
     public List<Job> getAllJobs() {
@@ -101,9 +116,83 @@ public class JobService {
         job.setHoursPerWeek(ValidationUtil.parseIntInRange(hoursPerWeek, "Hours per week", 1, 168));
         job.setPositions(normalizedPositions);
         job.setDeadline(ValidationUtil.requireTodayOrFutureDate(deadline, "Deadline"));
-        job.setStatus(acceptedCount >= normalizedPositions ? JobStatus.FILLED : JobStatus.OPEN);
+        // CLOSED jobs keep their status across edits; only OPEN/FILLED auto-flip by capacity.
+        if (job.getStatus() != JobStatus.CLOSED) {
+            job.setStatus(acceptedCount >= normalizedPositions ? JobStatus.FILLED : JobStatus.OPEN);
+        }
         jobRepository.save(job);
         return job;
+    }
+
+    public Job closeJob(String jobId, String moId) {
+        Job job = getJobForMo(jobId, moId);
+        if (job.getStatus() == JobStatus.CLOSED) {
+            throw new IllegalArgumentException("This job is already closed.");
+        }
+        if (job.getStatus() == JobStatus.FILLED) {
+            throw new IllegalArgumentException(
+                    "Filled jobs cannot be closed manually. Withdraw an accepted offer first.");
+        }
+        job.setStatus(JobStatus.CLOSED);
+        jobRepository.save(job);
+        publishJobLifecycleNotifications(
+                job,
+                NotificationType.JOB_CLOSE,
+                "Job " + safeText(job.getModuleCode()) + " - " + safeText(job.getModuleName())
+                        + " has been closed and no longer accepts applications.");
+        return job;
+    }
+
+    public Job reopenJob(String jobId, String moId) {
+        Job job = getJobForMo(jobId, moId);
+        if (job.getStatus() == JobStatus.OPEN) {
+            throw new IllegalArgumentException("This job is already open.");
+        }
+        if (isDeadlinePassed(job.getDeadline())) {
+            throw new IllegalArgumentException(
+                    "Cannot reopen a job whose deadline has passed. Update the deadline first.");
+        }
+        long acceptedCount = applicationRepository.countByJobIdAndStatus(job.getId(), ApplicationStatus.ACCEPTED);
+        if (acceptedCount >= job.getPositions()) {
+            throw new IllegalArgumentException(
+                    "This job is already filled. Increase positions or withdraw an accepted offer first.");
+        }
+        job.setStatus(JobStatus.OPEN);
+        jobRepository.save(job);
+        publishJobLifecycleNotifications(
+                job,
+                NotificationType.JOB_REOPEN,
+                "Job " + safeText(job.getModuleCode()) + " - " + safeText(job.getModuleName())
+                        + " has reopened and now accepts applications again.");
+        return job;
+    }
+
+    public List<Job> autoCloseExpiredJobs() {
+        List<Job> closedJobs = new ArrayList<>();
+        for (Job job : jobRepository.findAll()) {
+            if (job.getStatus() == JobStatus.OPEN && isDeadlinePassed(job.getDeadline())) {
+                job.setStatus(JobStatus.CLOSED);
+                jobRepository.save(job);
+                publishJobLifecycleNotifications(
+                        job,
+                        NotificationType.JOB_CLOSE,
+                        "Job " + safeText(job.getModuleCode()) + " - " + safeText(job.getModuleName())
+                                + " has been closed because the deadline passed.");
+                closedJobs.add(job);
+            }
+        }
+        return closedJobs;
+    }
+
+    private boolean isDeadlinePassed(String deadline) {
+        if (deadline == null || deadline.isBlank()) {
+            return false;
+        }
+        try {
+            return LocalDate.parse(deadline.trim()).isBefore(LocalDate.now());
+        } catch (DateTimeParseException e) {
+            return false;
+        }
     }
 
     // Compatibility overload for Swing UI flows.
@@ -129,5 +218,24 @@ public class JobService {
             throw new IllegalArgumentException("Cannot delete a job that has related applications.");
         }
         jobRepository.deleteById(normalizedJobId);
+    }
+
+    private void publishJobLifecycleNotifications(Job job, NotificationType type, String message) {
+        if (notificationService == null || job == null) {
+            return;
+        }
+        Set<String> recipientTaIds = new HashSet<>();
+        for (Application application : applicationRepository.findByJobId(job.getId())) {
+            if (application.getTaUserId() != null && !application.getTaUserId().isBlank()) {
+                recipientTaIds.add(application.getTaUserId().trim());
+            }
+        }
+        for (String taUserId : recipientTaIds) {
+            notificationService.publish(Role.TA, type, taUserId, message, safeText(job.getId()));
+        }
+    }
+
+    private String safeText(String value) {
+        return value == null ? "" : value;
     }
 }
