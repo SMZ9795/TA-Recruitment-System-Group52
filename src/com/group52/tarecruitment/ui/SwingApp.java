@@ -14,6 +14,7 @@ import com.group52.tarecruitment.service.AuthService;
 import com.group52.tarecruitment.service.JobService;
 import com.group52.tarecruitment.service.MoApplicantRankingService;
 import com.group52.tarecruitment.service.NotificationService;
+import com.group52.tarecruitment.service.WorkloadBalancerService;
 import com.group52.tarecruitment.util.CvValidationUtil;
 import com.group52.tarecruitment.util.JobFilterUtil;
 import com.group52.tarecruitment.util.TaNotificationUtil;
@@ -517,6 +518,20 @@ public class SwingApp {
         return count;
     }
 
+    private int acceptedHoursForTa(String taUserId) {
+        int hours = 0;
+        for (Application application : applicationService.getApplicationsByTaUserId(taUserId)) {
+            if (application.getStatus() != ApplicationStatus.ACCEPTED) {
+                continue;
+            }
+            Job job = findJobById(application.getJobId()).orElse(null);
+            if (job != null) {
+                hours += job.getHoursPerWeek();
+            }
+        }
+        return hours;
+    }
+
     private String safeText(String value) {
         return value == null ? "" : value;
     }
@@ -709,6 +724,10 @@ public class SwingApp {
                 if (!isSelected) {
                     if ("Recommended".equalsIgnoreCase(recommendation)) {
                         setForeground(new Color(31, 122, 78));
+                    } else if ("Review".equalsIgnoreCase(recommendation)) {
+                        setForeground(new Color(184, 112, 0));
+                    } else if ("Unavailable".equalsIgnoreCase(recommendation)) {
+                        setForeground(new Color(120, 120, 120));
                     } else {
                         setForeground(new Color(183, 77, 77));
                     }
@@ -1371,7 +1390,10 @@ public class SwingApp {
         private final JTextField hoursFilterField;
         private final JTextField moFilterField;
         private final JComboBox<String> statusFilterBox;
+        private final JCheckBox recommendedOnlyBox;
         private final JComboBox<String> notificationFilterBox;
+        private final JLabel jobRecommendationSummaryLabel;
+        private final JTextArea jobRecommendationDetailsArea;
         private final JLabel unreadCountLabel;
         private final JLabel notificationEmptyLabel;
         private final JLabel applicationSummaryLabel;
@@ -1519,7 +1541,7 @@ public class SwingApp {
             dashboardPanel.add(dashboardActions, BorderLayout.SOUTH);
 
             jobModel = new DefaultTableModel(
-                    new Object[] {"Job ID", "Module", "MO", "Hours/Week", "Deadline", "Status"}, 0) {
+                    new Object[] {"Job ID", "Module", "MO", "Hours/Week", "Deadline", "Status", "AI Fit", "Recommendation"}, 0) {
                 @Override
                 public boolean isCellEditable(int row, int column) {
                     return false;
@@ -1528,6 +1550,7 @@ public class SwingApp {
             jobTable = new JTable(jobModel);
             styleDataTable(jobTable);
             applyStatusRenderer(jobTable, 5);
+            applyRecommendationRenderer(jobTable, 7);
             JPanel jobBoardPanel = new JPanel(new BorderLayout(0, 16));
             jobBoardPanel.setOpaque(false);
             jobBoardPanel.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 0));
@@ -1558,6 +1581,13 @@ public class SwingApp {
             statusPanel.add(new JLabel("Status"));
             statusFilterBox = new JComboBox<>(new String[] {"OPEN", "ALL", "CLOSED", "FILLED"});
             statusPanel.add(statusFilterBox);
+            JPanel aiFilterPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+            aiFilterPanel.setOpaque(false);
+            recommendedOnlyBox = new JCheckBox("Recommended only");
+            recommendedOnlyBox.setOpaque(false);
+            recommendedOnlyBox.setToolTipText("Show jobs with strong skill match and enough available hours.");
+            recommendedOnlyBox.addActionListener(e -> refreshJobs());
+            aiFilterPanel.add(recommendedOnlyBox);
             JButton searchButton = new JButton("Apply Filter");
             stylePrimaryButton(searchButton);
             searchButton.addActionListener(e -> refreshJobs());
@@ -1569,6 +1599,7 @@ public class SwingApp {
                 hoursFilterField.setText("");
                 moFilterField.setText("");
                 statusFilterBox.setSelectedItem("OPEN");
+                recommendedOnlyBox.setSelected(false);
                 refreshJobs();
             });
             JButton refreshJobsButton = new JButton("Refresh");
@@ -1584,13 +1615,38 @@ public class SwingApp {
             searchPanel.add(hoursPanel);
             searchPanel.add(moPanel);
             searchPanel.add(statusPanel);
+            searchPanel.add(aiFilterPanel);
             searchPanel.add(filterActionsPanel);
             JPanel jobControlsCard = createCardPanel(searchPanel, 18, 18, 18, 18);
             jobBoardPanel.add(jobControlsCard, BorderLayout.NORTH);
             JScrollPane jobScrollPane = new JScrollPane(jobTable);
             jobScrollPane.setBorder(BorderFactory.createEmptyBorder());
             jobScrollPane.getViewport().setBackground(Color.WHITE);
-            jobBoardPanel.add(createCardPanel(jobScrollPane, 0, 0, 0, 0), BorderLayout.CENTER);
+            jobRecommendationSummaryLabel = new JLabel("Select a job to view the AI recommendation explanation.");
+            jobRecommendationSummaryLabel.setFont(new Font("Segoe UI", Font.BOLD, 13));
+            jobRecommendationSummaryLabel.setForeground(QMUL_PURPLE);
+            jobRecommendationDetailsArea = new JTextArea(4, 20);
+            jobRecommendationDetailsArea.setEditable(false);
+            jobRecommendationDetailsArea.setLineWrap(true);
+            jobRecommendationDetailsArea.setWrapStyleWord(true);
+            jobRecommendationDetailsArea.setFont(new Font("Segoe UI", Font.PLAIN, 12));
+            jobRecommendationDetailsArea.setBackground(new Color(250, 246, 255));
+            jobRecommendationDetailsArea.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
+            jobRecommendationDetailsArea.setText("Recommended jobs are ranked by skill overlap and weekly-hour fit.");
+            JPanel recommendationPanel = new JPanel(new BorderLayout(0, 8));
+            recommendationPanel.setOpaque(false);
+            recommendationPanel.add(jobRecommendationSummaryLabel, BorderLayout.NORTH);
+            recommendationPanel.add(new JScrollPane(jobRecommendationDetailsArea), BorderLayout.CENTER);
+            JPanel jobCenterPanel = new JPanel(new BorderLayout(0, 12));
+            jobCenterPanel.setOpaque(false);
+            jobCenterPanel.add(createCardPanel(jobScrollPane, 0, 0, 0, 0), BorderLayout.CENTER);
+            jobCenterPanel.add(createCardPanel(recommendationPanel, 14, 16, 14, 16), BorderLayout.SOUTH);
+            jobBoardPanel.add(jobCenterPanel, BorderLayout.CENTER);
+            jobTable.getSelectionModel().addListSelectionListener(e -> {
+                if (!e.getValueIsAdjusting()) {
+                    updateSelectedJobRecommendation();
+                }
+            });
             JPanel jobActions = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
             jobActions.setOpaque(false);
             JButton detailButton = new JButton("View Details");
@@ -1934,21 +1990,46 @@ public class SwingApp {
             if (maxHours != null && maxHours < 0) {
                 return;
             }
+            List<Job> visibleJobs = new ArrayList<>();
+            int acceptedHours = acceptedHoursForTa(user.getId());
+            boolean recommendedOnly = recommendedOnlyBox.isSelected();
             for (Job job : jobService.getAllJobs()) {
-                String moduleCode = safeText(job.getModuleCode());
-                String moduleName = safeText(job.getModuleName());
                 String moName = safeText(moNameForJob(job));
                 if (!JobFilterUtil.matches(job, query, skillQuery, maxHours, moQuery, statusValue, moName)) {
                     continue;
                 }
+                AiMatchingService.RecommendationResult recommendation =
+                        aiMatchingService.recommendJob(user, job, acceptedHours);
+                if (recommendedOnly && !recommendation.isRecommended()) {
+                    continue;
+                }
+                visibleJobs.add(job);
+            }
+            visibleJobs.sort(Comparator
+                    .comparingInt((Job job) -> aiMatchingService.recommendJob(user, job, acceptedHours).getScore())
+                    .reversed()
+                    .thenComparing(job -> safeText(job.getDeadline())));
+            for (Job job : visibleJobs) {
+                String moduleCode = safeText(job.getModuleCode());
+                String moduleName = safeText(job.getModuleName());
+                String moName = safeText(moNameForJob(job));
+                AiMatchingService.RecommendationResult recommendation =
+                        aiMatchingService.recommendJob(user, job, acceptedHours);
                 jobModel.addRow(new Object[] {
                     safeText(job.getId()),
                     moduleCode + " - " + moduleName,
                     moName,
                     job.getHoursPerWeek(),
                     safeText(job.getDeadline()),
-                    job.getStatus().name()
+                    job.getStatus().name(),
+                    recommendation.getScore() + "%",
+                    recommendation.getLabel()
                 });
+            }
+            if (jobModel.getRowCount() > 0) {
+                jobTable.setRowSelectionInterval(0, 0);
+            } else {
+                updateSelectedJobRecommendation();
             }
         }
 
@@ -2006,6 +2087,8 @@ public class SwingApp {
             }
             AiMatchingService.MatchResult matchResult =
                     aiMatchingService.analyzeSkills(user.getSkills(), job.getRequiredSkills());
+            AiMatchingService.RecommendationResult recommendation =
+                    aiMatchingService.recommendJob(user, job, acceptedHoursForTa(user.getId()));
             String matchedSkills = matchResult.getMatchedSkills().isEmpty()
                     ? "None"
                     : String.join(", ", matchResult.getMatchedSkills());
@@ -2023,13 +2106,64 @@ public class SwingApp {
                     + safeText(job.getDescription()) + "<br/><br/>"
                     + "<h3>AI Matching</h3>"
                     + "<b>Match Score:</b> " + matchResult.getScore() + "%<br/>"
-                    + "<b>Progress:</b> " + scoreProgressBar(matchResult.getScore()) + "<br/>"
+                    + "<b>Recommendation:</b> " + recommendation.getLabel()
+                    + " (" + recommendation.getScore() + "%)<br/>"
+                    + "<b>Recommendation Progress:</b> " + scoreProgressBar(recommendation.getScore()) + "<br/>"
                     + "<b>Matched Skills:</b> " + matchedSkills + "<br/>"
                     + "<b>Missing Skills:</b> " + missingSkills + "<br/>"
-                    + "<b>Reason:</b> " + matchResult.getReason() + "<br/><br/>"
+                    + "<b>Hours Fit:</b> " + (recommendation.isHoursFit() ? "Yes" : "Needs review")
+                    + " (" + recommendation.getRemainingHours() + "h/week remaining)<br/>"
+                    + "<b>Reason:</b> " + recommendation.getReason() + "<br/><br/>"
+                    + "<b>Next Step:</b> " + recommendation.getActionHint() + "<br/><br/>"
                     + "<span style='color:#5A2382'><b>" + BRAND_TAGLINE + "</b></span>"
                     + "</div></html>";
             JOptionPane.showMessageDialog(frame, message, "Job Details", JOptionPane.INFORMATION_MESSAGE);
+        }
+
+        private void updateSelectedJobRecommendation() {
+            if (jobModel.getRowCount() == 0) {
+                jobRecommendationSummaryLabel.setText("No jobs match the current filters.");
+                jobRecommendationDetailsArea.setText(recommendedOnlyBox.isSelected()
+                        ? "No strongly recommended jobs are available under the current filters. Try clearing "
+                                + "'Recommended only' or broadening the skill/hour filters."
+                        : "Adjust the search, skill, MO, status, or hour filters to find more jobs.");
+                return;
+            }
+            int selected = jobTable.getSelectedRow();
+            if (selected < 0) {
+                jobRecommendationSummaryLabel.setText("Select a job to view the AI recommendation explanation.");
+                jobRecommendationDetailsArea.setText(
+                        "Recommended jobs are ranked by skill overlap and weekly-hour fit.");
+                return;
+            }
+
+            String jobId = String.valueOf(jobModel.getValueAt(selected, 0));
+            Job job = findJobById(jobId).orElse(null);
+            if (job == null) {
+                jobRecommendationSummaryLabel.setText("Selected job could not be found.");
+                jobRecommendationDetailsArea.setText("Refresh the job board and select the job again.");
+                return;
+            }
+
+            AiMatchingService.MatchResult matchResult =
+                    aiMatchingService.analyzeSkills(user.getSkills(), job.getRequiredSkills());
+            AiMatchingService.RecommendationResult recommendation =
+                    aiMatchingService.recommendJob(user, job, acceptedHoursForTa(user.getId()));
+            jobRecommendationSummaryLabel.setText("AI Fit: " + recommendation.getLabel()
+                    + " (" + recommendation.getScore() + "%)");
+            String details = "Why this ranking?\n"
+                    + "- " + recommendation.getReason() + "\n"
+                    + "- Matched skills: " + formatSkillList(matchResult.getMatchedSkills()) + "\n"
+                    + "- Missing skills: " + formatSkillList(matchResult.getMissingSkills()) + "\n"
+                    + "- Hours check: " + (recommendation.isHoursFit() ? "fits current availability" : "needs review")
+                    + " with " + recommendation.getRemainingHours() + "h/week remaining.\n"
+                    + "- Suggested action: " + recommendation.getActionHint();
+            jobRecommendationDetailsArea.setText(details);
+            jobRecommendationDetailsArea.setCaretPosition(0);
+        }
+
+        private String formatSkillList(List<String> skills) {
+            return skills == null || skills.isEmpty() ? "none" : String.join(", ", skills);
         }
 
         private void withdrawSelected() {
@@ -2785,6 +2919,7 @@ public class SwingApp {
         private final JLabel summaryFilledJobs = new JLabel("--");
         private final JLabel summaryOverloaded = new JLabel("--");
         private final JLabel summaryHighRisk = new JLabel("--");
+        private JTextArea recommendationArea;
         private final JTextField workloadSearchField = new JTextField();
 
         private AdminPanel() {
@@ -3070,6 +3205,43 @@ public class SwingApp {
             add(contentPanel, BorderLayout.CENTER);
         }
 
+        private JPanel buildSummaryBar() {
+            JPanel bar = new JPanel(new java.awt.GridLayout(1, 4, 12, 0));
+            bar.setBackground(new Color(245, 246, 250));
+            bar.setBorder(BorderFactory.createCompoundBorder(
+                    BorderFactory.createMatteBorder(0, 0, 1, 0, new Color(220, 223, 230)),
+                    BorderFactory.createEmptyBorder(10, 20, 10, 20)));
+            bar.add(buildSummaryCard("Total Jobs", summaryTotalJobs, new Color(99, 102, 241)));
+            bar.add(buildSummaryCard("Filled Jobs", summaryFilledJobs, new Color(16, 185, 129)));
+            bar.add(buildSummaryCard("Overloaded TAs", summaryOverloaded, new Color(239, 68, 68)));
+            bar.add(buildSummaryCard("High-Risk TAs", summaryHighRisk, new Color(245, 158, 11)));
+            return bar;
+        }
+
+        private JPanel buildSummaryCard(String title, JLabel valueLabel, Color accent) {
+            JPanel card = new JPanel(new BorderLayout(4, 4));
+            card.setBackground(Color.WHITE);
+            card.setBorder(BorderFactory.createCompoundBorder(
+                    BorderFactory.createLineBorder(new Color(220, 223, 230), 1, true),
+                    BorderFactory.createEmptyBorder(8, 14, 8, 14)));
+            JLabel titleLbl = new JLabel(title);
+            titleLbl.setFont(new Font("Segoe UI", Font.PLAIN, 11));
+            titleLbl.setForeground(new Color(107, 114, 128));
+            valueLabel.setFont(new Font("Segoe UI", Font.BOLD, 22));
+            valueLabel.setForeground(accent);
+            card.add(titleLbl, BorderLayout.NORTH);
+            card.add(valueLabel, BorderLayout.CENTER);
+            return card;
+        }
+
+        private void refreshSummaryBar() {
+            AdminService.RecruitmentSnapshot snap = adminService.getRecruitmentSnapshot();
+            summaryTotalJobs.setText(String.valueOf(snap.totalJobs));
+            summaryFilledJobs.setText(String.valueOf(snap.filledJobs));
+            summaryOverloaded.setText(String.valueOf(snap.overloadedTAs));
+            summaryHighRisk.setText(String.valueOf(snap.atRiskTAs));
+        }
+
         private void bindUser(User user) {
             refreshWorkload();
             refreshAccounts();
@@ -3269,41 +3441,64 @@ public class SwingApp {
             }
         }
 
-        private JPanel buildSummaryBar() {
-            JPanel bar = new JPanel(new java.awt.GridLayout(1, 4, 12, 0));
-            bar.setBackground(new Color(245, 246, 250));
-            bar.setBorder(BorderFactory.createCompoundBorder(
-                    BorderFactory.createMatteBorder(0, 0, 1, 0, new Color(220, 223, 230)),
-                    BorderFactory.createEmptyBorder(10, 20, 10, 20)));
-            bar.add(buildSummaryCard("Total Jobs", summaryTotalJobs, new Color(99, 102, 241)));
-            bar.add(buildSummaryCard("Filled Jobs", summaryFilledJobs, new Color(16, 185, 129)));
-            bar.add(buildSummaryCard("Overloaded TAs", summaryOverloaded, new Color(239, 68, 68)));
-            bar.add(buildSummaryCard("High-Risk TAs", summaryHighRisk, new Color(245, 158, 11)));
-            return bar;
+        private JPanel buildRecommendationPanel() {
+            recommendationArea = new JTextArea();
+            recommendationArea.setEditable(false);
+            recommendationArea.setLineWrap(true);
+            recommendationArea.setWrapStyleWord(true);
+            recommendationArea.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+            recommendationArea.setBackground(new Color(250, 246, 255));
+            recommendationArea.setForeground(new Color(58, 31, 107));
+            recommendationArea.setBorder(BorderFactory.createEmptyBorder(10, 12, 10, 12));
+
+            JPanel panel = new JPanel(new BorderLayout(0, 10));
+            panel.setOpaque(true);
+            panel.setBackground(new Color(248, 244, 255));
+            panel.setBorder(BorderFactory.createCompoundBorder(
+                    BorderFactory.createLineBorder(new Color(199, 177, 255), 1, true),
+                    BorderFactory.createEmptyBorder(14, 16, 14, 16)));
+
+            JLabel title = new JLabel("AI Workload Analysis");
+            title.setFont(new Font("Segoe UI", Font.BOLD, 16));
+            title.setForeground(QMUL_PURPLE_DARK);
+            panel.add(title, BorderLayout.NORTH);
+            panel.add(recommendationArea, BorderLayout.CENTER);
+            return panel;
         }
 
-        private JPanel buildSummaryCard(String title, JLabel valueLabel, Color accent) {
-            JPanel card = new JPanel(new BorderLayout(4, 4));
-            card.setBackground(Color.WHITE);
-            card.setBorder(BorderFactory.createCompoundBorder(
-                    BorderFactory.createLineBorder(new Color(220, 223, 230), 1, true),
-                    BorderFactory.createEmptyBorder(8, 14, 8, 14)));
-            JLabel titleLbl = new JLabel(title);
-            titleLbl.setFont(new Font("Segoe UI", Font.PLAIN, 11));
-            titleLbl.setForeground(new Color(107, 114, 128));
-            valueLabel.setFont(new Font("Segoe UI", Font.BOLD, 22));
-            valueLabel.setForeground(accent);
-            card.add(titleLbl, BorderLayout.NORTH);
-            card.add(valueLabel, BorderLayout.CENTER);
-            return card;
-        }
-
-        private void refreshSummaryBar() {
-            AdminService.RecruitmentSnapshot snap = adminService.getRecruitmentSnapshot();
-            summaryTotalJobs.setText(String.valueOf(snap.totalJobs));
-            summaryFilledJobs.setText(String.valueOf(snap.filledJobs));
-            summaryOverloaded.setText(String.valueOf(snap.overloadedTAs));
-            summaryHighRisk.setText(String.valueOf(snap.atRiskTAs));
+        private void updateWorkloadRecommendations() {
+            if (recommendationArea == null) {
+                return;
+            }
+            String summary = adminService.getWorkloadBalancingSummary();
+            List<WorkloadBalancerService.WorkloadRecommendation> recommendations = adminService.getWorkloadRecommendations();
+            StringBuilder sb = new StringBuilder();
+            sb.append(summary).append("\n\n");
+            if (recommendations.isEmpty()) {
+                sb.append("• All TA workloads are balanced.");
+            } else {
+                for (WorkloadBalancerService.WorkloadRecommendation recommendation : recommendations) {
+                    sb.append("• ").append(recommendation.getOverloadedName())
+                            .append(" exceeds their weekly capacity by ")
+                            .append(recommendation.getOverloadHours()).append("h/week.\n");
+                    sb.append("  - ").append(recommendation.getTargetName())
+                            .append(" currently has ")
+                            .append(recommendation.getTargetRemainingCapacityHours()).append("h/week remaining capacity.\n");
+                    sb.append("  - Suggested Action: Move ")
+                            .append(recommendation.getMoveHours()).append("h/week from ")
+                            .append(recommendation.getOverloadedName()).append(" to ")
+                            .append(recommendation.getTargetName()).append(".\n");
+                    sb.append("  - ").append(recommendation.getPriority().label())
+                            .append(" Redistribution Recommended.\n");
+                    sb.append("  - Explainability: ")
+                            .append(recommendation.getOverloadedName())
+                            .append(" exceeds capacity by ")
+                            .append(String.format("%.0f%%", Math.max(0, (recommendation.getOverloadHours() * 100.0) / Math.max(1, recommendation.getTargetRemainingCapacityHours() + recommendation.getOverloadHours()))))
+                            .append(".\n\n");
+                }
+            }
+            recommendationArea.setText(sb.toString().trim());
+            recommendationArea.setCaretPosition(0);
         }
 
         private void showTADetailDialog() {

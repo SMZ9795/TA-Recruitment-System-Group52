@@ -58,6 +58,8 @@ public final class RecruitmentSystemTestRunner {
         runCase("AI matching returns 100 for complete matches", this::testAiMatchingCompleteMatch);
         runCase("AI matching returns partial score with missing skills", this::testAiMatchingPartialMatch);
         runCase("AI matching handles empty and invalid input", this::testAiMatchingEmptyAndInvalidInput);
+        runCase("TA job recommendation sorting places high match first", this::testTaJobRecommendationSorting);
+        runCase("TA job recommendation places low match jobs backward and handles hour limits", this::testTaJobRecommendationLowFitBackward);
         runCase("MO ranking sorts by match score descending", this::testMoRankingSortsByMatchScoreDescending);
         runCase("MO ranking filters pending applications and minimum score", this::testMoRankingFiltersPendingAndMinimumScore);
         runCase("AdminService risk level respects TA availableHours, not hardcoded 20h", this::testAdminRiskLevelUsesAvailableHours);
@@ -564,6 +566,65 @@ public final class RecruitmentSystemTestRunner {
                 "Match score must be between 0 and 100.",
                 () -> new AiMatchingService.MatchResult(120, List.of("java"), List.of(), "invalid"),
                 "Out-of-range score should be rejected.");
+    }
+
+    private void testTaJobRecommendationSorting() {
+        AiMatchingService service = new AiMatchingService();
+        User ta = new User();
+        ta.setId("TA-SORT-1");
+        ta.setRole(com.group52.tarecruitment.model.Role.TA);
+        ta.setAvailableHours(20);
+        ta.setSkills("Java, Python, SQL");
+
+        Job job1 = new Job("JOB-REC-1", "CS101", "Intro", "Support", "Java, Python", 10, 1, "2026-12-01", "MO01", JobStatus.OPEN);
+        Job job2 = new Job("JOB-REC-2", "CS102", "Web", "Support", "HTML, CSS", 10, 1, "2026-12-01", "MO01", JobStatus.OPEN);
+        Job job3 = new Job("JOB-REC-3", "CS103", "Data", "Support", "Python", 10, 1, "2026-12-01", "MO01", JobStatus.OPEN);
+
+        List<Job> jobs = new java.util.ArrayList<>(List.of(job2, job1, job3));
+
+        jobs.sort(java.util.Comparator
+                .<Job>comparingInt(job -> service.recommendJob(ta, job, 0).getScore())
+                .reversed()
+                .thenComparing(Job::getId));
+
+        assertEquals("JOB-REC-1", jobs.get(0).getId(), "High match job should be first");
+        assertEquals("JOB-REC-3", jobs.get(1).getId(), "High match job should be second");
+        assertEquals("JOB-REC-2", jobs.get(2).getId(), "Low match job should be last");
+    }
+
+    private void testTaJobRecommendationLowFitBackward() {
+        AiMatchingService service = new AiMatchingService();
+        User ta = new User();
+        ta.setId("TA-SORT-2");
+        ta.setRole(com.group52.tarecruitment.model.Role.TA);
+        ta.setAvailableHours(10);
+        ta.setSkills("Java");
+
+        Job jobOverHours = new Job("JOB-LOW-1", "CS101", "Intro", "Support", "Java", 20, 1, "2026-12-01", "MO01", JobStatus.OPEN); // match 100%, 20h > 10h remaining -> -20 penalty -> 80
+        Job jobPartialFit = new Job("JOB-LOW-2", "CS102", "Intro2", "Support", "Java, Python", 5, 1, "2026-12-01", "MO01", JobStatus.OPEN); // match 50%, 5h <= 10h remaining -> +10 bonus -> 60
+        Job jobLowFit = new Job("JOB-LOW-3", "CS103", "Intro3", "Support", "C++", 5, 1, "2026-12-01", "MO01", JobStatus.OPEN); // match 0%, 5h <= 10h remaining -> +10 bonus -> 10
+
+        AiMatchingService.RecommendationResult r1 = service.recommendJob(ta, jobOverHours, 0);
+        AiMatchingService.RecommendationResult r2 = service.recommendJob(ta, jobPartialFit, 0);
+        AiMatchingService.RecommendationResult r3 = service.recommendJob(ta, jobLowFit, 0);
+
+        assertEquals(80, r1.getScore(), "Over hours should have penalty");
+        assertFalse(r1.isHoursFit(), "Over hours should not fit rules");
+
+        assertEquals(60, r2.getScore(), "Partial fit should have bonus if hours fit");
+        assertTrue(r2.isHoursFit(), "Hours fit rules should apply");
+
+        assertEquals(10, r3.getScore(), "Low fit should also have hours check");
+
+        List<Job> jobs = new java.util.ArrayList<>(List.of(jobLowFit, jobOverHours, jobPartialFit));
+        jobs.sort(java.util.Comparator
+                .<Job>comparingInt(job -> service.recommendJob(ta, job, 0).getScore())
+                .reversed()
+                .thenComparing(Job::getId));
+
+        assertEquals("JOB-LOW-1", jobs.get(0).getId(), "Over hours (score 80) is first");
+        assertEquals("JOB-LOW-2", jobs.get(1).getId(), "Partial fit (score 60) is second");
+        assertEquals("JOB-LOW-3", jobs.get(2).getId(), "Low fit (score 10) is last");
     }
 
     private void testMoRankingSortsByMatchScoreDescending() throws Exception {
