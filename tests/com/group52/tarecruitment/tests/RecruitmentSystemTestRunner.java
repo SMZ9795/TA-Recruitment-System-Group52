@@ -6,6 +6,7 @@ import com.group52.tarecruitment.model.Job;
 import com.group52.tarecruitment.model.JobStatus;
 import com.group52.tarecruitment.model.Role;
 import com.group52.tarecruitment.model.User;
+import com.group52.tarecruitment.repository.ApplicationAuditLogRepository;
 import com.group52.tarecruitment.repository.ApplicationRepository;
 import com.group52.tarecruitment.repository.JobRepository;
 import com.group52.tarecruitment.repository.UserRepository;
@@ -66,6 +67,12 @@ public final class RecruitmentSystemTestRunner {
         runCase("AdminService getWorkloadAlerts generates CRITICAL for overloaded and WARNING for at-risk TAs", this::testWorkloadAlerts);
         runCase("AdminService getIdleTAs returns TAs with available hours but no accepted positions", this::testIdleTAs);
         runCase("AdminService getDepartmentStats aggregates positions and hours per module", this::testDepartmentStats);
+        runCase("AuthService changePassword validates old password, strength, and uniqueness", this::testChangePassword);
+        runCase("ApplicationService audit log records status changes", this::testAuditLogRecordsStatusChanges);
+        runCase("ApplicationService audit log query by TA and by Job ID", this::testAuditLogQueries);
+        runCase("AuthService login locks account after 5 failed attempts", this::testLoginLockAfterFailedAttempts);
+        runCase("AuthService lock expires and counter resets after successful login", this::testLoginLockExpiry);
+        runCase("AuthService password strength enforced at registration", this::testPasswordStrengthEnforced);
 
         System.out.println();
         System.out.println("==== TEST SUMMARY ====");
@@ -189,13 +196,13 @@ public final class RecruitmentSystemTestRunner {
                     "231226111",
                     "Clara",
                     "clara@bupt.cn",
-                    "password1");
+                    "Password1!");
             assertEquals("TA231226111", registered.getId(), "TA ID should be student-ID based.");
 
-            User loginById = context.authService.login("TA231226111", "password1");
+            User loginById = context.authService.login("TA231226111", "Password1!");
             assertEquals("clara@bupt.cn", loginById.getEmail(), "Login by user ID should work.");
 
-            User loginByEmail = context.authService.login("clara@bupt.cn", "password1");
+            User loginByEmail = context.authService.login("clara@bupt.cn", "Password1!");
             assertEquals("TA231226111", loginByEmail.getId(), "Login by email should work.");
 
             assertThrowsContains(
@@ -204,13 +211,13 @@ public final class RecruitmentSystemTestRunner {
                     "Wrong password should be rejected.");
             assertThrowsContains(
                     "Email is already registered.",
-                    () -> context.authService.registerTa("231226112", "Other", "clara@bupt.cn", "password1"),
+                    () -> context.authService.registerTa("231226112", "Other", "clara@bupt.cn", "Password1!"),
                     "Duplicate email should be rejected.");
 
             context.authService.setUserActive("TA231226111", false);
             assertThrowsContains(
                     "This account is inactive.",
-                    () -> context.authService.login("TA231226111", "password1"),
+                    () -> context.authService.login("TA231226111", "Password1!"),
                     "Inactive user should not be able to login.");
         }
     }
@@ -489,7 +496,7 @@ public final class RecruitmentSystemTestRunner {
             User mo = newMo("MO4001", "Prof Zhao", "prof.zhao@bupt.cn");
             context.userRepository.save(mo);
 
-            User ta = context.authService.registerTa("231226999", "Iris", "iris@bupt.cn", "password1");
+            User ta = context.authService.registerTa("231226999", "Iris", "iris@bupt.cn", "Password1!");
             User taForProfile = context.authService.findById(ta.getId())
                     .orElseThrow(() -> new AssertionError("Registered TA should be queryable."));
             taForProfile.setProgramme("Data Science");
@@ -1082,6 +1089,126 @@ public final class RecruitmentSystemTestRunner {
     private static void assertFalse(boolean condition, String message) {
         if (condition) {
             throw new AssertionError(message);
+        }
+    }
+
+    private void testChangePassword() throws Exception {
+        try (TestContext context = new TestContext()) {
+            context.authService.registerTa("231226900", "Tester", "tester@bupt.cn", "Pass1234!");
+            // Wrong old password
+            assertThrowsContains("Current password is incorrect.",
+                    () -> context.authService.changePassword("TA231226900", "wrong", "NewPass1!", "NewPass1!"),
+                    "Wrong old password should be rejected.");
+            // New == old
+            assertThrowsContains("New password must differ",
+                    () -> context.authService.changePassword("TA231226900", "Pass1234!", "Pass1234!", "Pass1234!"),
+                    "Same password should be rejected.");
+            // Confirm mismatch
+            assertThrowsContains("do not match",
+                    () -> context.authService.changePassword("TA231226900", "Pass1234!", "NewPass1!", "NewPass2!"),
+                    "Mismatched confirm should be rejected.");
+            // Weak new password
+            assertThrowsContains("uppercase",
+                    () -> context.authService.changePassword("TA231226900", "Pass1234!", "newpass1!", "newpass1!"),
+                    "Weak password should be rejected.");
+            // Success
+            context.authService.changePassword("TA231226900", "Pass1234!", "NewPass1!", "NewPass1!");
+            User u = context.authService.login("TA231226900", "NewPass1!");
+            assertEquals("TA231226900", u.getId(), "Login with new password should succeed.");
+        }
+    }
+
+    private void testAuditLogRecordsStatusChanges() throws Exception {
+        try (TestContext context = new TestContext()) {
+            ApplicationAuditLogRepository auditRepo =
+                    new ApplicationAuditLogRepository(context.tempDirectory.resolve("audit_log.csv"));
+            context.applicationService.setAuditLogRepository(auditRepo);
+
+            User mo = context.authService.createMoAccount("MO1", "mo1@bupt.cn", "MoPass1!");
+            User ta = context.authService.registerTa("231226901", "TA1", "ta1@bupt.cn", "TaPass1!");
+            Job job = context.jobService.createJob("CS101", "Intro CS", "Dept", "Java", 2, 10, "2099-12-31", mo.getId());
+            Application app = context.applicationService.applyForJob(job.getId(), ta.getId());
+
+            context.applicationService.updateApplicationStatus(app.getId(), mo.getId(), ApplicationStatus.ACCEPTED);
+
+            List<com.group52.tarecruitment.model.ApplicationAuditLog> logs = auditRepo.findAll();
+            assertEquals(1, logs.size(), "One audit log entry should be written.");
+            assertEquals(ApplicationStatus.ACCEPTED, logs.get(0).getToStatus(), "Log should record ACCEPTED.");
+            assertEquals(mo.getId(), logs.get(0).getOperatorUserId(), "Operator should be MO.");
+        }
+    }
+
+    private void testAuditLogQueries() throws Exception {
+        try (TestContext context = new TestContext()) {
+            ApplicationAuditLogRepository auditRepo =
+                    new ApplicationAuditLogRepository(context.tempDirectory.resolve("audit_log.csv"));
+            context.applicationService.setAuditLogRepository(auditRepo);
+
+            User mo = context.authService.createMoAccount("MO2", "mo2@bupt.cn", "MoPass2!");
+            User ta1 = context.authService.registerTa("231226902", "TA2", "ta2@bupt.cn", "TaPass2!");
+            User ta2 = context.authService.registerTa("231226903", "TA3", "ta3@bupt.cn", "TaPass3!");
+            Job job1 = context.jobService.createJob("CS102", "Algo", "Dept", "Java", 2, 10, "2099-12-31", mo.getId());
+            Job job2 = context.jobService.createJob("CS103", "OS", "Dept", "C", 2, 10, "2099-12-31", mo.getId());
+            Application app1 = context.applicationService.applyForJob(job1.getId(), ta1.getId());
+            Application app2 = context.applicationService.applyForJob(job2.getId(), ta2.getId());
+            context.applicationService.updateApplicationStatus(app1.getId(), mo.getId(), ApplicationStatus.ACCEPTED);
+            context.applicationService.updateApplicationStatus(app2.getId(), mo.getId(), ApplicationStatus.REJECTED);
+
+            List<com.group52.tarecruitment.model.ApplicationAuditLog> byTa = auditRepo.findByTaUserId(ta1.getId());
+            assertEquals(1, byTa.size(), "findByTaUserId should return only ta1's log.");
+            List<com.group52.tarecruitment.model.ApplicationAuditLog> byJob = auditRepo.findByJobId(job2.getId());
+            assertEquals(1, byJob.size(), "findByJobId should return only job2's log.");
+        }
+    }
+
+    private void testLoginLockAfterFailedAttempts() throws Exception {
+        try (TestContext context = new TestContext()) {
+            context.authService.registerTa("231226904", "LockTest", "lock@bupt.cn", "LockPass1!");
+            for (int i = 0; i < 4; i++) {
+                try { context.authService.login("lock@bupt.cn", "wrong"); } catch (Exception ignored) {}
+            }
+            // 5th attempt should trigger lock
+            assertThrowsContains("Too many failed attempts",
+                    () -> context.authService.login("lock@bupt.cn", "wrong"),
+                    "5th failed attempt should lock the account.");
+            // Even correct password should be blocked while locked
+            assertThrowsContains("locked",
+                    () -> context.authService.login("lock@bupt.cn", "LockPass1!"),
+                    "Locked account should reject even correct password.");
+        }
+    }
+
+    private void testLoginLockExpiry() throws Exception {
+        try (TestContext context = new TestContext()) {
+            context.authService.registerTa("231226905", "ExpireTest", "expire@bupt.cn", "ExpPass1!");
+            // Manually set lock to past time
+            com.group52.tarecruitment.model.User u = context.authService.findById("TA231226905").orElseThrow();
+            u.setLockedUntil(java.time.LocalDateTime.now().minusMinutes(1).toString());
+            u.setFailedLoginAttempts(5);
+            context.userRepository.save(u);
+            // Login should succeed (lock expired)
+            User loggedIn = context.authService.login("expire@bupt.cn", "ExpPass1!");
+            assertEquals("TA231226905", loggedIn.getId(), "Login should succeed after lock expires.");
+            // Counter should be reset
+            User reloaded = context.authService.findById("TA231226905").orElseThrow();
+            assertEquals(0, reloaded.getFailedLoginAttempts(), "Failed attempts should reset after successful login.");
+        }
+    }
+
+    private void testPasswordStrengthEnforced() throws Exception {
+        try (TestContext context = new TestContext()) {
+            assertThrowsContains("uppercase",
+                    () -> context.authService.registerTa("231226906", "Weak", "weak@bupt.cn", "password1!"),
+                    "No uppercase should be rejected.");
+            assertThrowsContains("digit",
+                    () -> context.authService.registerTa("231226906", "Weak", "weak@bupt.cn", "Password!"),
+                    "No digit should be rejected.");
+            assertThrowsContains("special",
+                    () -> context.authService.registerTa("231226906", "Weak", "weak@bupt.cn", "Password1"),
+                    "No special char should be rejected.");
+            assertThrowsContains("8 characters",
+                    () -> context.authService.registerTa("231226906", "Weak", "weak@bupt.cn", "P1!"),
+                    "Too short should be rejected.");
         }
     }
 

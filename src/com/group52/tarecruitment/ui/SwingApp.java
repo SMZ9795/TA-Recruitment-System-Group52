@@ -1122,6 +1122,7 @@ public class SwingApp {
         private final JTextField nameField;
         private final JTextField emailField;
         private final JPasswordField passwordField;
+        private final JLabel passwordHintLabel = new JLabel(" ");
         private final JTextField programmeField;
         private final JTextField yearField;
         private final JTextArea skillsArea;
@@ -1212,6 +1213,25 @@ public class SwingApp {
             right.add(emailField);
             right.add(createFieldLabel("Password"));
             right.add(passwordField);
+            passwordHintLabel.setFont(new Font("Segoe UI", Font.PLAIN, 11));
+            passwordHintLabel.setForeground(BADGE_ORANGE);
+            right.add(passwordHintLabel);
+            passwordField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+                private void update() {
+                    String hint = com.group52.tarecruitment.util.ValidationUtil
+                            .passwordStrengthHint(new String(passwordField.getPassword()));
+                    if (hint.isBlank()) {
+                        passwordHintLabel.setText("✓ Strong password");
+                        passwordHintLabel.setForeground(BADGE_GREEN);
+                    } else {
+                        passwordHintLabel.setText(hint);
+                        passwordHintLabel.setForeground(BADGE_ORANGE);
+                    }
+                }
+                public void insertUpdate(javax.swing.event.DocumentEvent e) { update(); }
+                public void removeUpdate(javax.swing.event.DocumentEvent e) { update(); }
+                public void changedUpdate(javax.swing.event.DocumentEvent e) { update(); }
+            });
             right.add(createFieldLabel("Programme"));
             right.add(programmeField);
             right.add(createFieldLabel("Year of Study"));
@@ -1360,6 +1380,7 @@ public class SwingApp {
         private final JLabel dashboardAppliedCountLabel;
         private final JLabel dashboardPendingCountLabel;
         private final JLabel dashboardAcceptedCountLabel;
+        private final JLabel dashboardAcceptRateLabel;
         private final JTextField profileNameField;
         private final JTextField profileYearField;
         private final JTextField profileProgrammeField;
@@ -1435,11 +1456,13 @@ public class SwingApp {
             dashboardAppliedCountLabel = new JLabel("0");
             dashboardPendingCountLabel = new JLabel("0");
             dashboardAcceptedCountLabel = new JLabel("0");
-            JPanel statCards = new JPanel(new GridLayout(1, 3, 14, 0));
+            dashboardAcceptRateLabel = new JLabel("0%");
+            JPanel statCards = new JPanel(new GridLayout(1, 4, 14, 0));
             statCards.setOpaque(false);
             statCards.add(createGradientStatCard(dashboardAppliedCountLabel, "Applications", "Total submitted", "⌘", QMUL_PURPLE, QMUL_PURPLE_LIGHT));
             statCards.add(createGradientStatCard(dashboardPendingCountLabel, "Pending", "Waiting review", "⏳", BADGE_ORANGE, new Color(255, 196, 105)));
             statCards.add(createGradientStatCard(dashboardAcceptedCountLabel, "Accepted", "Confirmed roles", "✓", BADGE_GREEN, new Color(120, 210, 162)));
+            statCards.add(createGradientStatCard(dashboardAcceptRateLabel, "Accept Rate", "Of decided apps", "%", new Color(0, 150, 199), new Color(0, 190, 240)));
 
             applicationSummaryLabel = new JLabel("Applications: 0 pending, 0 accepted, 0 rejected, 0 withdrawn.");
             applicationSummaryLabel.setFont(new Font("Segoe UI", Font.PLAIN, 13));
@@ -1844,6 +1867,8 @@ public class SwingApp {
             dashboardAppliedCountLabel.setText(String.valueOf(applications == null ? 0 : applications.size()));
             dashboardPendingCountLabel.setText(String.valueOf(summary.getPending()));
             dashboardAcceptedCountLabel.setText(String.valueOf(summary.getAccepted()));
+            ApplicationService.ApplicationStats stats = applicationService.getApplicationStats(user.getId());
+            dashboardAcceptRateLabel.setText(String.format("%.0f%%", stats.acceptRate));
         }
 
         private void refreshNotifications() {
@@ -2737,6 +2762,7 @@ public class SwingApp {
         private static final String TAB_ACCOUNTS = "accounts";
         private static final String TAB_JOBS = "jobs";
         private static final String TAB_ALERTS = "alerts";
+        private static final String TAB_AUDIT = "audit";
 
         private final JLabel titleLabel;
         private final CardLayout contentLayout;
@@ -2750,6 +2776,9 @@ public class SwingApp {
         private final DefaultTableModel alertsModel;
         private final JTable alertsTable;
         private final JLabel alertsSummaryLabel = new JLabel(" ");
+        private final DefaultTableModel auditModel;
+        private final JTable auditTable;
+        private final JTextField auditSearchField = new JTextField();
 
         // Summary bar labels
         private final JLabel summaryTotalJobs = new JLabel("--");
@@ -2772,7 +2801,7 @@ public class SwingApp {
             contentLayout = new CardLayout();
             contentPanel = new JPanel(contentLayout);
 
-            String[] navLabels = {"Workload Overview", "Manage Accounts", "Jobs Overview", "Alerts"};
+            String[] navLabels = {"Workload Overview", "Manage Accounts", "Jobs Overview", "Alerts", "Audit Log"};
             Runnable[] navActions = {
                 () -> {
                     refreshWorkload();
@@ -2789,6 +2818,10 @@ public class SwingApp {
                 () -> {
                     refreshAlerts();
                     contentLayout.show(contentPanel, TAB_ALERTS);
+                },
+                () -> {
+                    refreshAuditLog();
+                    contentLayout.show(contentPanel, TAB_AUDIT);
                 }
             };
             add(buildNavigationPanel(navLabels, navActions), BorderLayout.WEST);
@@ -2998,6 +3031,42 @@ public class SwingApp {
             alertsPanel.add(alertsActions, BorderLayout.SOUTH);
             contentPanel.add(alertsPanel, TAB_ALERTS);
 
+            // Audit Log tab
+            auditModel = new DefaultTableModel(
+                    new Object[]{"Log ID", "Application ID", "TA ID", "Job ID", "Operator", "From", "To", "Date"}, 0) {
+                @Override public boolean isCellEditable(int row, int column) { return false; }
+            };
+            auditTable = new JTable(auditModel);
+            styleDataTable(auditTable);
+
+            JLabel auditTitle = new JLabel("Application Status Change Audit Log");
+            auditTitle.setFont(new Font("Segoe UI", Font.BOLD, 16));
+            auditTitle.setForeground(HEADER_TEXT);
+            JLabel auditSearchLabel = new JLabel("Filter by TA ID or Job ID:");
+            auditSearchLabel.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+            auditSearchField.setPreferredSize(new Dimension(200, 30));
+            JButton auditSearchBtn = new JButton("Search");
+            stylePrimaryButton(auditSearchBtn);
+            auditSearchBtn.addActionListener(e -> refreshAuditLog());
+            JButton auditClearBtn = new JButton("Clear");
+            styleSecondaryButton(auditClearBtn);
+            auditClearBtn.addActionListener(e -> { auditSearchField.setText(""); refreshAuditLog(); });
+            JPanel auditSearchBar = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+            auditSearchBar.setOpaque(false);
+            auditSearchBar.add(auditSearchLabel);
+            auditSearchBar.add(auditSearchField);
+            auditSearchBar.add(auditSearchBtn);
+            auditSearchBar.add(auditClearBtn);
+            JPanel auditHeader = new JPanel(new BorderLayout(0, 8));
+            auditHeader.setOpaque(false);
+            auditHeader.add(auditTitle, BorderLayout.NORTH);
+            auditHeader.add(auditSearchBar, BorderLayout.SOUTH);
+            JPanel auditPanel = new JPanel(new BorderLayout(0, 16));
+            auditPanel.setOpaque(false);
+            auditPanel.add(createCardPanel(auditHeader, 18, 18, 18, 18), BorderLayout.NORTH);
+            auditPanel.add(createCardPanel(new JScrollPane(auditTable), 0, 0, 0, 0), BorderLayout.CENTER);
+            contentPanel.add(auditPanel, TAB_AUDIT);
+
             add(contentPanel, BorderLayout.CENTER);
         }
 
@@ -3067,6 +3136,25 @@ public class SwingApp {
             alertsSummaryLabel.setText(String.format(
                     "Critical: %d  |  Warning: %d  |  Info: %d  |  System utilisation: %.0f%%",
                     critical, warning, info, adminService.getSystemUtilisation()));
+        }
+
+        private void refreshAuditLog() {
+            auditModel.setRowCount(0);
+            String filter = auditSearchField.getText().trim().toLowerCase();
+            for (com.group52.tarecruitment.model.ApplicationAuditLog log : applicationService.getAuditLogs()) {
+                if (!filter.isBlank()
+                        && !log.getTaUserId().toLowerCase().contains(filter)
+                        && !log.getJobId().toLowerCase().contains(filter)) {
+                    continue;
+                }
+                auditModel.addRow(new Object[]{
+                    log.getId(), log.getApplicationId(), log.getTaUserId(), log.getJobId(),
+                    log.getOperatorUserId(),
+                    log.getFromStatus() == null ? "-" : log.getFromStatus().name(),
+                    log.getToStatus() == null ? "-" : log.getToStatus().name(),
+                    log.getChangedAt()
+                });
+            }
         }
 
         private void exportWorkloadReport() {
