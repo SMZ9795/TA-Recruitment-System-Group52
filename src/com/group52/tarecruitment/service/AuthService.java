@@ -5,6 +5,7 @@ import com.group52.tarecruitment.model.User;
 import com.group52.tarecruitment.repository.UserRepository;
 import com.group52.tarecruitment.util.IdGenerator;
 import com.group52.tarecruitment.util.ValidationUtil;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -19,6 +20,9 @@ public class AuthService {
     public AuthService(UserRepository userRepository) {
         this.userRepository = userRepository;
     }
+
+    private static final int MAX_FAILED_ATTEMPTS = 5;
+    private static final int LOCK_MINUTES = 5;
 
     /**
      * Unified login: accepts either a user ID or an email address.
@@ -42,10 +46,41 @@ public class AuthService {
         if (!matchedUser.isActive()) {
             throw new IllegalArgumentException("This account is inactive.");
         }
+
+        // Check lock
+        String lockedUntil = matchedUser.getLockedUntil();
+        if (lockedUntil != null && !lockedUntil.isBlank()) {
+            LocalDateTime lockExpiry = LocalDateTime.parse(lockedUntil);
+            if (LocalDateTime.now().isBefore(lockExpiry)) {
+                throw new IllegalArgumentException(
+                        "Account is temporarily locked. Please try again after " + lockExpiry.toLocalTime().withSecond(0).withNano(0) + ".");
+            } else {
+                // Lock expired — reset
+                matchedUser.setLockedUntil("");
+                matchedUser.setFailedLoginAttempts(0);
+                userRepository.save(matchedUser);
+            }
+        }
+
         if (!matchedUser.getPassword().equals(normalizedPassword)) {
+            int attempts = matchedUser.getFailedLoginAttempts() + 1;
+            matchedUser.setFailedLoginAttempts(attempts);
+            if (attempts >= MAX_FAILED_ATTEMPTS) {
+                matchedUser.setLockedUntil(LocalDateTime.now().plusMinutes(LOCK_MINUTES).toString());
+                userRepository.save(matchedUser);
+                throw new IllegalArgumentException(
+                        "Too many failed attempts. Account locked for " + LOCK_MINUTES + " minutes.");
+            }
+            userRepository.save(matchedUser);
             throw new IllegalArgumentException("Incorrect password.");
         }
 
+        // Successful login — reset counter
+        if (matchedUser.getFailedLoginAttempts() > 0) {
+            matchedUser.setFailedLoginAttempts(0);
+            matchedUser.setLockedUntil("");
+            userRepository.save(matchedUser);
+        }
         return matchedUser;
     }
 

@@ -31,6 +31,15 @@ public final class ValidationUtil {
         if (normalizedPassword.length() < 8) {
             throw new IllegalArgumentException("Password must be at least 8 characters.");
         }
+        if (!normalizedPassword.matches(".*[A-Z].*")) {
+            throw new IllegalArgumentException("Password must contain at least one uppercase letter.");
+        }
+        if (!normalizedPassword.matches(".*[0-9].*")) {
+            throw new IllegalArgumentException("Password must contain at least one digit.");
+        }
+        if (!normalizedPassword.matches(".*[^A-Za-z0-9].*")) {
+            throw new IllegalArgumentException("Password must contain at least one special character.");
+        }
         return normalizedPassword;
     }
 
@@ -82,5 +91,14 @@ public final class ValidationUtil {
             throw new IllegalArgumentException(fieldName + " must be today or later.");
         }
         return parsedDate.toString();
+    }
+
+    /** Returns a human-readable hint about which password rules are not yet satisfied. Empty string means all rules pass. */
+    public static String passwordStrengthHint(String password) {
+        if (password == null || password.length() < 8) return "At least 8 characters required.";
+        if (!password.matches(".*[A-Z].*")) return "Add an uppercase letter.";
+        if (!password.matches(".*[0-9].*")) return "Add a digit.";
+        if (!password.matches(".*[^A-Za-z0-9].*")) return "Add a special character (e.g. !@#$).";
+        return "";
     }
 }

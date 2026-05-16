@@ -1,5 +1,6 @@
 package com.group52.tarecruitment;
 
+import com.group52.tarecruitment.repository.ApplicationAuditLogRepository;
 import com.group52.tarecruitment.repository.ApplicationRepository;
 import com.group52.tarecruitment.repository.JobRepository;
 import com.group52.tarecruitment.repository.NotificationRepository;
@@ -26,6 +27,8 @@ public class SwingMain {
                 new NotificationRepository(dataDirectory.resolve("notifications.csv"));
         WorkloadRepository workloadRepository =
                 new WorkloadRepository(dataDirectory.resolve("workloads.json"));
+        ApplicationAuditLogRepository auditLogRepository =
+                new ApplicationAuditLogRepository(dataDirectory.resolve("audit_log.csv"));
 
         AuthService authService = new AuthService(userRepository);
         NotificationService notificationService = new NotificationService(notificationRepository);
@@ -33,6 +36,7 @@ public class SwingMain {
         WorkloadService workloadService = new WorkloadService(workloadRepository);
         ApplicationService applicationService =
                 new ApplicationService(applicationRepository, jobRepository, workloadService, notificationService);
+        applicationService.setAuditLogRepository(auditLogRepository);
         AdminService adminService =
                 new AdminService(userRepository, jobRepository, applicationRepository, notificationService);
 
