@@ -17,6 +17,8 @@
 - **[iteration3]** Job lifecycle: closing an OPEN job blocks new TA applications.
 - **[iteration3]** Job lifecycle: reopening a CLOSED job restores apply, but is rejected when the deadline has passed or the job is already FILLED.
 - **[iteration3]** Job lifecycle: `autoCloseExpiredJobs` sweeps all OPEN jobs past deadline; an apply attempt against a stale OPEN job self-heals to CLOSED.
+- **[iteration4]** `ExportService` writes CSV files to `data/exports/` with timestamped filenames, header-only output for empty datasets, and unique filenames on repeated exports.
+- **[iteration4]** `ExportService` CSV content carries the documented headers and per-row field values (all applications, TA workload summary, job filling status, MO applicant list).
 
 ## Manual GUI regression (SwingApp)
 
@@ -48,6 +50,22 @@
    - The job becomes `CLOSED` automatically and a toast shows the count of auto-closed jobs.
 6. **Edit preserves CLOSED**: Editing a CLOSED job's fields keeps it CLOSED; reopening must be
    done via the explicit `Reopen Job` button.
+
+### Admin & MO panels — iteration 4 CSV exports
+1. **Admin Workload Overview** → click `Export Workload CSV`. A success dialog shows the path
+   under `data/exports/ta_workload_summary_<yyyyMMdd_HHmmss>.csv`. The file opens in a spreadsheet
+   with the documented header row and one row per TA that has accepted positions.
+2. **Admin Jobs Overview** → click `Export Job Filling CSV`. The exported file lists every job
+   with `positions`, `filledPositions`, `remainingPositions`, and a `filled/total` ratio.
+3. **Admin Audit Log** → click `Export All Applications CSV`. Every application row contains
+   the joined `moduleCode`, `moduleName`, `taName`, and `taEmail` columns.
+4. **MO Applicants tab** → open a job's applicants from Dashboard, click `Export Applicants CSV`.
+   The file contains the TA profile snapshot (programme, year, skills, available hours) plus the
+   application status. Trying to export without first opening a job shows a friendly warning.
+5. **Empty-data export** → with no applications in the system, the All-Applications export still
+   writes a header-only file (no error). The success dialog still reports the file path.
+6. **Repeated export** → click an export button twice in the same second. Two distinct files
+   appear in `data/exports/` (the second one gets a numeric suffix appended).
 
 ### Pre-existing GUI regression
 1. TA profile CV upload:

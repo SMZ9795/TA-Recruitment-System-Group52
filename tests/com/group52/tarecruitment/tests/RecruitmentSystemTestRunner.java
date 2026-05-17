@@ -15,6 +15,7 @@ import com.group52.tarecruitment.service.ApplicationService;
 import com.group52.tarecruitment.service.AiMatchingService;
 import com.group52.tarecruitment.service.AiMatchingServiceAdapter;
 import com.group52.tarecruitment.service.AuthService;
+import com.group52.tarecruitment.service.ExportService;
 import com.group52.tarecruitment.service.JobService;
 import com.group52.tarecruitment.service.MoApplicantRankingService;
 import com.group52.tarecruitment.util.CvValidationUtil;
@@ -75,6 +76,10 @@ public final class RecruitmentSystemTestRunner {
         runCase("AuthService login locks account after 5 failed attempts", this::testLoginLockAfterFailedAttempts);
         runCase("AuthService lock expires and counter resets after successful login", this::testLoginLockExpiry);
         runCase("AuthService password strength enforced at registration", this::testPasswordStrengthEnforced);
+        runCase("ExportService writes CSV files to data/exports with header even when data is empty",
+                this::testExportServiceCreatesCsvFiles);
+        runCase("ExportService CSV content carries the expected headers and per-row field values",
+                this::testExportServiceWritesCorrectFieldValues);
 
         System.out.println();
         System.out.println("==== TEST SUMMARY ====");
@@ -728,6 +733,193 @@ public final class RecruitmentSystemTestRunner {
             assertEquals("TA-FILTER-PASS", ranked.get(0).getApplicantId(), "Pending applicant above threshold should remain.");
             assertEquals(67, ranked.get(0).getMatchScore(), "Two of three required skills should score 67.");
         }
+    }
+
+    private void testExportServiceCreatesCsvFiles() throws Exception {
+        try (TestContext context = new TestContext()) {
+            Path exportsDir = context.tempDirectory.resolve("exports");
+            ExportService exportService = new ExportService(
+                    context.userRepository,
+                    context.jobRepository,
+                    context.applicationRepository,
+                    context.adminService,
+                    exportsDir);
+
+            Path emptyApplicationsCsv = exportService.exportAllApplications();
+            assertTrue(Files.exists(emptyApplicationsCsv),
+                    "Export file should be created even when there's no application data.");
+            assertTrue(emptyApplicationsCsv.startsWith(exportsDir),
+                    "Exported file must be saved under the configured exports directory.");
+            assertTrue(emptyApplicationsCsv.getFileName().toString().startsWith("all_applications_"),
+                    "Filename must start with 'all_applications_' for the all-applications report.");
+            assertTrue(emptyApplicationsCsv.getFileName().toString().endsWith(".csv"),
+                    "Filename must use the .csv extension.");
+            List<String> emptyLines = Files.readAllLines(emptyApplicationsCsv);
+            assertEquals(1, emptyLines.size(),
+                    "Empty export should contain only the header row, not blank data rows.");
+            assertEquals(
+                    String.join(",", asQuoted(ExportService.APPLICATIONS_HEADER)),
+                    emptyLines.get(0),
+                    "Header row must match ExportService.APPLICATIONS_HEADER.");
+
+            User mo = newMo("MO-EXPORT-1", "Export MO", "export.mo@bupt.cn");
+            User ta = newTa("TA-EXPORT-1", "Export TA", "export.ta@bupt.cn");
+            context.userRepository.save(mo);
+            context.userRepository.save(ta);
+            Job job = context.jobService.createJob(
+                    "EX101", "Export Module", "desc", "Java", "6", "2",
+                    LocalDate.now().plusDays(7).toString(), mo.getId());
+            context.applicationService.applyForJob(job.getId(), ta.getId());
+
+            Path workloadCsv = exportService.exportTaWorkloadSummary();
+            assertTrue(Files.exists(workloadCsv),
+                    "Workload export file should be created.");
+            assertTrue(workloadCsv.getFileName().toString().startsWith("ta_workload_summary_"),
+                    "Workload filename prefix must be 'ta_workload_summary_'.");
+
+            Path jobFillingCsv = exportService.exportJobFillingStatus();
+            assertTrue(Files.exists(jobFillingCsv),
+                    "Job filling status export file should be created.");
+            assertTrue(jobFillingCsv.getFileName().toString().startsWith("job_filling_status_"),
+                    "Job filling filename prefix must be 'job_filling_status_'.");
+
+            Path applicantsCsv = exportService.exportApplicantsForJob(job.getId());
+            assertTrue(Files.exists(applicantsCsv),
+                    "Applicants CSV file should be created.");
+            assertTrue(applicantsCsv.getFileName().toString().startsWith("applicants_EX101_"),
+                    "Applicants filename should embed sanitized module code.");
+
+            assertThrowsContains(
+                    "Job ID is required",
+                    () -> exportService.exportApplicantsForJob(" "),
+                    "Blank job ID must be rejected for applicant export.");
+            assertThrowsContains(
+                    "Job not found",
+                    () -> exportService.exportApplicantsForJob("JOB-DOES-NOT-EXIST"),
+                    "Unknown job ID must be rejected with a clear message.");
+
+            Path firstRun = exportService.exportJobFillingStatus();
+            Path secondRun = exportService.exportJobFillingStatus();
+            assertTrue(Files.exists(firstRun) && Files.exists(secondRun),
+                    "Repeated exports must both produce files.");
+            assertFalse(firstRun.equals(secondRun),
+                    "Repeated exports in the same second must resolve to distinct filenames.");
+        }
+    }
+
+    private void testExportServiceWritesCorrectFieldValues() throws Exception {
+        try (TestContext context = new TestContext()) {
+            Path exportsDir = context.tempDirectory.resolve("exports");
+            ExportService exportService = new ExportService(
+                    context.userRepository,
+                    context.jobRepository,
+                    context.applicationRepository,
+                    context.adminService,
+                    exportsDir);
+
+            User mo = newMo("MO-EXPORT-2", "Export MO 2", "export.mo2@bupt.cn");
+            User taAccepted = newTa("TA-EXPORT-A", "Alice Accepted", "alice.accepted@bupt.cn");
+            taAccepted.setProgramme("Data Science");
+            taAccepted.setSkills("Java;Python");
+            taAccepted.setAvailableHours(10);
+            User taPending = newTa("TA-EXPORT-B", "Bob Pending", "bob.pending@bupt.cn");
+            taPending.setProgramme("Software Engineering");
+            taPending.setSkills("Java");
+            taPending.setAvailableHours(8);
+            context.userRepository.save(mo);
+            context.userRepository.save(taAccepted);
+            context.userRepository.save(taPending);
+
+            Job job = context.jobService.createJob(
+                    "EX202", "Field Check Module", "Run labs",
+                    "Java", "6", "2",
+                    LocalDate.now().plusDays(10).toString(),
+                    mo.getId());
+            Application acceptedApp = context.applicationService.applyForJob(job.getId(), taAccepted.getId());
+            context.applicationService.updateApplicationStatus(
+                    acceptedApp.getId(), mo.getId(), ApplicationStatus.ACCEPTED);
+            context.applicationService.applyForJob(job.getId(), taPending.getId());
+
+            Path applicationsCsv = exportService.exportAllApplications();
+            List<String> applicationLines = Files.readAllLines(applicationsCsv);
+            assertEquals(3, applicationLines.size(),
+                    "All applications export must contain header plus one row per application.");
+            assertEquals(
+                    String.join(",", asQuoted(ExportService.APPLICATIONS_HEADER)),
+                    applicationLines.get(0),
+                    "All-applications header must list every documented field.");
+            String acceptedRow = findRowContaining(applicationLines, "Alice Accepted");
+            assertTrue(acceptedRow.contains("\"EX202\""),
+                    "Application row should expose the module code.");
+            assertTrue(acceptedRow.contains("\"Field Check Module\""),
+                    "Application row should expose the module name.");
+            assertTrue(acceptedRow.contains("\"ACCEPTED\""),
+                    "Application row should expose the storage status.");
+            assertTrue(acceptedRow.contains("\"alice.accepted@bupt.cn\""),
+                    "Application row should expose the TA email.");
+
+            Path workloadCsv = exportService.exportTaWorkloadSummary();
+            List<String> workloadLines = Files.readAllLines(workloadCsv);
+            assertEquals(
+                    String.join(",", asQuoted(ExportService.WORKLOAD_HEADER)),
+                    workloadLines.get(0),
+                    "Workload header must match ExportService.WORKLOAD_HEADER exactly.");
+            assertEquals(2, workloadLines.size(),
+                    "Only TAs with accepted positions should appear in the workload summary.");
+            String workloadRow = workloadLines.get(1);
+            assertTrue(workloadRow.contains("\"Alice Accepted\""),
+                    "Workload row must contain the TA's name.");
+            assertTrue(workloadRow.contains("\"10\""),
+                    "Workload row must contain availableHours=10 for Alice.");
+            assertTrue(workloadRow.contains("\"6\""),
+                    "Workload row must contain totalAssignedHours=6 from the accepted 6h/week job.");
+
+            Path jobFillingCsv = exportService.exportJobFillingStatus();
+            List<String> jobLines = Files.readAllLines(jobFillingCsv);
+            assertEquals(
+                    String.join(",", asQuoted(ExportService.JOB_FILLING_HEADER)),
+                    jobLines.get(0),
+                    "Job filling header must match ExportService.JOB_FILLING_HEADER exactly.");
+            assertEquals(2, jobLines.size(),
+                    "Job filling export should produce one row per job.");
+            String jobRow = jobLines.get(1);
+            assertTrue(jobRow.contains("\"EX202\""), "Job filling row must include moduleCode.");
+            assertTrue(jobRow.contains("\"1/2\""),
+                    "Job filling row must record 1 accepted of 2 positions as 1/2 ratio.");
+
+            Path applicantsCsv = exportService.exportApplicantsForJob(job.getId());
+            List<String> applicantLines = Files.readAllLines(applicantsCsv);
+            assertEquals(
+                    String.join(",", asQuoted(ExportService.APPLICANT_LIST_HEADER)),
+                    applicantLines.get(0),
+                    "Applicant list header must match ExportService.APPLICANT_LIST_HEADER exactly.");
+            assertEquals(3, applicantLines.size(),
+                    "Applicant export must include header plus one row per applicant of the job.");
+            String pendingRow = findRowContaining(applicantLines, "Bob Pending");
+            assertTrue(pendingRow.contains("\"Software Engineering\""),
+                    "Applicant row should expose the TA programme.");
+            assertTrue(pendingRow.contains("\"Java\""),
+                    "Applicant row should expose the TA skills.");
+            assertTrue(pendingRow.contains("\"PENDING\""),
+                    "Applicant row should expose the application status.");
+        }
+    }
+
+    private static String findRowContaining(List<String> rows, String needle) {
+        for (String row : rows) {
+            if (row.contains(needle)) {
+                return row;
+            }
+        }
+        throw new AssertionError("Expected a CSV row containing \"" + needle + "\" but none was found.");
+    }
+
+    private static String[] asQuoted(String[] values) {
+        String[] quoted = new String[values.length];
+        for (int i = 0; i < values.length; i++) {
+            quoted[i] = "\"" + values[i] + "\"";
+        }
+        return quoted;
     }
 
     private void runCase(String caseName, ThrowingRunnable testCase) throws Exception {
