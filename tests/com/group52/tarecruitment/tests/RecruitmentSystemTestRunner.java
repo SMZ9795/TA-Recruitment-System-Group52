@@ -82,20 +82,20 @@ public final class RecruitmentSystemTestRunner {
                 this::testExportServiceCreatesCsvFiles);
         runCase("ExportService CSV content carries the expected headers and per-row field values",
                 this::testExportServiceWritesCorrectFieldValues);
-        
-        // Iteration 4 Integration Tests
-        runCase("TA Job Recommendation: high-match jobs sorted before low-match", this::testTaRecommendationHighMatchFirst);
-        runCase("TA Job Recommendation: low-match jobs ranked after high-match", this::testTaRecommendationLowMatchLast);
-        runCase("Export functionality: CSV files created in data/exports/ with timestamp", this::testExportCsvFilesCreated);
-        runCase("Export functionality: exported CSV content contains correct fields", this::testExportCsvContentCorrect);
-        runCase("Workload Balancing: normal workload status classified as Balanced", this::testWorkloadBalancedStatus);
-        runCase("Workload Balancing: overloaded TA status classified as Overloaded", this::testWorkloadOverloadedStatus);
-        runCase("Workload Balancing: underused TA status classified as Underused", this::testWorkloadUnderusedStatus);
-        runCase("MO Notification: pending application count displayed correctly", this::testMoPendingApplicationCount);
-        runCase("MO Notification: job status changes to FILLED when all positions accepted", this::testJobFilledAfterAccept);
-        runCase("Password Change: correct old password allows successful change", this::testPasswordChangeSuccess);
-        runCase("Password Change: incorrect old password is rejected", this::testPasswordChangeFailure);
-        runCase("End-to-end Iteration 4: recommendation -> apply -> MO review -> admin workload", this::testIterationFourEndToEndFlow);
+
+        // Iteration 4 integration coverage (real services, not mocked literals)
+        runCase("WorkloadRules: balanced range covers [4h, 12h] inclusive boundaries",
+                this::testWorkloadRulesClassifyBalanced);
+        runCase("WorkloadRules: above 12h is OVERLOADED and reports transferable hours",
+                this::testWorkloadRulesClassifyOverloaded);
+        runCase("WorkloadRules: below 4h is UNDERUSED and reports missing hours",
+                this::testWorkloadRulesClassifyUnderused);
+        runCase("ApplicationRepository countByJobIdAndStatus returns only matching pending rows",
+                this::testPendingApplicationCountFromRepository);
+        runCase("ApplicationService.updateApplicationStatus auto-marks job FILLED when all positions accepted",
+                this::testJobAutoFilledWhenAllPositionsAccepted);
+        runCase("End-to-end iteration 4: apply -> accept -> workload counted -> exports include row",
+                this::testIterationFourEndToEndIntegration);
 
         System.out.println();
         System.out.println("==== TEST SUMMARY ====");
@@ -1504,302 +1504,154 @@ public final class RecruitmentSystemTestRunner {
         }
     }
 
-    private void testTaRecommendationHighMatchFirst() throws Exception {
+    // ---------------------------------------------------------------------
+    // Iteration 4 integration tests (rewritten to call real services rather
+    // than mocked literals). They replace the earlier ghost tests that either
+    // referenced non-existent APIs or asserted hard-coded values without
+    // exercising production code.
+    // ---------------------------------------------------------------------
+
+    private void testWorkloadRulesClassifyBalanced() {
+        assertEquals(com.group52.tarecruitment.util.WorkloadRules.WorkloadStatus.BALANCED,
+                com.group52.tarecruitment.util.WorkloadRules.classify(8),
+                "8h/week sits inside [4, 12] and must be BALANCED.");
+        assertEquals(com.group52.tarecruitment.util.WorkloadRules.WorkloadStatus.BALANCED,
+                com.group52.tarecruitment.util.WorkloadRules.classify(
+                        com.group52.tarecruitment.util.WorkloadRules.UNDERUSED_THRESHOLD_HOURS),
+                "Lower-bound (4h) must be classified BALANCED, not UNDERUSED.");
+        assertEquals(com.group52.tarecruitment.util.WorkloadRules.WorkloadStatus.BALANCED,
+                com.group52.tarecruitment.util.WorkloadRules.classify(
+                        com.group52.tarecruitment.util.WorkloadRules.OVERLOADED_THRESHOLD_HOURS),
+                "Upper-bound (12h) must be classified BALANCED, not OVERLOADED.");
+    }
+
+    private void testWorkloadRulesClassifyOverloaded() {
+        assertEquals(com.group52.tarecruitment.util.WorkloadRules.WorkloadStatus.OVERLOADED,
+                com.group52.tarecruitment.util.WorkloadRules.classify(16),
+                "16h/week must be OVERLOADED (> 12).");
+        int transferable = com.group52.tarecruitment.util.WorkloadRules.transferableHours(16);
+        assertEquals(com.group52.tarecruitment.util.WorkloadRules.DEFAULT_MAX_TRANSFER_HOURS, transferable,
+                "Overload of 4h above threshold should expose the full default transfer window.");
+        assertEquals(0, com.group52.tarecruitment.util.WorkloadRules.transferableHours(12),
+                "Exactly at threshold should not propose any transfer.");
+    }
+
+    private void testWorkloadRulesClassifyUnderused() {
+        assertEquals(com.group52.tarecruitment.util.WorkloadRules.WorkloadStatus.UNDERUSED,
+                com.group52.tarecruitment.util.WorkloadRules.classify(2),
+                "2h/week must be UNDERUSED (< 4).");
+        assertEquals(2, com.group52.tarecruitment.util.WorkloadRules.missingHoursToBalanced(2),
+                "Underused TA must report missing hours up to the balanced threshold.");
+        assertEquals(0, com.group52.tarecruitment.util.WorkloadRules.missingHoursToBalanced(8),
+                "Already-balanced TA must report zero missing hours.");
+    }
+
+    private void testPendingApplicationCountFromRepository() throws Exception {
         try (TestContext context = new TestContext()) {
-            // Create MO and job
-            User mo = newMo("MO1", "Prof", "prof@bupt.cn");
+            User mo = newMo("MO7001", "Prof Pending", "pending.mo@bupt.cn");
+            User ta1 = newTa("TA107000001", "Pending TA1", "pending1@bupt.cn");
+            User ta2 = newTa("TA107000002", "Pending TA2", "pending2@bupt.cn");
             context.userRepository.save(mo);
-            
-            Job job1 = new Job("JOB-HIGH", "AI401", "AI Lab", "Desc", "Java;Python;SQL", 
-                    10, 2, "2026-12-31", "MO1", JobStatus.OPEN);
-            Job job2 = new Job("JOB-LOW", "AI402", "C++ Lab", "Desc", "C++;Rust", 
-                    10, 1, "2026-12-31", "MO1", JobStatus.OPEN);
-            context.jobRepository.save(job1);
-            context.jobRepository.save(job2);
-            
-            // Create TA with matching skills
-            User ta = context.authService.registerTa("231226950", "RecommendTA", "rec@bupt.cn", "Pass1234!");
+            context.userRepository.save(ta1);
+            context.userRepository.save(ta2);
+
+            Job job = context.jobService.createJob(
+                    "CS940", "Pending Count Lab", "desc", "Java",
+                    "6", "3", LocalDate.now().plusDays(10).toString(), mo.getId());
+
+            context.applicationService.applyForJob(job.getId(), ta1.getId());
+            Application app2 = context.applicationService.applyForJob(job.getId(), ta2.getId());
+            context.applicationService.updateApplicationStatus(
+                    app2.getId(), mo.getId(), ApplicationStatus.REJECTED);
+
+            long pending = context.applicationRepository.countByJobIdAndStatus(
+                    job.getId(), ApplicationStatus.PENDING);
+            long rejected = context.applicationRepository.countByJobIdAndStatus(
+                    job.getId(), ApplicationStatus.REJECTED);
+            assertEquals(1L, pending, "Only one pending application should be reported by the repository.");
+            assertEquals(1L, rejected, "Rejected count should exclude pending and accepted applications.");
+            assertEquals(0L, context.applicationRepository.countByJobIdAndStatus(
+                            job.getId(), ApplicationStatus.ACCEPTED),
+                    "No applications have been accepted yet for this job.");
+        }
+    }
+
+    private void testJobAutoFilledWhenAllPositionsAccepted() throws Exception {
+        try (TestContext context = new TestContext()) {
+            User mo = newMo("MO8001", "Prof Fill", "fill.mo@bupt.cn");
+            User ta1 = newTa("TA108000001", "Fill TA1", "fill1@bupt.cn");
+            User ta2 = newTa("TA108000002", "Fill TA2", "fill2@bupt.cn");
+            context.userRepository.save(mo);
+            context.userRepository.save(ta1);
+            context.userRepository.save(ta2);
+
+            Job job = context.jobService.createJob(
+                    "CS941", "Auto-fill Lab", "desc", "Java",
+                    "6", "1", LocalDate.now().plusDays(10).toString(), mo.getId());
+
+            Application app1 = context.applicationService.applyForJob(job.getId(), ta1.getId());
+            Application app2 = context.applicationService.applyForJob(job.getId(), ta2.getId());
+
+            context.applicationService.updateApplicationStatus(
+                    app1.getId(), mo.getId(), ApplicationStatus.ACCEPTED);
+            Job afterFirstAccept = context.jobService.getJobById(job.getId())
+                    .orElseThrow(() -> new AssertionError("Job should still exist after first accept."));
+            assertEquals(JobStatus.FILLED, afterFirstAccept.getStatus(),
+                    "Job with one position should flip to FILLED after the first accept.");
+
+            assertThrowsContains("positions limit",
+                    () -> context.applicationService.updateApplicationStatus(
+                            app2.getId(), mo.getId(), ApplicationStatus.ACCEPTED),
+                    "Accepting a second TA after the position is filled must be rejected.");
+        }
+    }
+
+    private void testIterationFourEndToEndIntegration() throws Exception {
+        try (TestContext context = new TestContext()) {
+            User mo = newMo("MO9001", "Prof E2E", "e2e.mo@bupt.cn");
+            context.userRepository.save(mo);
+
+            Job job = context.jobService.createJob(
+                    "AI401", "AI E2E Lab", "End-to-end coverage", "Java;Python;SQL",
+                    "10", "1", LocalDate.now().plusDays(30).toString(), mo.getId());
+
+            User ta = newTa("TA109000001", "E2E TA", "e2e.ta@bupt.cn");
             ta.setSkills("Java;Python;SQL");
             ta.setAvailableHours(20);
             ta.setProgramme("Computer Science");
-            context.authService.updateUser(ta);
-            
-            // Get recommendations
-            AiMatchingService matchingService = new AiMatchingServiceAdapter();
-            List<Job> jobs = List.of(job1, job2);
-            List<Map<String, Object>> recommendations = new MoApplicantRankingService()
-                    .rankApplicants(jobs, ta, jobs);
-            
-            // Verify high match appears before low match
-            assertTrue(jobs.indexOf(job1) < jobs.indexOf(job2) || matchingService.calculateMatchScore(ta, job1) 
-                    > matchingService.calculateMatchScore(ta, job2),
-                    "High-match job should be ranked before low-match job.");
-        }
-    }
+            context.userRepository.save(ta);
 
-    private void testTaRecommendationLowMatchLast() throws Exception {
-        try (TestContext context = new TestContext()) {
-            // Create MO and jobs with varying match levels
-            User mo = newMo("MO2", "Prof", "prof@bupt.cn");
-            context.userRepository.save(mo);
-            
-            Job goodMatch = new Job("JOB-GOOD", "AI401", "Good Job", "Desc", "Java", 
-                    10, 1, "2026-12-31", "MO2", JobStatus.OPEN);
-            Job poorMatch = new Job("JOB-POOR", "AI402", "Poor Job", "Desc", "Go;Rust", 
-                    10, 1, "2026-12-31", "MO2", JobStatus.OPEN);
-            context.jobRepository.save(goodMatch);
-            context.jobRepository.save(poorMatch);
-            
-            // Create TA
-            User ta = context.authService.registerTa("231226951", "TA51", "ta51@bupt.cn", "Pass1234!");
-            ta.setSkills("Java");
-            ta.setAvailableHours(15);
-            context.authService.updateUser(ta);
-            
-            // Verify good match has higher score
-            AiMatchingService matcher = new AiMatchingServiceAdapter();
-            double goodScore = matcher.calculateMatchScore(ta, goodMatch);
-            double poorScore = matcher.calculateMatchScore(ta, poorMatch);
-            assertTrue(goodScore > poorScore, "Good match should have higher score than poor match.");
-        }
-    }
+            AiMatchingService matcher = new AiMatchingService();
+            AiMatchingService.RecommendationResult recommendation = matcher.recommendJob(ta, job, 0);
+            assertTrue(recommendation.getScore() >= 80,
+                    "Full skill overlap with spare hours should give a Recommended score.");
+            assertTrue(recommendation.isHoursFit(), "TA with 20h available must fit a 10h/week job.");
 
-    private void testExportCsvFilesCreated() throws Exception {
-        try (TestContext context = new TestContext()) {
-            // This test would verify that export files are created with timestamps
-            // In production, this would interact with the ExportService
+            Application app = context.applicationService.applyForJob(job.getId(), ta.getId());
+            context.applicationService.updateApplicationStatus(
+                    app.getId(), mo.getId(), ApplicationStatus.ACCEPTED);
+
+            assertEquals(job.getHoursPerWeek(),
+                    context.applicationService.getAcceptedWorkloadHoursForTa(ta.getId()),
+                    "After accept, the workload service should count the job's weekly hours for the TA.");
+            Job reloaded = context.jobService.getJobById(job.getId())
+                    .orElseThrow(() -> new AssertionError("Job should exist after accept."));
+            assertEquals(JobStatus.FILLED, reloaded.getStatus(),
+                    "Single-position job should be FILLED after the only accept.");
+
             Path exportsDir = context.tempDirectory.resolve("exports");
-            Files.createDirectories(exportsDir);
-            
-            String timestamp = "2026-05-17_143025";
-            Path applicationsCsv = exportsDir.resolve("applications_" + timestamp + ".csv");
-            Files.writeString(applicationsCsv, "Application ID,TA ID,Job ID,Status\n");
-            
-            assertTrue(Files.exists(applicationsCsv), "Exported CSV file should exist in data/exports/");
-        }
-    }
-
-    private void testExportCsvContentCorrect() throws Exception {
-        try (TestContext context = new TestContext()) {
-            // Create test data for export
-            User mo = newMo("MO3", "Prof", "prof@bupt.cn");
-            context.userRepository.save(mo);
-            
-            Job job = new Job("JOB-EXP", "AI401", "Export Job", "Desc", "Java", 
-                    5, 1, "2026-12-31", "MO3", JobStatus.OPEN);
-            context.jobRepository.save(job);
-            
-            User ta = context.authService.registerTa("231226952", "ExportTA", "exp@bupt.cn", "Pass1234!");
-            
-            Application app = new Application("APP-EXP-1", "JOB-EXP", ta.getId(), 
-                    ApplicationStatus.PENDING, "2026-05-17");
-            context.applicationRepository.save(app);
-            
-            // Verify export would contain required fields
-            List<String> expectedFields = List.of("Application ID", "TA ID", "Job ID", "Status", "Applied Date");
-            assertEquals(5, expectedFields.size(), "Export should have minimum 5 fields.");
-        }
-    }
-
-    private void testWorkloadBalancedStatus() throws Exception {
-        try (TestContext context = new TestContext()) {
-            User ta = newTa("TA-BAL", "Balanced TA", "bal@bupt.cn");
-            ta.setAvailableHours(20);
-            context.userRepository.save(ta);
-            
-            // Create job and accepted application
-            User mo = newMo("MO4", "Prof", "prof@bupt.cn");
-            context.userRepository.save(mo);
-            
-            Job job = new Job("JOB-BAL", "AI401", "Balanced Job", "Desc", "Java", 
-                    10, 1, "2026-12-31", "MO4", JobStatus.OPEN);
-            context.jobRepository.save(job);
-            
-            Application app = new Application("APP-BAL-1", "JOB-BAL", ta.getId(), 
-                    ApplicationStatus.ACCEPTED, "2026-05-17");
-            context.applicationRepository.save(app);
-            
-            // Assigned hours (10) < Available hours (20) = Balanced
-            int assignedHours = 10;
-            int availableHours = 20;
-            String status = assignedHours > availableHours ? "Overloaded" : 
-                           assignedHours < availableHours/2 ? "Underused" : "Balanced";
-            assertEquals("Balanced", status, "TA with 10 assigned and 20 available should be Balanced.");
-        }
-    }
-
-    private void testWorkloadOverloadedStatus() throws Exception {
-        try (TestContext context = new TestContext()) {
-            User ta = newTa("TA-OVR", "Overloaded TA", "ovr@bupt.cn");
-            ta.setAvailableHours(10);
-            context.userRepository.save(ta);
-            
-            // Create multiple jobs with accepted applications
-            User mo = newMo("MO5", "Prof", "prof@bupt.cn");
-            context.userRepository.save(mo);
-            
-            for (int i = 0; i < 2; i++) {
-                Job job = new Job("JOB-OVR-" + i, "AI40" + i, "Overload Job " + i, "Desc", "Java", 
-                        8, 1, "2026-12-31", "MO5", JobStatus.OPEN);
-                context.jobRepository.save(job);
-                
-                Application app = new Application("APP-OVR-" + i, "JOB-OVR-" + i, ta.getId(), 
-                        ApplicationStatus.ACCEPTED, "2026-05-17");
-                context.applicationRepository.save(app);
-            }
-            
-            // Assigned hours (16) > Available hours (10) = Overloaded
-            int assignedHours = 16;
-            int availableHours = 10;
-            String status = assignedHours > availableHours ? "Overloaded" : "Balanced";
-            assertEquals("Overloaded", status, "TA with 16 assigned and 10 available should be Overloaded.");
-        }
-    }
-
-    private void testWorkloadUnderusedStatus() throws Exception {
-        try (TestContext context = new TestContext()) {
-            User ta = newTa("TA-UND", "Underused TA", "und@bupt.cn");
-            ta.setAvailableHours(20);
-            context.userRepository.save(ta);
-            
-            User mo = newMo("MO6", "Prof", "prof@bupt.cn");
-            context.userRepository.save(mo);
-            
-            Job job = new Job("JOB-UND", "AI401", "Underuse Job", "Desc", "Java", 
-                    3, 1, "2026-12-31", "MO6", JobStatus.OPEN);
-            context.jobRepository.save(job);
-            
-            Application app = new Application("APP-UND-1", "JOB-UND", ta.getId(), 
-                    ApplicationStatus.ACCEPTED, "2026-05-17");
-            context.applicationRepository.save(app);
-            
-            // Assigned hours (3) < 50% of Available hours (10) = Underused
-            int assignedHours = 3;
-            int availableHours = 20;
-            String status = assignedHours > availableHours ? "Overloaded" : 
-                           assignedHours < availableHours/2 ? "Underused" : "Balanced";
-            assertEquals("Underused", status, "TA with 3 assigned and 20 available should be Underused.");
-        }
-    }
-
-    private void testMoPendingApplicationCount() throws Exception {
-        try (TestContext context = new TestContext()) {
-            User mo = newMo("MO7", "Prof", "prof@bupt.cn");
-            context.userRepository.save(mo);
-            
-            User ta = context.authService.registerTa("231226953", "PendingTA", "pend@bupt.cn", "Pass1234!");
-            
-            Job job = new Job("JOB-PEND", "AI401", "Pending Job", "Desc", "Java", 
-                    5, 1, "2026-12-31", "MO7", JobStatus.OPEN);
-            context.jobRepository.save(job);
-            
-            // Create pending applications
-            for (int i = 0; i < 3; i++) {
-                Application app = new Application("APP-PEND-" + i, "JOB-PEND", ta.getId(), 
-                        ApplicationStatus.PENDING, "2026-05-17");
-                context.applicationRepository.save(app);
-            }
-            
-            List<Application> pendingApps = context.applicationRepository.findByStatus(ApplicationStatus.PENDING);
-            assertEquals(3, pendingApps.size(), "Should have 3 pending applications.");
-        }
-    }
-
-    private void testJobFilledAfterAccept() throws Exception {
-        try (TestContext context = new TestContext()) {
-            User mo = newMo("MO8", "Prof", "prof@bupt.cn");
-            context.userRepository.save(mo);
-            
-            User ta = context.authService.registerTa("231226954", "FilledTA", "filled@bupt.cn", "Pass1234!");
-            
-            Job job = new Job("JOB-FILL", "AI401", "Fill Job", "Desc", "Java", 
-                    5, 1, "2026-12-31", "MO8", JobStatus.OPEN);
-            context.jobRepository.save(job);
-            
-            Application app = new Application("APP-FILL-1", "JOB-FILL", ta.getId(), 
-                    ApplicationStatus.PENDING, "2026-05-17");
-            context.applicationRepository.save(app);
-            
-            // Accept the application
-            app.setStatus(ApplicationStatus.ACCEPTED);
-            context.applicationRepository.save(app);
-            
-            // Check if all positions filled
-            List<Application> acceptedApps = context.applicationRepository
-                    .findByJobIdAndStatus("JOB-FILL", ApplicationStatus.ACCEPTED);
-            int acceptedCount = acceptedApps.size();
-            int jobPositions = 1;
-            
-            boolean jobShouldBeFilled = acceptedCount >= jobPositions;
-            assertTrue(jobShouldBeFilled, "Job should be marked FILLED when all positions are accepted.");
-        }
-    }
-
-    private void testPasswordChangeSuccess() throws Exception {
-        try (TestContext context = new TestContext()) {
-            context.authService.registerTa("231226955", "PassChangeTA", "pass@bupt.cn", "OldPass1!");
-            
-            // Change password successfully
-            context.authService.changePassword("TA231226955", "OldPass1!", "NewPass1!", "NewPass1!");
-            
-            // Verify can login with new password
-            User u = context.authService.login("TA231226955", "NewPass1!");
-            assertEquals("TA231226955", u.getId(), "Should login successfully with new password.");
-        }
-    }
-
-    private void testPasswordChangeFailure() throws Exception {
-        try (TestContext context = new TestContext()) {
-            context.authService.registerTa("231226956", "PassFailTA", "passfail@bupt.cn", "OldPass1!");
-            
-            // Try to change with wrong old password
-            assertThrowsContains("Current password is incorrect.",
-                    () -> context.authService.changePassword("TA231226956", "WrongPass1!", "NewPass1!", "NewPass1!"),
-                    "Wrong old password should be rejected.");
-        }
-    }
-
-    private void testIterationFourEndToEndFlow() throws Exception {
-        try (TestContext context = new TestContext()) {
-            // Setup: Create MO and Job
-            User mo = newMo("MO9", "Prof", "prof@bupt.cn");
-            context.userRepository.save(mo);
-            
-            Job job = new Job("JOB-E2E", "AI401", "E2E Job", "Good job", "Java;Python;SQL", 
-                    15, 2, "2026-12-31", "MO9", JobStatus.OPEN);
-            context.jobRepository.save(job);
-            
-            // Step 1: TA registers with matching skills
-            User ta = context.authService.registerTa("231226957", "E2ETA", "e2e@bupt.cn", "Pass1234!");
-            ta.setSkills("Java;Python;SQL");
-            ta.setAvailableHours(20);
-            ta.setProgramme("Computer Science");
-            context.authService.updateUser(ta);
-            
-            // Step 2: TA receives recommendation (would be high match)
-            AiMatchingService matcher = new AiMatchingServiceAdapter();
-            double matchScore = matcher.calculateMatchScore(ta, job);
-            assertTrue(matchScore > 0.5, "TA should get high match recommendation.");
-            
-            // Step 3: TA applies
-            Application app = new Application("APP-E2E-1", "JOB-E2E", ta.getId(), 
-                    ApplicationStatus.PENDING, "2026-05-17");
-            context.applicationRepository.save(app);
-            
-            // Step 4: MO reviews and accepts
-            app.setStatus(ApplicationStatus.ACCEPTED);
-            context.applicationRepository.save(app);
-            
-            // Step 5: Admin sees updated workload
-            List<Application> acceptedApps = context.applicationRepository
-                    .findByJobIdAndStatus("JOB-E2E", ApplicationStatus.ACCEPTED);
-            assertEquals(1, acceptedApps.size(), "Admin should see 1 accepted application.");
-            
-            // Verify TA workload is updated
-            int assignedHours = 15;  // From job
-            int availableHours = 20; // From TA
-            String workloadStatus = assignedHours > availableHours ? "Overloaded" : "Balanced";
-            assertEquals("Balanced", workloadStatus, "TA should have balanced workload after E2E flow.");
+            ExportService exportService = new ExportService(
+                    context.userRepository,
+                    context.jobRepository,
+                    context.applicationRepository,
+                    context.adminService,
+                    exportsDir);
+            Path applicationsCsv = exportService.exportAllApplications();
+            List<String> applicationLines = Files.readAllLines(applicationsCsv);
+            assertTrue(applicationLines.size() >= 2,
+                    "Applications export should contain a header plus at least the E2E application row.");
+            boolean containsTa = applicationLines.stream().anyMatch(line -> line.contains(ta.getId()));
+            assertTrue(containsTa, "Applications CSV should include the TA that completed the E2E flow.");
         }
     }
 
