@@ -42,9 +42,9 @@ public class AuthService {
         }
 
         User matchedUser = user.orElseThrow(
-                () -> new IllegalArgumentException("No account matches the provided user ID or email."));
+                () -> new IllegalArgumentException("Invalid credentials. Please check your user ID/email and password."));
         if (!matchedUser.isActive()) {
-            throw new IllegalArgumentException("This account is inactive.");
+            throw new IllegalArgumentException("This account is inactive. Please contact your administrator.");
         }
 
         // Check lock
@@ -72,7 +72,7 @@ public class AuthService {
                         "Too many failed attempts. Account locked for " + LOCK_MINUTES + " minutes.");
             }
             userRepository.save(matchedUser);
-            throw new IllegalArgumentException("Incorrect password.");
+            throw new IllegalArgumentException("Invalid credentials. Please check your user ID/email and password.");
         }
 
         // Successful login — reset counter

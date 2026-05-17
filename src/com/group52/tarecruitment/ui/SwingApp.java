@@ -1409,6 +1409,7 @@ public class SwingApp {
         private static final String TAB_JOB_BOARD = "jobBoard";
         private static final String TAB_PROFILE = "profile";
         private static final String TAB_NOTIFICATIONS = "notifications";
+        private static final String TAB_SECURITY = "security";
 
         private final JLabel titleLabel;
         private final JLabel profileAvatarLabel;
@@ -1444,6 +1445,10 @@ public class SwingApp {
         private final JTextArea profileSkillsArea;
         private final JTextField profileHoursField;
         private final JLabel cvLabel;
+        private final JPasswordField secOldPassField = new JPasswordField();
+        private final JPasswordField secNewPassField = new JPasswordField();
+        private final JPasswordField secConfirmPassField = new JPasswordField();
+        private final JLabel secHintLabel = new JLabel(" ");
 
         private User user;
         private String selectedCvPath = "";
@@ -1463,7 +1468,7 @@ public class SwingApp {
             contentLayout = new CardLayout();
             contentPanel = new JPanel(contentLayout);
 
-            String[] navLabels = {"Dashboard", "Job Board", "Notifications", "My Profile"};
+            String[] navLabels = {"Dashboard", "Job Board", "Notifications", "My Profile", "Account Security"};
             Runnable[] navActions = {
                 () -> {
                     refreshApplications();
@@ -1481,6 +1486,10 @@ public class SwingApp {
                 () -> {
                     loadProfile();
                     contentLayout.show(contentPanel, TAB_PROFILE);
+                },
+                () -> {
+                    clearSecurityFields();
+                    contentLayout.show(contentPanel, TAB_SECURITY);
                 }
             };
             add(buildNavigationPanel(navLabels, navActions), BorderLayout.WEST);
@@ -1884,6 +1893,7 @@ public class SwingApp {
             contentPanel.add(jobBoardPanel, TAB_JOB_BOARD);
             contentPanel.add(notificationsPanel, TAB_NOTIFICATIONS);
             contentPanel.add(profilePanel, TAB_PROFILE);
+            contentPanel.add(buildSecurityPanel(), TAB_SECURITY);
             add(contentPanel, BorderLayout.CENTER);
         }
 
@@ -2304,7 +2314,97 @@ public class SwingApp {
             }
         }
 
+        private JPanel buildSecurityPanel() {
+            JPanel outer = new JPanel(new BorderLayout());
+            outer.setOpaque(false);
+            outer.setBorder(BorderFactory.createEmptyBorder(24, 24, 24, 24));
 
+            JPanel card = new JPanel(new BorderLayout(0, 16));
+            card.setBackground(CARD_WHITE);
+            card.setBorder(BorderFactory.createCompoundBorder(
+                    BorderFactory.createLineBorder(CARD_BORDER, 1, true),
+                    BorderFactory.createEmptyBorder(24, 28, 24, 28)));
+
+            JLabel heading = new JLabel("Change Password");
+            heading.setFont(new Font("Segoe UI", Font.BOLD, 18));
+            heading.setForeground(QMUL_PURPLE);
+            card.add(heading, BorderLayout.NORTH);
+
+            JPanel form = new JPanel(new GridLayout(0, 2, 10, 12));
+            form.setOpaque(false);
+
+            form.add(createFieldLabel("Current Password"));
+            form.add(secOldPassField);
+            form.add(createFieldLabel("New Password"));
+            JPanel newPassWrapper = new JPanel(new BorderLayout(0, 4));
+            newPassWrapper.setOpaque(false);
+            newPassWrapper.add(secNewPassField, BorderLayout.NORTH);
+            secHintLabel.setFont(new Font("Segoe UI", Font.PLAIN, 11));
+            secHintLabel.setForeground(new Color(180, 100, 0));
+            newPassWrapper.add(secHintLabel, BorderLayout.SOUTH);
+            form.add(newPassWrapper);
+            form.add(createFieldLabel("Confirm New Password"));
+            form.add(secConfirmPassField);
+
+            secNewPassField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+                private void update() {
+                    String hint = ValidationUtil.passwordStrengthHint(new String(secNewPassField.getPassword()));
+                    if (hint.isEmpty()) {
+                        secHintLabel.setText("✓ Strong password");
+                        secHintLabel.setForeground(new Color(22, 163, 74));
+                    } else {
+                        secHintLabel.setText(hint);
+                        secHintLabel.setForeground(new Color(180, 100, 0));
+                    }
+                }
+                public void insertUpdate(javax.swing.event.DocumentEvent e) { update(); }
+                public void removeUpdate(javax.swing.event.DocumentEvent e) { update(); }
+                public void changedUpdate(javax.swing.event.DocumentEvent e) { update(); }
+            });
+
+            card.add(form, BorderLayout.CENTER);
+
+            JPanel actions = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+            actions.setOpaque(false);
+            JButton changeBtn = new JButton("Update Password");
+            stylePrimaryButton(changeBtn);
+            changeBtn.addActionListener(e -> doChangePassword());
+            actions.add(changeBtn);
+            card.add(actions, BorderLayout.SOUTH);
+
+            JPanel cardWrapper = new JPanel(new FlowLayout(FlowLayout.LEFT));
+            cardWrapper.setOpaque(false);
+            cardWrapper.add(card);
+            outer.add(cardWrapper, BorderLayout.NORTH);
+            return outer;
+        }
+
+        private void clearSecurityFields() {
+            secOldPassField.setText("");
+            secNewPassField.setText("");
+            secConfirmPassField.setText("");
+            secHintLabel.setText(" ");
+        }
+
+        private void doChangePassword() {
+            try {
+                authService.changePassword(
+                        user.getId(),
+                        new String(secOldPassField.getPassword()),
+                        new String(secNewPassField.getPassword()),
+                        new String(secConfirmPassField.getPassword()));
+                clearSecurityFields();
+                showToast("Password Updated", "Your password has been changed successfully.", JOptionPane.INFORMATION_MESSAGE);
+            } catch (IllegalArgumentException ex) {
+                JOptionPane.showMessageDialog(frame, ex.getMessage(), "Password Change Failed", JOptionPane.WARNING_MESSAGE);
+            }
+        }
+
+        private JLabel createFieldLabel(String text) {
+            JLabel lbl = new JLabel(text);
+            lbl.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+            return lbl;
+        }
 
         private String saveCvFile(File sourceFile, String userId) {
             try {
@@ -2338,6 +2438,7 @@ public class SwingApp {
         private static final String TAB_DASHBOARD = "dashboard";
         private static final String TAB_APPLICANTS = "applicants";
         private static final String TAB_PROFILE = "profile";
+        private static final String TAB_SECURITY = "security";
 
         private final JLabel titleLabel;
         private final CardLayout contentLayout;
@@ -2354,6 +2455,10 @@ public class SwingApp {
         private final JTextField profileProgrammeField;
         private final JTextField profileEmailField;
         private final JTextField profileHoursField;
+        private final JPasswordField moSecOldPassField = new JPasswordField();
+        private final JPasswordField moSecNewPassField = new JPasswordField();
+        private final JPasswordField moSecConfirmPassField = new JPasswordField();
+        private final JLabel moSecHintLabel = new JLabel(" ");
         private User user;
         private String selectedJobId;
         private MoApplicantRankingService.SortMode applicantSortMode;
@@ -2368,7 +2473,7 @@ public class SwingApp {
             contentLayout = new CardLayout();
             contentPanel = new JPanel(contentLayout);
 
-            String[] navLabels = {"Dashboard", "Applicants List", "My Profile"};
+            String[] navLabels = {"Dashboard", "Applicants List", "My Profile", "Account Security"};
             Runnable[] navActions = {
                 () -> {
                     refreshJobs();
@@ -2381,6 +2486,10 @@ public class SwingApp {
                 () -> {
                     loadProfile();
                     contentLayout.show(contentPanel, TAB_PROFILE);
+                },
+                () -> {
+                    clearMoSecurityFields();
+                    contentLayout.show(contentPanel, TAB_SECURITY);
                 }
             };
             add(buildNavigationPanel(navLabels, navActions), BorderLayout.WEST);
@@ -2561,6 +2670,7 @@ public class SwingApp {
             contentPanel.add(dashboardPanel, TAB_DASHBOARD);
             contentPanel.add(applicantsPanel, TAB_APPLICANTS);
             contentPanel.add(profilePanel, TAB_PROFILE);
+            contentPanel.add(buildMoSecurityPanel(), TAB_SECURITY);
             add(contentPanel, BorderLayout.CENTER);
         }
 
@@ -2882,6 +2992,91 @@ public class SwingApp {
             }
         }
 
+        private JPanel buildMoSecurityPanel() {
+            JPanel outer = new JPanel(new BorderLayout());
+            outer.setOpaque(false);
+            outer.setBorder(BorderFactory.createEmptyBorder(24, 24, 24, 24));
+
+            JPanel card = new JPanel(new BorderLayout(0, 16));
+            card.setBackground(CARD_WHITE);
+            card.setBorder(BorderFactory.createCompoundBorder(
+                    BorderFactory.createLineBorder(CARD_BORDER, 1, true),
+                    BorderFactory.createEmptyBorder(24, 28, 24, 28)));
+
+            JLabel heading = new JLabel("Change Password");
+            heading.setFont(new Font("Segoe UI", Font.BOLD, 18));
+            heading.setForeground(QMUL_PURPLE);
+            card.add(heading, BorderLayout.NORTH);
+
+            JPanel form = new JPanel(new GridLayout(0, 2, 10, 12));
+            form.setOpaque(false);
+            form.add(new JLabel("Current Password"));
+            form.add(moSecOldPassField);
+            form.add(new JLabel("New Password"));
+            JPanel newPassWrapper = new JPanel(new BorderLayout(0, 4));
+            newPassWrapper.setOpaque(false);
+            newPassWrapper.add(moSecNewPassField, BorderLayout.NORTH);
+            moSecHintLabel.setFont(new Font("Segoe UI", Font.PLAIN, 11));
+            moSecHintLabel.setForeground(new Color(180, 100, 0));
+            newPassWrapper.add(moSecHintLabel, BorderLayout.SOUTH);
+            form.add(newPassWrapper);
+            form.add(new JLabel("Confirm New Password"));
+            form.add(moSecConfirmPassField);
+
+            moSecNewPassField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+                private void update() {
+                    String hint = ValidationUtil.passwordStrengthHint(new String(moSecNewPassField.getPassword()));
+                    if (hint.isEmpty()) {
+                        moSecHintLabel.setText("✓ Strong password");
+                        moSecHintLabel.setForeground(new Color(22, 163, 74));
+                    } else {
+                        moSecHintLabel.setText(hint);
+                        moSecHintLabel.setForeground(new Color(180, 100, 0));
+                    }
+                }
+                public void insertUpdate(javax.swing.event.DocumentEvent e) { update(); }
+                public void removeUpdate(javax.swing.event.DocumentEvent e) { update(); }
+                public void changedUpdate(javax.swing.event.DocumentEvent e) { update(); }
+            });
+
+            card.add(form, BorderLayout.CENTER);
+
+            JPanel actions = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+            actions.setOpaque(false);
+            JButton changeBtn = new JButton("Update Password");
+            stylePrimaryButton(changeBtn);
+            changeBtn.addActionListener(e -> doMoChangePassword());
+            actions.add(changeBtn);
+            card.add(actions, BorderLayout.SOUTH);
+
+            JPanel cardWrapper = new JPanel(new FlowLayout(FlowLayout.LEFT));
+            cardWrapper.setOpaque(false);
+            cardWrapper.add(card);
+            outer.add(cardWrapper, BorderLayout.NORTH);
+            return outer;
+        }
+
+        private void clearMoSecurityFields() {
+            moSecOldPassField.setText("");
+            moSecNewPassField.setText("");
+            moSecConfirmPassField.setText("");
+            moSecHintLabel.setText(" ");
+        }
+
+        private void doMoChangePassword() {
+            try {
+                authService.changePassword(
+                        user.getId(),
+                        new String(moSecOldPassField.getPassword()),
+                        new String(moSecNewPassField.getPassword()),
+                        new String(moSecConfirmPassField.getPassword()));
+                clearMoSecurityFields();
+                showToast("Password Updated", "Your password has been changed successfully.", JOptionPane.INFORMATION_MESSAGE);
+            } catch (IllegalArgumentException ex) {
+                JOptionPane.showMessageDialog(frame, ex.getMessage(), "Password Change Failed", JOptionPane.WARNING_MESSAGE);
+            }
+        }
+
         private JobInput promptForJobInput(Job existing) {
             JTextField moduleCodeField = new JTextField(existing == null ? "" : existing.getModuleCode());
             JTextField moduleNameField = new JTextField(existing == null ? "" : existing.getModuleName());
@@ -2946,6 +3141,7 @@ public class SwingApp {
         private static final String TAB_JOBS = "jobs";
         private static final String TAB_ALERTS = "alerts";
         private static final String TAB_AUDIT = "audit";
+        private static final String TAB_SECURITY = "security";
 
         private final JLabel titleLabel;
         private final CardLayout contentLayout;
@@ -2970,6 +3166,11 @@ public class SwingApp {
         private final JLabel summaryHighRisk = new JLabel("--");
         private JTextArea recommendationArea;
         private final JTextField workloadSearchField = new JTextField();
+        private final JPasswordField adminSecOldPassField = new JPasswordField();
+        private final JPasswordField adminSecNewPassField = new JPasswordField();
+        private final JPasswordField adminSecConfirmPassField = new JPasswordField();
+        private final JLabel adminSecHintLabel = new JLabel(" ");
+        private User adminUser;
 
         private AdminPanel() {
             setLayout(new BorderLayout());
@@ -2985,7 +3186,7 @@ public class SwingApp {
             contentLayout = new CardLayout();
             contentPanel = new JPanel(contentLayout);
 
-            String[] navLabels = {"Workload Overview", "Manage Accounts", "Jobs Overview", "Alerts", "Audit Log"};
+            String[] navLabels = {"Workload Overview", "Manage Accounts", "Jobs Overview", "Alerts", "Audit Log", "Account Security"};
             Runnable[] navActions = {
                 () -> {
                     refreshWorkload();
@@ -3006,6 +3207,10 @@ public class SwingApp {
                 () -> {
                     refreshAuditLog();
                     contentLayout.show(contentPanel, TAB_AUDIT);
+                },
+                () -> {
+                    clearAdminSecurityFields();
+                    contentLayout.show(contentPanel, TAB_SECURITY);
                 }
             };
             add(buildNavigationPanel(navLabels, navActions), BorderLayout.WEST);
@@ -3265,6 +3470,7 @@ public class SwingApp {
             auditPanel.add(createCardPanel(auditHeader, 18, 18, 18, 18), BorderLayout.NORTH);
             auditPanel.add(createCardPanel(new JScrollPane(auditTable), 0, 0, 0, 0), BorderLayout.CENTER);
             contentPanel.add(auditPanel, TAB_AUDIT);
+            contentPanel.add(buildAdminSecurityPanel(), TAB_SECURITY);
 
             add(contentPanel, BorderLayout.CENTER);
         }
@@ -3307,6 +3513,7 @@ public class SwingApp {
         }
 
         private void bindUser(User user) {
+            this.adminUser = user;
             refreshWorkload();
             refreshAccounts();
             refreshJobs();
@@ -3667,6 +3874,102 @@ public class SwingApp {
                 showToast("Password Reset", "Password reset completed.", JOptionPane.INFORMATION_MESSAGE);
             } catch (IllegalArgumentException ex) {
                 JOptionPane.showMessageDialog(frame, ex.getMessage());
+            }
+        }
+
+        private JPanel buildAdminSecurityPanel() {
+            JPanel outer = new JPanel(new BorderLayout());
+            outer.setOpaque(false);
+            outer.setBorder(BorderFactory.createEmptyBorder(24, 24, 24, 24));
+
+            JPanel card = new JPanel(new BorderLayout(0, 16));
+            card.setBackground(CARD_WHITE);
+            card.setBorder(BorderFactory.createCompoundBorder(
+                    BorderFactory.createLineBorder(CARD_BORDER, 1, true),
+                    BorderFactory.createEmptyBorder(24, 28, 24, 28)));
+
+            JLabel heading = new JLabel("Change My Password");
+            heading.setFont(new Font("Segoe UI", Font.BOLD, 18));
+            heading.setForeground(QMUL_PURPLE);
+            JLabel subheading = new JLabel("Use this to change your own admin account password. To reset another user's password, use Manage Accounts.");
+            subheading.setFont(new Font("Segoe UI", Font.PLAIN, 12));
+            subheading.setForeground(new Color(107, 114, 128));
+            JPanel headingPanel = new JPanel(new BorderLayout(0, 4));
+            headingPanel.setOpaque(false);
+            headingPanel.add(heading, BorderLayout.NORTH);
+            headingPanel.add(subheading, BorderLayout.SOUTH);
+            card.add(headingPanel, BorderLayout.NORTH);
+
+            JPanel form = new JPanel(new GridLayout(0, 2, 10, 12));
+            form.setOpaque(false);
+            form.add(new JLabel("Current Password"));
+            form.add(adminSecOldPassField);
+            form.add(new JLabel("New Password"));
+            JPanel newPassWrapper = new JPanel(new BorderLayout(0, 4));
+            newPassWrapper.setOpaque(false);
+            newPassWrapper.add(adminSecNewPassField, BorderLayout.NORTH);
+            adminSecHintLabel.setFont(new Font("Segoe UI", Font.PLAIN, 11));
+            adminSecHintLabel.setForeground(new Color(180, 100, 0));
+            newPassWrapper.add(adminSecHintLabel, BorderLayout.SOUTH);
+            form.add(newPassWrapper);
+            form.add(new JLabel("Confirm New Password"));
+            form.add(adminSecConfirmPassField);
+
+            adminSecNewPassField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+                private void update() {
+                    String hint = ValidationUtil.passwordStrengthHint(new String(adminSecNewPassField.getPassword()));
+                    if (hint.isEmpty()) {
+                        adminSecHintLabel.setText("✓ Strong password");
+                        adminSecHintLabel.setForeground(new Color(22, 163, 74));
+                    } else {
+                        adminSecHintLabel.setText(hint);
+                        adminSecHintLabel.setForeground(new Color(180, 100, 0));
+                    }
+                }
+                public void insertUpdate(javax.swing.event.DocumentEvent e) { update(); }
+                public void removeUpdate(javax.swing.event.DocumentEvent e) { update(); }
+                public void changedUpdate(javax.swing.event.DocumentEvent e) { update(); }
+            });
+
+            card.add(form, BorderLayout.CENTER);
+
+            JPanel actions = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+            actions.setOpaque(false);
+            JButton changeBtn = new JButton("Update Password");
+            stylePrimaryButton(changeBtn);
+            changeBtn.addActionListener(e -> doAdminChangePassword());
+            actions.add(changeBtn);
+            card.add(actions, BorderLayout.SOUTH);
+
+            JPanel cardWrapper = new JPanel(new FlowLayout(FlowLayout.LEFT));
+            cardWrapper.setOpaque(false);
+            cardWrapper.add(card);
+            outer.add(cardWrapper, BorderLayout.NORTH);
+            return outer;
+        }
+
+        private void clearAdminSecurityFields() {
+            adminSecOldPassField.setText("");
+            adminSecNewPassField.setText("");
+            adminSecConfirmPassField.setText("");
+            adminSecHintLabel.setText(" ");
+        }
+
+        private void doAdminChangePassword() {
+            if (adminUser == null) {
+                JOptionPane.showMessageDialog(frame, "Admin user not loaded.");
+                return;
+            }
+            try {
+                authService.changePassword(
+                        adminUser.getId(),
+                        new String(adminSecOldPassField.getPassword()),
+                        new String(adminSecNewPassField.getPassword()),
+                        new String(adminSecConfirmPassField.getPassword()));
+                clearAdminSecurityFields();
+                showToast("Password Updated", "Your admin password has been changed successfully.", JOptionPane.INFORMATION_MESSAGE);
+            } catch (IllegalArgumentException ex) {
+                JOptionPane.showMessageDialog(frame, ex.getMessage(), "Password Change Failed", JOptionPane.WARNING_MESSAGE);
             }
         }
     }
