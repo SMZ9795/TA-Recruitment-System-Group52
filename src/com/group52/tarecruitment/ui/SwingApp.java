@@ -545,56 +545,148 @@ public class SwingApp {
         return value == null ? "" : value;
     }
 
+    // ------------------------------------------------------------------
+    // Button styling. Buttons paint themselves as 999px-rounded pills with
+    // a darker hover state. Primary = filled purple, Secondary = outlined
+    // purple, Danger = filled red. Antialiased so the corners look smooth
+    // on hi-DPI displays.
+    // ------------------------------------------------------------------
+
+    private static final int BUTTON_CORNER_RADIUS = 16;
+
     private void stylePrimaryButton(JButton button) {
-        styleUnifiedButton(button, true, false);
+        applyRoundedButtonStyle(button, QMUL_PURPLE, new Color(107, 63, 160),
+                new Color(50, 24, 93), Color.WHITE, true, false);
     }
 
     private void styleSecondaryButton(JButton button) {
-        styleUnifiedButton(button, false, false);
+        applyRoundedButtonStyle(button, CARD_WHITE, new Color(244, 240, 254),
+                new Color(232, 224, 250), QMUL_PURPLE, false, true);
     }
 
     private void styleDangerButton(JButton button) {
-        styleUnifiedButton(button, true, true);
+        applyRoundedButtonStyle(button, DANGER_BUTTON_COLOR, new Color(225, 88, 96),
+                new Color(174, 53, 62), Color.WHITE, true, false);
     }
 
-    private void styleUnifiedButton(JButton button, boolean bold, boolean danger) {
-        button.setOpaque(true);
-        button.setContentAreaFilled(true);
+    private void applyRoundedButtonStyle(JButton button,
+                                         Color baseBg,
+                                         Color hoverBg,
+                                         Color pressedBg,
+                                         Color fg,
+                                         boolean bold,
+                                         boolean outlined) {
+        button.setContentAreaFilled(false);
         button.setBorderPainted(false);
+        button.setOpaque(false);
         button.setFocusPainted(false);
-        button.setBackground(QMUL_PURPLE);
-        button.setForeground(Color.WHITE);
+        button.setForeground(fg);
         button.setFont(new Font("Segoe UI", bold ? Font.BOLD : Font.PLAIN, 14));
-        button.setBorder(BorderFactory.createEmptyBorder(10, 18, 10, 18));
+        button.setBorder(BorderFactory.createEmptyBorder(10, 22, 10, 22));
+        button.setCursor(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR));
+        button.putClientProperty("button.baseBg", baseBg);
+        button.putClientProperty("button.hoverBg", hoverBg);
+        button.putClientProperty("button.pressedBg", pressedBg);
+        button.putClientProperty("button.fg", fg);
+        button.putClientProperty("button.outlined", outlined);
         button.putClientProperty("button.hover", Boolean.FALSE);
-        button.putClientProperty("button.disabledBg", new Color(120, 105, 145));
-        button.putClientProperty("button.disabledFg", Color.WHITE);
+        button.putClientProperty("button.pressed", Boolean.FALSE);
         button.addMouseListener(new java.awt.event.MouseAdapter() {
             @Override
             public void mouseEntered(java.awt.event.MouseEvent e) {
-                if (button.isEnabled()) {
-                    button.setBackground(new Color(107, 63, 160));
-                }
+                button.putClientProperty("button.hover", Boolean.TRUE);
+                button.repaint();
             }
 
             @Override
             public void mouseExited(java.awt.event.MouseEvent e) {
-                if (button.isEnabled()) {
-                    button.setBackground(QMUL_PURPLE);
+                button.putClientProperty("button.hover", Boolean.FALSE);
+                button.putClientProperty("button.pressed", Boolean.FALSE);
+                button.repaint();
+            }
+
+            @Override
+            public void mousePressed(java.awt.event.MouseEvent e) {
+                button.putClientProperty("button.pressed", Boolean.TRUE);
+                button.repaint();
+            }
+
+            @Override
+            public void mouseReleased(java.awt.event.MouseEvent e) {
+                button.putClientProperty("button.pressed", Boolean.FALSE);
+                button.repaint();
+            }
+        });
+        button.setUI(new javax.swing.plaf.basic.BasicButtonUI() {
+            @Override
+            public void paint(java.awt.Graphics g, javax.swing.JComponent c) {
+                javax.swing.AbstractButton b = (javax.swing.AbstractButton) c;
+                java.awt.Graphics2D g2 = (java.awt.Graphics2D) g.create();
+                g2.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING,
+                        java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+                java.awt.Color fillColor;
+                if (!b.isEnabled()) {
+                    fillColor = new Color(199, 191, 215);
+                } else if (Boolean.TRUE.equals(b.getClientProperty("button.pressed"))) {
+                    fillColor = (Color) b.getClientProperty("button.pressedBg");
+                } else if (Boolean.TRUE.equals(b.getClientProperty("button.hover"))) {
+                    fillColor = (Color) b.getClientProperty("button.hoverBg");
+                } else {
+                    fillColor = (Color) b.getClientProperty("button.baseBg");
                 }
+                int w = b.getWidth();
+                int h = b.getHeight();
+                g2.setColor(fillColor);
+                g2.fillRoundRect(0, 0, w, h, BUTTON_CORNER_RADIUS * 2, BUTTON_CORNER_RADIUS * 2);
+                if (Boolean.TRUE.equals(b.getClientProperty("button.outlined"))) {
+                    g2.setStroke(new java.awt.BasicStroke(1.4f));
+                    g2.setColor(QMUL_PURPLE);
+                    g2.drawRoundRect(0, 0, w - 1, h - 1,
+                            BUTTON_CORNER_RADIUS * 2, BUTTON_CORNER_RADIUS * 2);
+                }
+                g2.dispose();
+                super.paint(g, c);
             }
         });
-        button.addPropertyChangeListener("enabled", evt -> {
-            if (button.isEnabled()) {
-                button.setBackground(QMUL_PURPLE);
-                button.setForeground(Color.WHITE);
-            } else {
-                button.setBackground((Color) button.getClientProperty("button.disabledBg"));
-                button.setForeground((Color) button.getClientProperty("button.disabledFg"));
-            }
-        });
-        if (danger) {
-            button.putClientProperty("button.variant", "danger");
+        button.addPropertyChangeListener("enabled", evt -> button.repaint());
+    }
+
+    /** Wrap a Swing input so it looks like a modern rounded text field. */
+    private void styleRoundedField(javax.swing.JComponent field) {
+        field.setBorder(BorderFactory.createCompoundBorder(
+                new RoundedLineBorder(new Color(214, 219, 229), 1, 14),
+                BorderFactory.createEmptyBorder(8, 12, 8, 12)));
+        field.setFont(new Font("Segoe UI", Font.PLAIN, 14));
+        field.setBackground(CARD_WHITE);
+    }
+
+    /** Antialiased rounded line border used by the modern form fields. */
+    private static final class RoundedLineBorder extends javax.swing.border.AbstractBorder {
+        private final Color color;
+        private final int thickness;
+        private final int radius;
+
+        private RoundedLineBorder(Color color, int thickness, int radius) {
+            this.color = color;
+            this.thickness = thickness;
+            this.radius = radius;
+        }
+
+        @Override
+        public void paintBorder(java.awt.Component c, java.awt.Graphics g, int x, int y, int w, int h) {
+            java.awt.Graphics2D g2 = (java.awt.Graphics2D) g.create();
+            g2.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING,
+                    java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+            g2.setColor(color);
+            g2.setStroke(new java.awt.BasicStroke(thickness));
+            g2.drawRoundRect(x + thickness / 2, y + thickness / 2,
+                    w - thickness - 1, h - thickness - 1, radius, radius);
+            g2.dispose();
+        }
+
+        @Override
+        public java.awt.Insets getBorderInsets(java.awt.Component c) {
+            return new java.awt.Insets(thickness, thickness, thickness, thickness);
         }
     }
 
@@ -1002,87 +1094,196 @@ public class SwingApp {
 
         private LoginPanel() {
             setLayout(new BorderLayout());
+            setBackground(SURFACE_BG);
+
             JPanel centerWrapper = new JPanel(new GridBagLayout());
             centerWrapper.setOpaque(false);
 
-            JPanel card = new JPanel(new BorderLayout(24, 0));
-            card.setBackground(Color.WHITE);
-            card.setBorder(BorderFactory.createCompoundBorder(
-                    BorderFactory.createLineBorder(new Color(226, 229, 236), 1, true),
-                    BorderFactory.createEmptyBorder(24, 24, 24, 24)));
-            card.setPreferredSize(new Dimension(940, 520));
+            JPanel card = new JPanel(new BorderLayout(0, 0));
+            card.setOpaque(false);
+            card.setBorder(new RoundedLineBorder(new Color(226, 229, 236), 1, 24));
+            card.setPreferredSize(new Dimension(940, 540));
 
-            JPanel left = new JPanel();
-            left.setOpaque(false);
-            left.setPreferredSize(new Dimension(340, 0));
-            left.setLayout(new BoxLayout(left, BoxLayout.Y_AXIS));
-            left.add(createAuthBrandPanel(true));
-            left.add(Box.createVerticalStrut(20));
-            JLabel loginHint = new JLabel("Sign in to manage jobs, applications, and notifications.");
-            loginHint.setForeground(MUTED_TEXT_COLOR);
-            loginHint.setFont(new Font("Segoe UI", Font.PLAIN, 14));
-            left.add(loginHint);
-            left.add(Box.createVerticalStrut(18));
-            JLabel loginCardBadge = new JLabel("Fast access to TA, MO, and Admin portals");
-            loginCardBadge.setFont(new Font("Segoe UI", Font.BOLD, 13));
-            loginCardBadge.setForeground(QMUL_PURPLE);
-            left.add(loginCardBadge);
+            JPanel hero = createLoginHeroPanel();
+            JPanel formPanel = buildFormPanel();
 
-            JPanel form = new JPanel(new GridLayout(0, 2, 15, 14));
-            form.setPreferredSize(new Dimension(450, 250));
-            form.setBorder(BorderFactory.createCompoundBorder(
-                    BorderFactory.createLineBorder(new Color(220, 225, 233), 1, true),
-                    BorderFactory.createEmptyBorder(28, 28, 28, 28)));
-            form.setBackground(Color.WHITE);
-            form.setOpaque(true);
+            card.add(hero, BorderLayout.WEST);
+            card.add(formPanel, BorderLayout.CENTER);
 
-            JLabel roleLabel = new JLabel("Role");
-            roleLabel.setFont(new Font("Segoe UI", Font.BOLD, 14));
-            form.add(roleLabel);
+            // White rounded background behind the card for a soft, modern look.
+            JPanel cardBackground = new JPanel(new BorderLayout()) {
+                @Override
+                protected void paintComponent(java.awt.Graphics g) {
+                    java.awt.Graphics2D g2 = (java.awt.Graphics2D) g.create();
+                    g2.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING,
+                            java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+                    g2.setColor(CARD_WHITE);
+                    g2.fillRoundRect(0, 0, getWidth(), getHeight(), 24, 24);
+                    g2.dispose();
+                }
+            };
+            cardBackground.setOpaque(false);
+            cardBackground.setBorder(BorderFactory.createEmptyBorder());
+            cardBackground.setPreferredSize(new Dimension(940, 540));
+            cardBackground.add(card, BorderLayout.CENTER);
+
+            centerWrapper.add(cardBackground);
+
             roleCombo = new JComboBox<>(new Role[] {Role.TA, Role.MO, Role.ADMIN});
             roleCombo.setFont(new Font("Segoe UI", Font.PLAIN, 14));
-            form.add(roleCombo);
-
-            JLabel emailLabel = new JLabel("Email");
-            emailLabel.setFont(new Font("Segoe UI", Font.BOLD, 14));
-            form.add(emailLabel);
+            styleRoundedField(roleCombo);
             emailField = new JTextField();
-            emailField.setFont(new Font("Segoe UI", Font.PLAIN, 14));
-            form.add(emailField);
-
-            JLabel pwdLabel = new JLabel("Password");
-            pwdLabel.setFont(new Font("Segoe UI", Font.BOLD, 14));
-            form.add(pwdLabel);
+            styleRoundedField(emailField);
             passwordField = new JPasswordField();
-            passwordField.setFont(new Font("Segoe UI", Font.PLAIN, 14));
-            form.add(passwordField);
+            styleRoundedField(passwordField);
 
-            loginButton = new JButton("Login");
+            loginButton = new JButton("Sign in");
             stylePrimaryButton(loginButton);
             loginButton.addActionListener(e -> login());
-            form.add(loginButton);
 
-            registerButton = new JButton("Register as TA");
+            registerButton = new JButton("Create a TA account");
             styleSecondaryButton(registerButton);
             registerButton.addActionListener(e -> showRegisterPage());
-            form.add(registerButton);
 
             statusLabel = new JLabel(" ");
             statusLabel.setFont(new Font("Segoe UI", Font.PLAIN, 12));
-            statusLabel.setForeground(new Color(100, 100, 100));
+            statusLabel.setForeground(MUTED_TEXT_COLOR);
 
-            JPanel centerContainer = new JPanel(new BorderLayout());
-            centerContainer.setOpaque(false);
-            centerContainer.add(form, BorderLayout.CENTER);
-            centerContainer.add(statusLabel, BorderLayout.SOUTH);
-
-            card.add(left, BorderLayout.WEST);
-            card.add(centerContainer, BorderLayout.CENTER);
-            centerWrapper.add(card);
+            // Now that the fields exist, populate the right-hand form column.
+            mountFormFields(formPanel);
 
             add(buildTopBar("BUPT International School TA Recruitment System", null), BorderLayout.NORTH);
             add(centerWrapper, BorderLayout.CENTER);
             frameSetDefaultButton();
+        }
+
+        private JPanel createLoginHeroPanel() {
+            JPanel hero = new JPanel() {
+                @Override
+                protected void paintComponent(java.awt.Graphics g) {
+                    java.awt.Graphics2D g2 = (java.awt.Graphics2D) g.create();
+                    g2.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING,
+                            java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+                    int w = getWidth();
+                    int h = getHeight();
+                    java.awt.GradientPaint paint = new java.awt.GradientPaint(
+                            0, 0, QMUL_PURPLE_DARK, w, h, QMUL_PURPLE_LIGHT);
+                    g2.setPaint(paint);
+                    g2.fillRoundRect(0, 0, w + 24, h, 24, 24);
+                    // Soft decorative circles.
+                    g2.setColor(new Color(255, 255, 255, 28));
+                    g2.fillOval(-60, h - 220, 240, 240);
+                    g2.fillOval(w - 140, -90, 200, 200);
+                    g2.dispose();
+                }
+            };
+            hero.setOpaque(false);
+            hero.setPreferredSize(new Dimension(380, 0));
+            hero.setLayout(new BoxLayout(hero, BoxLayout.Y_AXIS));
+            hero.setBorder(BorderFactory.createEmptyBorder(48, 40, 40, 32));
+
+            JLabel brand = new JLabel("BUPT × QMUL");
+            brand.setFont(new Font("Segoe UI", Font.BOLD, 26));
+            brand.setForeground(Color.WHITE);
+            brand.setAlignmentX(LEFT_ALIGNMENT);
+
+            JLabel system = new JLabel("TA Recruitment");
+            system.setFont(new Font("Segoe UI", Font.BOLD, 34));
+            system.setForeground(Color.WHITE);
+            system.setAlignmentX(LEFT_ALIGNMENT);
+
+            JLabel system2 = new JLabel("System");
+            system2.setFont(new Font("Segoe UI", Font.BOLD, 34));
+            system2.setForeground(Color.WHITE);
+            system2.setAlignmentX(LEFT_ALIGNMENT);
+
+            JLabel tagline = new JLabel("<html><div style='width:280px;color:#E6DBFF'>"
+                    + "One portal for Teaching Assistants, Module Organisers "
+                    + "and the Admin team — explainable matching, workload "
+                    + "balancing and audit-ready reports.</div></html>");
+            tagline.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+            tagline.setForeground(new Color(230, 219, 255));
+            tagline.setAlignmentX(LEFT_ALIGNMENT);
+
+            hero.add(brand);
+            hero.add(Box.createVerticalStrut(6));
+            hero.add(system);
+            hero.add(system2);
+            hero.add(Box.createVerticalStrut(22));
+            hero.add(tagline);
+            hero.add(Box.createVerticalGlue());
+
+            JLabel highlights = new JLabel("<html><div style='color:#FFFFFF'>"
+                    + "<b>· Explainable AI matching</b><br>"
+                    + "<b>· Workload-balanced ranking</b><br>"
+                    + "<b>· Audit log & CSV exports</b></div></html>");
+            highlights.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+            highlights.setAlignmentX(LEFT_ALIGNMENT);
+            hero.add(highlights);
+
+            return hero;
+        }
+
+        private JPanel buildFormPanel() {
+            JPanel form = new JPanel();
+            form.setOpaque(false);
+            form.setBorder(BorderFactory.createEmptyBorder(48, 48, 40, 48));
+            form.setLayout(new BoxLayout(form, BoxLayout.Y_AXIS));
+            return form;
+        }
+
+        private void mountFormFields(JPanel form) {
+            JLabel heading = new JLabel("Welcome back");
+            heading.setFont(new Font("Segoe UI", Font.BOLD, 24));
+            heading.setForeground(HEADER_TEXT);
+            heading.setAlignmentX(LEFT_ALIGNMENT);
+
+            JLabel sub = new JLabel("Sign in to continue to your dashboard.");
+            sub.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+            sub.setForeground(MUTED_TEXT_COLOR);
+            sub.setAlignmentX(LEFT_ALIGNMENT);
+
+            form.add(heading);
+            form.add(Box.createVerticalStrut(6));
+            form.add(sub);
+            form.add(Box.createVerticalStrut(26));
+
+            form.add(buildLabeledRow("Role", roleCombo));
+            form.add(Box.createVerticalStrut(14));
+            form.add(buildLabeledRow("Email", emailField));
+            form.add(Box.createVerticalStrut(14));
+            form.add(buildLabeledRow("Password", passwordField));
+            form.add(Box.createVerticalStrut(22));
+
+            loginButton.setAlignmentX(LEFT_ALIGNMENT);
+            loginButton.setMaximumSize(new Dimension(Integer.MAX_VALUE, 44));
+            registerButton.setAlignmentX(LEFT_ALIGNMENT);
+            registerButton.setMaximumSize(new Dimension(Integer.MAX_VALUE, 44));
+
+            form.add(loginButton);
+            form.add(Box.createVerticalStrut(10));
+            form.add(registerButton);
+            form.add(Box.createVerticalStrut(14));
+
+            statusLabel.setAlignmentX(LEFT_ALIGNMENT);
+            form.add(statusLabel);
+        }
+
+        private JPanel buildLabeledRow(String labelText, JComponent input) {
+            JPanel row = new JPanel();
+            row.setOpaque(false);
+            row.setLayout(new BoxLayout(row, BoxLayout.Y_AXIS));
+            row.setAlignmentX(LEFT_ALIGNMENT);
+            JLabel label = new JLabel(labelText);
+            label.setFont(new Font("Segoe UI", Font.BOLD, 12));
+            label.setForeground(MUTED_TEXT_COLOR);
+            label.setAlignmentX(LEFT_ALIGNMENT);
+            input.setAlignmentX(LEFT_ALIGNMENT);
+            input.setMaximumSize(new Dimension(Integer.MAX_VALUE, 42));
+            row.add(label);
+            row.add(Box.createVerticalStrut(6));
+            row.add(input);
+            return row;
         }
 
         private void reset() {
