@@ -85,6 +85,56 @@ final class AutoDemoController {
         this.adminService = adminService;
         this.exportService = exportService;
         this.dataDirectory = dataDirectory;
+
+        // Two safety nets that protect the real data files even if a
+        // previous demo was killed mid-run (Force-Stop, power loss,
+        // closing the window during playback):
+        //
+        // 1) On startup, restore any leftover *.demo-backup pair so the
+        //    user always boots into a clean seed dataset.
+        // 2) Register a JVM shutdown hook so a graceful close mid-demo
+        //    still rolls the data files back.
+        recoverLeftoverBackups();
+        Runtime.getRuntime().addShutdownHook(new Thread(this::shutdownRestore,
+                "auto-demo-shutdown-restore"));
+    }
+
+    /**
+     * Restore any *.demo-backup files left over from a previous run
+     * that did not complete (e.g. JVM was killed while the demo was
+     * playing). Safe to call even when no backups exist.
+     */
+    private void recoverLeftoverBackups() {
+        if (dataDirectory == null || !Files.isDirectory(dataDirectory)) {
+            return;
+        }
+        for (String name : BACKUP_FILE_NAMES) {
+            Path backup = dataDirectory.resolve(name + BACKUP_SUFFIX);
+            if (!Files.exists(backup)) {
+                continue;
+            }
+            Path src = dataDirectory.resolve(name);
+            try {
+                Files.copy(backup, src, StandardCopyOption.REPLACE_EXISTING);
+                Files.deleteIfExists(backup);
+                System.out.println("[AutoDemo] Restored leftover backup: " + name);
+            } catch (Exception ex) {
+                System.err.println("[AutoDemo] Failed to restore " + name
+                        + ": " + ex.getMessage());
+            }
+        }
+    }
+
+    /** Shutdown hook: best-effort restore if a demo is running. */
+    private void shutdownRestore() {
+        if (!running) {
+            return;
+        }
+        try {
+            restoreData();
+        } catch (Exception ignored) {
+            // Best-effort; nothing else we can do during JVM shutdown.
+        }
     }
 
     /**
