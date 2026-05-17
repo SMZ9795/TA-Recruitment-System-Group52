@@ -144,6 +144,9 @@ public class SwingApp {
     private TaPanel taPanel;
     private MoPanel moPanel;
     private AdminPanel adminPanel;
+    private User currentUser;
+    private JLabel demoCaptionLabel;
+    private AutoDemoController autoDemoController;
 
     public SwingApp(AuthService authService, JobService jobService, ApplicationService applicationService) {
         this(authService, jobService, applicationService, null, null);
@@ -212,6 +215,10 @@ public class SwingApp {
         rootPanel.add(moPanel, PAGE_MO);
         rootPanel.add(adminPanel, PAGE_ADMIN);
 
+        autoDemoController = new AutoDemoController(
+                this, authService, applicationService, adminService, exportService, dataDirectory);
+        loginPanel.installDemoButton(autoDemoController);
+
         frame.setContentPane(rootPanel);
         showLoginPage();
         frame.setVisible(true);
@@ -223,6 +230,7 @@ public class SwingApp {
     }
 
     private void onLoginSuccess(User user) {
+        currentUser = user;
         updateTopBarAvatar(user.getAvatarFilePath());
         if (user.getRole() == Role.TA) {
             taPanel.bindUser(user);
@@ -236,6 +244,131 @@ public class SwingApp {
         }
         adminPanel.bindUser(user);
         showPage(PAGE_ADMIN);
+    }
+
+    // ------------------------------------------------------------------
+    // Auto demo hooks. Package-private so AutoDemoController can drive
+    // the GUI without simulating mouse clicks.
+    // ------------------------------------------------------------------
+
+    JFrame getMainFrame() {
+        return frame;
+    }
+
+    void demoEnterAs(User user) {
+        SwingUtilities.invokeLater(() -> onLoginSuccess(user));
+    }
+
+    void demoRefreshCurrentPanel() {
+        if (currentUser == null) {
+            return;
+        }
+        SwingUtilities.invokeLater(() -> {
+            if (currentUser.getRole() == Role.TA) {
+                taPanel.bindUser(currentUser);
+            } else if (currentUser.getRole() == Role.MO) {
+                moPanel.bindUser(currentUser);
+            } else {
+                adminPanel.bindUser(currentUser);
+            }
+        });
+    }
+
+    void demoReturnToLogin() {
+        currentUser = null;
+        SwingUtilities.invokeLater(this::showLoginPage);
+    }
+
+    void demoShowCaption(String captionEn, String captionCn) {
+        SwingUtilities.invokeLater(() -> showDemoCaption(captionEn, captionCn, false));
+    }
+
+    void demoAppendCaption(String captionEn, String captionCn) {
+        SwingUtilities.invokeLater(() -> showDemoCaption(captionEn, captionCn, true));
+    }
+
+    void demoHideCaption() {
+        SwingUtilities.invokeLater(() -> {
+            if (demoCaptionLabel != null) {
+                demoCaptionLabel.setVisible(false);
+            }
+        });
+    }
+
+    private void showDemoCaption(String captionEn, String captionCn, boolean append) {
+        if (frame == null) {
+            return;
+        }
+        ensureDemoCaption();
+        String existing = "";
+        if (append && demoCaptionLabel.isVisible() && demoCaptionLabel.getText() != null) {
+            existing = demoCaptionLabel.getText()
+                    .replace("<html>", "")
+                    .replace("</html>", "");
+        }
+        String html = "<html><div style='text-align:center;line-height:1.55'>"
+                + (existing.isEmpty() ? "" : existing + "<br>")
+                + "<span style='color:#FFFFFF;font-size:14px'><b>" + escapeHtml(captionEn) + "</b></span><br>"
+                + "<span style='color:#E6DBFF;font-size:13px'>" + escapeHtml(captionCn) + "</span>"
+                + "</div></html>";
+        demoCaptionLabel.setText(html);
+        demoCaptionLabel.setVisible(true);
+        repositionDemoCaption();
+    }
+
+    private void ensureDemoCaption() {
+        if (demoCaptionLabel != null) {
+            return;
+        }
+        demoCaptionLabel = new JLabel("", javax.swing.SwingConstants.CENTER) {
+            @Override
+            protected void paintComponent(java.awt.Graphics g) {
+                java.awt.Graphics2D g2 = (java.awt.Graphics2D) g.create();
+                g2.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING,
+                        java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+                g2.setColor(new Color(40, 19, 78, 235));
+                g2.fillRoundRect(0, 0, getWidth(), getHeight(), 18, 18);
+                g2.setColor(new Color(123, 92, 240, 180));
+                g2.setStroke(new java.awt.BasicStroke(1.4f));
+                g2.drawRoundRect(0, 0, getWidth() - 1, getHeight() - 1, 18, 18);
+                g2.dispose();
+                super.paintComponent(g);
+            }
+        };
+        demoCaptionLabel.setOpaque(false);
+        demoCaptionLabel.setBorder(BorderFactory.createEmptyBorder(12, 24, 12, 24));
+        demoCaptionLabel.setVisible(false);
+
+        javax.swing.JLayeredPane layeredPane = frame.getLayeredPane();
+        layeredPane.add(demoCaptionLabel, javax.swing.JLayeredPane.POPUP_LAYER);
+
+        frame.addComponentListener(new java.awt.event.ComponentAdapter() {
+            @Override
+            public void componentResized(java.awt.event.ComponentEvent e) {
+                repositionDemoCaption();
+            }
+        });
+    }
+
+    private void repositionDemoCaption() {
+        if (demoCaptionLabel == null || frame == null) {
+            return;
+        }
+        int frameWidth = frame.getContentPane().getWidth();
+        int frameHeight = frame.getContentPane().getHeight();
+        Dimension pref = demoCaptionLabel.getPreferredSize();
+        int width = Math.min(Math.max(pref.width, 540), frameWidth - 80);
+        int height = pref.height;
+        int x = (frameWidth - width) / 2;
+        int y = frameHeight - height - 28;
+        demoCaptionLabel.setBounds(x, y, width, height);
+        demoCaptionLabel.revalidate();
+        demoCaptionLabel.repaint();
+    }
+
+    private static String escapeHtml(String s) {
+        if (s == null) return "";
+        return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
     }
 
     private void showPage(String pageName) {
@@ -1091,6 +1224,8 @@ public class SwingApp {
         private final JButton loginButton;
         private final JButton registerButton;
         private final JLabel statusLabel;
+        private JButton demoButton;
+        private AutoDemoController demoController;
 
         private LoginPanel() {
             setLayout(new BorderLayout());
@@ -1148,6 +1283,23 @@ public class SwingApp {
             statusLabel = new JLabel(" ");
             statusLabel.setFont(new Font("Segoe UI", Font.PLAIN, 12));
             statusLabel.setForeground(MUTED_TEXT_COLOR);
+
+            // Hidden until SwingApp wires in the AutoDemoController via
+            // installDemoButton(...). Stays as part of the form layout so
+            // that toggling visibility cleanly grows/shrinks the column.
+            demoButton = new JButton("\u25B6  Play auto demo  /  \u4e00\u952e\u6f14\u793a");
+            styleSecondaryButton(demoButton);
+            demoButton.setToolTipText("Plays a fully scripted TA \u2192 MO \u2192 Admin demo "
+                    + "(data is backed up and restored automatically).");
+            demoButton.setVisible(false);
+            demoButton.addActionListener(e -> {
+                if (demoController == null || !demoController.isAvailable()) {
+                    return;
+                }
+                demoButton.setEnabled(false);
+                statusLabel.setText("Auto demo running... \u4e00\u952e\u6f14\u793a\u4e2d (~2 min)");
+                demoController.start();
+            });
 
             // Now that the fields exist, populate the right-hand form column.
             mountFormFields(formPanel);
@@ -1263,6 +1415,14 @@ public class SwingApp {
             form.add(loginButton);
             form.add(Box.createVerticalStrut(10));
             form.add(registerButton);
+
+            if (demoButton != null) {
+                demoButton.setAlignmentX(LEFT_ALIGNMENT);
+                demoButton.setMaximumSize(new Dimension(Integer.MAX_VALUE, 44));
+                form.add(Box.createVerticalStrut(10));
+                form.add(demoButton);
+            }
+
             form.add(Box.createVerticalStrut(14));
 
             statusLabel.setAlignmentX(LEFT_ALIGNMENT);
@@ -1286,12 +1446,23 @@ public class SwingApp {
             return row;
         }
 
+        void installDemoButton(AutoDemoController controller) {
+            this.demoController = controller;
+            if (demoButton != null) {
+                demoButton.setVisible(controller != null && controller.isAvailable());
+                demoButton.setEnabled(true);
+            }
+        }
+
         private void reset() {
             emailField.setText("");
             passwordField.setText("");
             roleCombo.setSelectedItem(Role.TA);
             loginButton.setEnabled(true);
             registerButton.setEnabled(true);
+            if (demoButton != null) {
+                demoButton.setEnabled(true);
+            }
             statusLabel.setText(" ");
             frameSetDefaultButton();
         }
