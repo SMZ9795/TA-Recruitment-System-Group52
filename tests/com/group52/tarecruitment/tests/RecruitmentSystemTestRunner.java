@@ -70,6 +70,8 @@ public final class RecruitmentSystemTestRunner {
         runCase("AdminService getIdleTAs returns TAs with available hours but no accepted positions", this::testIdleTAs);
         runCase("AdminService getDepartmentStats aggregates positions and hours per module", this::testDepartmentStats);
         runCase("AuthService changePassword validates old password, strength, and uniqueness", this::testChangePassword);
+        runCase("AuthService changePassword succeeds with correct old password", this::testChangePasswordSuccessWithCorrectOldPassword);
+        runCase("AuthService changePassword fails with wrong old password", this::testChangePasswordFailsWithWrongOldPassword);
         runCase("ApplicationService audit log records status changes", this::testAuditLogRecordsStatusChanges);
         runCase("ApplicationService audit log query by TA and by Job ID", this::testAuditLogQueries);
         runCase("AuthService login locks account after 5 failed attempts", this::testLoginLockAfterFailedAttempts);
@@ -208,7 +210,7 @@ public final class RecruitmentSystemTestRunner {
             assertEquals("TA231226111", loginByEmail.getId(), "Login by email should work.");
 
             assertThrowsContains(
-                    "Incorrect password.",
+                    "Invalid credentials.",
                     () -> context.authService.login("clara@bupt.cn", "wrong-pass"),
                     "Wrong password should be rejected.");
             assertThrowsContains(
@@ -1176,6 +1178,29 @@ public final class RecruitmentSystemTestRunner {
             context.authService.changePassword("TA231226900", "Pass1234!", "NewPass1!", "NewPass1!");
             User u = context.authService.login("TA231226900", "NewPass1!");
             assertEquals("TA231226900", u.getId(), "Login with new password should succeed.");
+        }
+    }
+
+    private void testChangePasswordSuccessWithCorrectOldPassword() throws Exception {
+        try (TestContext context = new TestContext()) {
+            context.authService.registerTa("231226910", "SuccessUser", "success@bupt.cn", "OldPass1!");
+            // Correct old password — should succeed and allow login with new password
+            context.authService.changePassword("TA231226910", "OldPass1!", "NewPass2@", "NewPass2@");
+            User u = context.authService.login("TA231226910", "NewPass2@");
+            assertEquals("TA231226910", u.getId(), "Login with new password should succeed after correct change.");
+        }
+    }
+
+    private void testChangePasswordFailsWithWrongOldPassword() throws Exception {
+        try (TestContext context = new TestContext()) {
+            context.authService.registerTa("231226911", "FailUser", "fail@bupt.cn", "OldPass1!");
+            // Wrong old password — should be rejected and original password still works
+            assertThrowsContains("Current password is incorrect.",
+                    () -> context.authService.changePassword("TA231226911", "WrongOld!", "NewPass2@", "NewPass2@"),
+                    "Wrong old password must be rejected.");
+            // Original password still valid
+            User u = context.authService.login("TA231226911", "OldPass1!");
+            assertEquals("TA231226911", u.getId(), "Original password should still work after failed change attempt.");
         }
     }
 
