@@ -50,6 +50,12 @@ public final class MoApplicantRankingFutureExtensions {
     private static final int CRITICAL_MISSING_SKILLS = 5;
     private static final int EXTREME_WORKLOAD_HOURS = 22;
     private static final int URGENT_REVIEW_SCORE = 75;
+    private static final int EXCELLENT_QUALITY_SCORE = 85;
+    private static final int GOOD_QUALITY_SCORE = 70;
+    private static final int FAIR_QUALITY_SCORE = 50;
+    private static final int WEAK_QUALITY_SCORE = 30;
+    private static final int LOW_CONFIDENCE_SCORE = 45;
+    private static final int HIGH_CONFIDENCE_SCORE = 75;
 
     private MoApplicantRankingFutureExtensions() {
         throw new UnsupportedOperationException("Utility class");
@@ -1763,6 +1769,1337 @@ public final class MoApplicantRankingFutureExtensions {
         return List.copyOf(warnings);
     }
 
+    /**
+     * Future-only rich profile factory for later MO dashboards.
+     *
+     * <p>This method deliberately accepts primitive and plain Java values. It does not read models,
+     * repositories, services, Swing state, files, or any production workflow. Invalid values are
+     * normalized into safe defaults so a future screen can render partial data safely.
+     */
+    public static FutureCandidateProfile createFutureCandidateProfile(
+            String candidateId,
+            String applicantName,
+            String applicationId,
+            String jobId,
+            String jobTitle,
+            String rawStatus,
+            double matchScore,
+            Integer previousMatchScore,
+            int workload,
+            List<String> matchedSkills,
+            List<String> missingSkills,
+            List<String> riskFlags,
+            String recommendationText,
+            String notes) {
+        int safeScore = normalizeFuturePercentage(matchScore);
+        int safePreviousScore = normalizeFuturePreviousScore(previousMatchScore);
+        int safeWorkload = Math.max(0, workload);
+        ApplicationStatus parsedStatus = parseFutureApplicationStatus(rawStatus);
+        List<String> safeMatchedSkills = normalizeFutureTextList(matchedSkills);
+        List<String> safeMissingSkills = normalizeFutureTextList(missingSkills);
+        List<String> safeRiskFlags = normalizeFutureTextList(riskFlags);
+
+        RankingTrend trend = safePreviousScore < 0
+                ? RankingTrend.UNKNOWN
+                : classifyRankingTrend(safePreviousScore, safeScore);
+        ReviewPriority priority = recommendReviewPriority(
+                safeScore,
+                safeMissingSkills.size(),
+                safeWorkload,
+                parsedStatus);
+        CandidateGroup group = groupFutureProfileValues(safeScore, safeMissingSkills.size(), safeWorkload, parsedStatus);
+        WorkloadSeverity workloadSeverity = classifyWorkloadSeverity(safeWorkload);
+
+        if (safeRiskFlags.isEmpty()) {
+            safeRiskFlags = identifyApplicantRiskFlags(
+                    applicationId,
+                    applicantName,
+                    safeScore,
+                    safeMissingSkills.size(),
+                    safeWorkload,
+                    parsedStatus);
+        }
+
+        String recommendation = recommendationText == null || recommendationText.isBlank()
+                ? buildInterviewRecommendation(safeScore, safeMissingSkills.size(), safeWorkload, parsedStatus)
+                : recommendationText.trim();
+
+        return new FutureCandidateProfile(
+                safeLabel(candidateId, "UNKNOWN"),
+                safeLabel(applicantName, "Unknown applicant"),
+                safeLabel(applicationId, "UNKNOWN"),
+                safeLabel(jobId, "UNKNOWN"),
+                safeLabel(jobTitle, "Unknown job"),
+                normalizeFutureStatusLabel(rawStatus),
+                safeScore,
+                safePreviousScore,
+                safeWorkload,
+                safeMatchedSkills,
+                safeMissingSkills,
+                safeRiskFlags,
+                trend,
+                priority,
+                group,
+                workloadSeverity,
+                recommendation,
+                safeLabel(notes, ""));
+    }
+
+    /**
+     * Future-only convenience factory for code paths that already use an ApplicationStatus enum.
+     */
+    public static FutureCandidateProfile createFutureCandidateProfile(
+            String candidateId,
+            String applicantName,
+            String applicationId,
+            String jobId,
+            String jobTitle,
+            ApplicationStatus status,
+            int matchScore,
+            Integer previousMatchScore,
+            int workload,
+            List<String> matchedSkills,
+            List<String> missingSkills,
+            List<String> riskFlags,
+            String recommendationText,
+            String notes) {
+        return createFutureCandidateProfile(
+                candidateId,
+                applicantName,
+                applicationId,
+                jobId,
+                jobTitle,
+                status == null ? null : status.name(),
+                matchScore,
+                previousMatchScore,
+                workload,
+                matchedSkills,
+                missingSkills,
+                riskFlags,
+                recommendationText,
+                notes);
+    }
+
+    /**
+     * Future-only copier that returns a normalized independent profile object.
+     */
+    public static FutureCandidateProfile copyFutureCandidateProfile(FutureCandidateProfile profile) {
+        if (profile == null) {
+            return createFutureCandidateProfile(
+                    "", "", "", "", "", (String) null, 0, null, 0, List.of(), List.of(), List.of(), "", "");
+        }
+        return createFutureCandidateProfile(
+                profile.getCandidateId(),
+                profile.getApplicantName(),
+                profile.getApplicationId(),
+                profile.getJobId(),
+                profile.getJobTitle(),
+                profile.getNormalizedStatus(),
+                profile.getMatchScore(),
+                profile.getPreviousMatchScore() < 0 ? null : Integer.valueOf(profile.getPreviousMatchScore()),
+                profile.getWorkload(),
+                profile.getMatchedSkills(),
+                profile.getMissingSkills(),
+                profile.getRiskFlags(),
+                profile.getRecommendationText(),
+                profile.getNotes());
+    }
+
+    /**
+     * Future-only compact display label for possible MO lists or exports.
+     */
+    public static String buildFutureProfileCompactLabel(FutureCandidateProfile profile) {
+        if (profile == null) {
+            return "Unknown applicant | UNKNOWN | 0% | Unknown";
+        }
+        return profile.getApplicantName()
+                + " | " + profile.getApplicationId()
+                + " | " + profile.getMatchScore() + "%"
+                + " | " + profile.getReviewPriority().getLabel();
+    }
+
+    /**
+     * Future-only detailed display label for a richer candidate profile.
+     */
+    public static String buildFutureProfileDetailedLabel(FutureCandidateProfile profile) {
+        if (profile == null) {
+            return "Future candidate profile\nStatus: UNKNOWN\nRecommendation: Not applicable";
+        }
+        return "Future candidate profile"
+                + "\nCandidate: " + profile.getApplicantName() + " (" + profile.getCandidateId() + ")"
+                + "\nApplication: " + profile.getApplicationId()
+                + "\nJob: " + profile.getJobTitle() + " (" + profile.getJobId() + ")"
+                + "\nStatus: " + profile.getNormalizedStatus()
+                + "\nScore: " + profile.getMatchScore() + "%"
+                + "\nPrevious score: " + formatFuturePreviousScore(profile.getPreviousMatchScore())
+                + "\nTrend: " + profile.getRankingTrend().getLabel()
+                + "\nWorkload: " + profile.getWorkload() + "h/week (" + profile.getWorkloadSeverity().getLabel() + ")"
+                + "\nMatched skills: " + formatFutureList(profile.getMatchedSkills())
+                + "\nMissing skills: " + formatFutureList(profile.getMissingSkills())
+                + "\nRisk flags: " + formatFutureList(profile.getRiskFlags())
+                + "\nGroup: " + profile.getCandidateGroup().getLabel()
+                + "\nReview priority: " + profile.getReviewPriority().getLabel()
+                + "\nRecommendation: " + profile.getRecommendationText()
+                + "\nNotes: " + safeLabel(profile.getNotes(), "No notes");
+    }
+
+    /**
+     * Future-only reviewability check. Unknown or completed statuses safely return false.
+     */
+    public static boolean isFutureProfileReviewable(FutureCandidateProfile profile) {
+        return profile != null && needsDecision(parseFutureApplicationStatus(profile.getNormalizedStatus()));
+    }
+
+    /**
+     * Future-only strong-profile check based on score, missing skills, workload, and status.
+     */
+    public static boolean isFutureProfileStrong(FutureCandidateProfile profile) {
+        return profile != null
+                && isFutureProfileReviewable(profile)
+                && profile.getMatchScore() >= STRONG_MATCH_SCORE
+                && profile.getMissingSkills().size() <= 1
+                && profile.getWorkloadSeverity() != WorkloadSeverity.HIGH
+                && profile.getWorkloadSeverity() != WorkloadSeverity.EXTREME;
+    }
+
+    /**
+     * Future-only risk check for a richer profile.
+     */
+    public static boolean isFutureProfileRisky(FutureCandidateProfile profile) {
+        if (profile == null) {
+            return true;
+        }
+        return profile.getCandidateGroup() == CandidateGroup.HIGH_RISK
+                || profile.getRiskFlags().stream().anyMatch(flag -> !"No major future risk flags".equalsIgnoreCase(flag))
+                || profile.getMatchScore() < LOW_MATCH_SCORE
+                || profile.getMissingSkills().size() >= CRITICAL_MISSING_SKILLS
+                || profile.getWorkloadSeverity() == WorkloadSeverity.HIGH
+                || profile.getWorkloadSeverity() == WorkloadSeverity.EXTREME;
+    }
+
+    /**
+     * Future-only completeness check for possible dashboard warnings.
+     */
+    public static boolean hasFutureProfileIncompleteInformation(FutureCandidateProfile profile) {
+        if (profile == null) {
+            return true;
+        }
+        return isUnknownLabel(profile.getCandidateId())
+                || isUnknownLabel(profile.getApplicantName())
+                || isUnknownLabel(profile.getApplicationId())
+                || isUnknownLabel(profile.getJobId())
+                || isUnknownLabel(profile.getJobTitle())
+                || "UNKNOWN".equalsIgnoreCase(profile.getNormalizedStatus())
+                || (profile.getMatchedSkills().isEmpty() && profile.getMissingSkills().isEmpty());
+    }
+
+    /**
+     * Future-only stage suggestion. It never mutates workflow state.
+     */
+    public static FutureReviewStage suggestNextReviewStage(
+            FutureCandidateProfile profile,
+            FutureReviewStage currentStage) {
+        FutureReviewStage safeStage = currentStage == null ? FutureReviewStage.UNKNOWN : currentStage;
+        if (profile == null) {
+            return FutureReviewStage.BLOCKED;
+        }
+        if (!isFutureProfileReviewable(profile)) {
+            return FutureReviewStage.COMPLETED;
+        }
+        if (hasFutureProfileIncompleteInformation(profile)) {
+            return FutureReviewStage.BLOCKED;
+        }
+        if (safeStage == FutureReviewStage.NOT_STARTED || safeStage == FutureReviewStage.UNKNOWN) {
+            return FutureReviewStage.INITIAL_SCREENING;
+        }
+        if (safeStage == FutureReviewStage.INITIAL_SCREENING) {
+            return profile.getMissingSkills().isEmpty()
+                    ? FutureReviewStage.WORKLOAD_REVIEW
+                    : FutureReviewStage.SKILL_REVIEW;
+        }
+        if (safeStage == FutureReviewStage.SKILL_REVIEW) {
+            return FutureReviewStage.WORKLOAD_REVIEW;
+        }
+        if (safeStage == FutureReviewStage.WORKLOAD_REVIEW) {
+            return FutureReviewStage.FINAL_DECISION;
+        }
+        if (safeStage == FutureReviewStage.FINAL_DECISION) {
+            return FutureReviewStage.COMPLETED;
+        }
+        return safeStage;
+    }
+
+    /**
+     * Future-only action suggestion for a profile and review stage.
+     */
+    public static FutureReviewAction suggestNextReviewAction(
+            FutureCandidateProfile profile,
+            FutureReviewStage currentStage) {
+        if (profile == null) {
+            return FutureReviewAction.NO_ACTION;
+        }
+        FutureReviewStage safeStage = currentStage == null ? FutureReviewStage.UNKNOWN : currentStage;
+        if (!isFutureProfileReviewable(profile)) {
+            return FutureReviewAction.NO_ACTION;
+        }
+        if (hasFutureProfileIncompleteInformation(profile)) {
+            return FutureReviewAction.REQUEST_MORE_INFO;
+        }
+        if (profile.getWorkloadSeverity() == WorkloadSeverity.EXTREME) {
+            return FutureReviewAction.ESCALATE_TO_ADMIN;
+        }
+        if (safeStage == FutureReviewStage.NOT_STARTED || safeStage == FutureReviewStage.UNKNOWN) {
+            return FutureReviewAction.START_REVIEW;
+        }
+        if (isFutureProfileStrong(profile)) {
+            return FutureReviewAction.MARK_FOR_INTERVIEW;
+        }
+        if (profile.getCandidateGroup() == CandidateGroup.POSSIBLE_FIT
+                || calculateFutureCompositeQualityScore(profile) >= FAIR_QUALITY_SCORE) {
+            return FutureReviewAction.MARK_FOR_WAITLIST;
+        }
+        if (isFutureProfileRisky(profile) || profile.getCandidateGroup() == CandidateGroup.WEAK_FIT) {
+            return FutureReviewAction.MARK_FOR_REJECTION;
+        }
+        if (safeStage == FutureReviewStage.FINAL_DECISION) {
+            return FutureReviewAction.COMPLETE_REVIEW;
+        }
+        return FutureReviewAction.DEFER_REVIEW;
+    }
+
+    /**
+     * Future-only action allowance check for enum statuses.
+     */
+    public static boolean isFutureReviewActionAllowed(
+            FutureReviewAction action,
+            ApplicationStatus status) {
+        FutureReviewAction safeAction = action == null ? FutureReviewAction.NO_ACTION : action;
+        if (safeAction == FutureReviewAction.NO_ACTION) {
+            return true;
+        }
+        if (status == null) {
+            return safeAction == FutureReviewAction.REQUEST_MORE_INFO
+                    || safeAction == FutureReviewAction.DEFER_REVIEW;
+        }
+        if (needsDecision(status)) {
+            return true;
+        }
+        return safeAction == FutureReviewAction.NO_ACTION
+                || safeAction == FutureReviewAction.COMPLETE_REVIEW;
+    }
+
+    /**
+     * Future-only action allowance check for raw status labels.
+     */
+    public static boolean isFutureReviewActionAllowed(
+            FutureReviewAction action,
+            String rawStatus) {
+        return isFutureReviewActionAllowed(action, parseFutureApplicationStatus(rawStatus));
+    }
+
+    /**
+     * Future-only plain-English explanation for action allowance.
+     */
+    public static String explainFutureReviewActionAllowance(
+            FutureReviewAction action,
+            String rawStatus) {
+        FutureReviewAction safeAction = action == null ? FutureReviewAction.NO_ACTION : action;
+        ApplicationStatus status = parseFutureApplicationStatus(rawStatus);
+        boolean allowed = isFutureReviewActionAllowed(safeAction, status);
+        if (allowed && safeAction == FutureReviewAction.NO_ACTION) {
+            return "No action is always allowed because it does not change future review state.";
+        }
+        if (allowed && needsDecision(status)) {
+            return safeAction.getLabel() + " is allowed because "
+                    + readableStatusLabel(status).toLowerCase()
+                    + " applications still need MO review.";
+        }
+        if (allowed && status == null) {
+            return safeAction.getLabel()
+                    + " is allowed as a safe fallback while the status remains unknown.";
+        }
+        if (allowed) {
+            return safeAction.getLabel()
+                    + " is allowed because it only closes or records a completed future review.";
+        }
+        return safeAction.getLabel()
+                + " is not allowed because "
+                + normalizeFutureStatusLabel(rawStatus).toLowerCase()
+                + " is not a reviewable future status.";
+    }
+
+    /**
+     * Future-only action-to-outcome mapper. It does not persist any decision.
+     */
+    public static FutureReviewOutcome mapFutureReviewActionToOutcome(FutureReviewAction action) {
+        if (action == FutureReviewAction.MARK_FOR_INTERVIEW) {
+            return FutureReviewOutcome.INTERVIEW_RECOMMENDED;
+        }
+        if (action == FutureReviewAction.MARK_FOR_WAITLIST) {
+            return FutureReviewOutcome.WAITLIST_RECOMMENDED;
+        }
+        if (action == FutureReviewAction.MARK_FOR_REJECTION) {
+            return FutureReviewOutcome.REJECTION_RECOMMENDED;
+        }
+        if (action == FutureReviewAction.REQUEST_MORE_INFO || action == FutureReviewAction.DEFER_REVIEW) {
+            return FutureReviewOutcome.NEEDS_MORE_REVIEW;
+        }
+        if (action == FutureReviewAction.ESCALATE_TO_ADMIN) {
+            return FutureReviewOutcome.BLOCKED;
+        }
+        if (action == FutureReviewAction.NO_ACTION || action == null) {
+            return FutureReviewOutcome.NOT_APPLICABLE;
+        }
+        if (action == FutureReviewAction.START_REVIEW || action == FutureReviewAction.COMPLETE_REVIEW) {
+            return FutureReviewOutcome.NEEDS_MORE_REVIEW;
+        }
+        return FutureReviewOutcome.UNKNOWN;
+    }
+
+    /**
+     * Future-only transition summary for possible review workflow previews.
+     */
+    public static String generateFutureWorkflowTransitionSummary(
+            FutureCandidateProfile profile,
+            FutureReviewStage currentStage,
+            FutureReviewAction action) {
+        FutureReviewStage safeCurrentStage = currentStage == null ? FutureReviewStage.UNKNOWN : currentStage;
+        FutureReviewAction safeAction = action == null ? FutureReviewAction.NO_ACTION : action;
+        FutureReviewStage nextStage = suggestNextReviewStage(profile, safeCurrentStage);
+        FutureReviewOutcome outcome = mapFutureReviewActionToOutcome(safeAction);
+        String candidateLabel = profile == null ? "Unknown applicant" : profile.getApplicantName();
+
+        return "Future workflow transition"
+                + "\nCandidate: " + candidateLabel
+                + "\nCurrent stage: " + safeCurrentStage.getLabel()
+                + "\nSuggested stage: " + nextStage.getLabel()
+                + "\nAction: " + safeAction.getLabel()
+                + "\nAction allowed: " + isFutureReviewActionAllowed(
+                        safeAction,
+                        profile == null ? null : profile.getNormalizedStatus())
+                + "\nOutcome: " + outcome.getLabel()
+                + "\nExplanation: " + explainFutureReviewActionAllowance(
+                        safeAction,
+                        profile == null ? null : profile.getNormalizedStatus());
+    }
+
+    /**
+     * Future-only block reason detector for richer workflow previews.
+     */
+    public static List<FutureReviewBlockReason> determineFutureReviewBlockReasons(FutureCandidateProfile profile) {
+        if (profile == null) {
+            return List.of(FutureReviewBlockReason.UNKNOWN);
+        }
+        List<FutureReviewBlockReason> reasons = new ArrayList<>();
+        if (isUnknownLabel(profile.getCandidateId())) {
+            reasons.add(FutureReviewBlockReason.MISSING_CANDIDATE_ID);
+        }
+        if (isUnknownLabel(profile.getApplicationId())) {
+            reasons.add(FutureReviewBlockReason.MISSING_APPLICATION_ID);
+        }
+        if (isUnknownLabel(profile.getJobId())) {
+            reasons.add(FutureReviewBlockReason.MISSING_JOB_ID);
+        }
+        ApplicationStatus status = parseFutureApplicationStatus(profile.getNormalizedStatus());
+        if (status == null) {
+            reasons.add(FutureReviewBlockReason.UNKNOWN_STATUS);
+        } else if (!needsDecision(status)) {
+            reasons.add(FutureReviewBlockReason.NON_REVIEWABLE_STATUS);
+        }
+        if (profile.getWorkloadSeverity() == WorkloadSeverity.EXTREME) {
+            reasons.add(FutureReviewBlockReason.EXTREME_WORKLOAD);
+        }
+        if (profile.getMatchedSkills().isEmpty() && profile.getMissingSkills().isEmpty()) {
+            reasons.add(FutureReviewBlockReason.INCOMPLETE_SKILL_DATA);
+        }
+        if (reasons.isEmpty()) {
+            reasons.add(FutureReviewBlockReason.NO_BLOCK);
+        }
+        return List.copyOf(reasons);
+    }
+
+    /**
+     * Future-only readiness summary for a single profile. This is plain text only and is not shown
+     * in the current application unless a later workflow explicitly calls it.
+     */
+    public static String buildFutureReviewReadinessSummary(FutureCandidateProfile profile) {
+        if (profile == null) {
+            return "Future review readiness: blocked\nReasons: Unknown";
+        }
+        List<FutureReviewBlockReason> reasons = determineFutureReviewBlockReasons(profile);
+        boolean blocked = reasons.stream().anyMatch(reason -> reason != FutureReviewBlockReason.NO_BLOCK);
+        return "Future review readiness"
+                + "\nCandidate: " + profile.getApplicantName()
+                + "\nReady: " + !blocked
+                + "\nBlock reasons: " + formatFutureBlockReasons(reasons)
+                + "\nSuggested stage: " + suggestNextReviewStage(profile, FutureReviewStage.NOT_STARTED).getLabel()
+                + "\nSuggested action: " + suggestNextReviewAction(profile, FutureReviewStage.NOT_STARTED).getLabel()
+                + "\nQuality: " + classifyFutureQualityBand(profile).getLabel()
+                + "\nConfidence: " + calculateFutureReviewConfidenceScore(profile) + "/100";
+    }
+
+    /**
+     * Future-only bulk review plan formatter. It sorts copies of the supplied profiles and returns
+     * deterministic plain text instead of changing application state.
+     */
+    public static String buildFutureBulkReviewPlan(List<FutureCandidateProfile> profiles, int maximumItems) {
+        int safeLimit = Math.max(0, maximumItems);
+        if (safeLimit == 0) {
+            return "Future bulk review plan\nNo items requested.";
+        }
+        List<FutureCandidateProfile> sorted = safeFutureCandidateProfiles(profiles).stream()
+                .sorted(MoApplicantRankingFutureExtensions::compareFutureQualityScores)
+                .limit(safeLimit)
+                .toList();
+        if (sorted.isEmpty()) {
+            return "Future bulk review plan\nNo candidate profiles are available.";
+        }
+        StringBuilder builder = new StringBuilder("Future bulk review plan");
+        int index = 1;
+        for (FutureCandidateProfile profile : sorted) {
+            builder.append("\n")
+                    .append(index)
+                    .append(". ")
+                    .append(buildFutureProfileCompactLabel(profile))
+                    .append(" | quality=")
+                    .append(classifyFutureQualityBand(profile).getLabel())
+                    .append(" | action=")
+                    .append(suggestNextReviewAction(profile, FutureReviewStage.NOT_STARTED).getLabel());
+            index++;
+        }
+        return builder.toString();
+    }
+
+    /**
+     * Future-only sample profiles for demos or manual exploration. These samples are not loaded by
+     * production code and do not create files, database records, notifications, or UI rows.
+     */
+    public static List<FutureCandidateProfile> createSampleFutureCandidateProfiles() {
+        List<FutureCandidateProfile> samples = new ArrayList<>();
+        samples.add(createFutureCandidateProfile(
+                "CAND-001",
+                "Sample Strong Applicant",
+                "APP-001",
+                "JOB-101",
+                "Software Engineering TA",
+                ApplicationStatus.PENDING,
+                92,
+                87,
+                6,
+                List.of("Java", "Testing", "OO Design"),
+                List.of(),
+                List.of(),
+                "",
+                "Future-only sample strong profile."));
+        samples.add(createFutureCandidateProfile(
+                "CAND-002",
+                "Sample Workload Risk",
+                "APP-002",
+                "JOB-101",
+                "Software Engineering TA",
+                ApplicationStatus.REVIEWING,
+                74,
+                79,
+                23,
+                List.of("Java"),
+                List.of("JUnit", "Teaching experience"),
+                List.of("High current workload"),
+                "",
+                "Future-only sample workload risk profile."));
+        samples.add(createFutureCandidateProfile(
+                "",
+                "",
+                "APP-003",
+                "",
+                "",
+                (String) null,
+                Double.NaN,
+                null,
+                -5,
+                List.of(),
+                List.of(),
+                List.of(),
+                "",
+                "Future-only sample incomplete profile."));
+        return List.copyOf(samples);
+    }
+
+    /**
+     * Future-only quality band classifier for a rich profile.
+     */
+    public static FutureQualityBand classifyFutureQualityBand(FutureCandidateProfile profile) {
+        if (profile == null) {
+            return FutureQualityBand.UNKNOWN;
+        }
+        return classifyFutureQualityBand(
+                profile.getMatchScore(),
+                profile.getMissingSkills().size(),
+                profile.getWorkload(),
+                profile.getNormalizedStatus(),
+                isFutureProfileRisky(profile));
+    }
+
+    /**
+     * Future-only quality band classifier using primitive values.
+     */
+    public static FutureQualityBand classifyFutureQualityBand(
+            double matchScore,
+            int missingSkillCount,
+            int workload,
+            String rawStatus,
+            boolean risky) {
+        ApplicationStatus status = parseFutureApplicationStatus(rawStatus);
+        if (status == null) {
+            return FutureQualityBand.UNKNOWN;
+        }
+        if (!needsDecision(status)) {
+            return FutureQualityBand.UNSUITABLE;
+        }
+        int score = calculateFutureCompositeQualityScore(
+                matchScore,
+                missingSkillCount,
+                workload,
+                rawStatus,
+                risky);
+        if (score >= EXCELLENT_QUALITY_SCORE) {
+            return FutureQualityBand.EXCELLENT;
+        }
+        if (score >= GOOD_QUALITY_SCORE) {
+            return FutureQualityBand.GOOD;
+        }
+        if (score >= FAIR_QUALITY_SCORE) {
+            return FutureQualityBand.FAIR;
+        }
+        if (score >= WEAK_QUALITY_SCORE) {
+            return FutureQualityBand.WEAK;
+        }
+        return FutureQualityBand.UNSUITABLE;
+    }
+
+    /**
+     * Future-only quality signal builder for explainable review summaries.
+     */
+    public static List<FutureQualitySignal> generateFutureQualitySignals(FutureCandidateProfile profile) {
+        if (profile == null) {
+            return List.of(FutureQualitySignal.NO_SIGNAL_DATA);
+        }
+        List<FutureQualitySignal> signals = new ArrayList<>();
+        if (profile.getMatchScore() >= STRONG_MATCH_SCORE) {
+            signals.add(FutureQualitySignal.STRONG_MATCH_SCORE);
+        }
+        if (profile.getMatchedSkills().size() >= SOME_MATCHED_SKILLS) {
+            signals.add(FutureQualitySignal.SKILL_ALIGNMENT);
+        }
+        if (profile.getMissingSkills().isEmpty()) {
+            signals.add(FutureQualitySignal.NO_MISSING_SKILLS);
+        }
+        if (profile.getWorkloadSeverity() == WorkloadSeverity.NONE
+                || profile.getWorkloadSeverity() == WorkloadSeverity.LOW) {
+            signals.add(FutureQualitySignal.MANAGEABLE_WORKLOAD);
+        }
+        if (profile.getRankingTrend() == RankingTrend.IMPROVED) {
+            signals.add(FutureQualitySignal.IMPROVING_TREND);
+        } else if (profile.getRankingTrend() == RankingTrend.STABLE) {
+            signals.add(FutureQualitySignal.STABLE_TREND);
+        }
+        if (isFutureProfileReviewable(profile)) {
+            signals.add(FutureQualitySignal.REVIEWABLE_STATUS);
+        }
+        if (signals.isEmpty()) {
+            signals.add(FutureQualitySignal.NO_SIGNAL_DATA);
+        }
+        return List.copyOf(signals);
+    }
+
+    /**
+     * Future-only quality warning builder for explainable review summaries.
+     */
+    public static List<FutureQualityWarning> generateFutureQualityWarnings(FutureCandidateProfile profile) {
+        if (profile == null) {
+            return List.of(FutureQualityWarning.INCOMPLETE_PROFILE);
+        }
+        List<FutureQualityWarning> warnings = new ArrayList<>();
+        if (hasFutureProfileIncompleteInformation(profile)) {
+            warnings.add(FutureQualityWarning.INCOMPLETE_PROFILE);
+        }
+        if (!isFutureProfileReviewable(profile)) {
+            warnings.add(FutureQualityWarning.NON_REVIEWABLE_STATUS);
+        }
+        if (profile.getMatchScore() < LOW_MATCH_SCORE) {
+            warnings.add(FutureQualityWarning.LOW_MATCH_SCORE);
+        }
+        if (profile.getMissingSkills().size() >= MANY_MISSING_SKILLS) {
+            warnings.add(FutureQualityWarning.MANY_MISSING_SKILLS);
+        }
+        if (profile.getWorkloadSeverity() == WorkloadSeverity.HIGH
+                || profile.getWorkloadSeverity() == WorkloadSeverity.EXTREME) {
+            warnings.add(FutureQualityWarning.HIGH_WORKLOAD);
+        }
+        if (profile.getRankingTrend() == RankingTrend.DECLINED) {
+            warnings.add(FutureQualityWarning.DECLINING_TREND);
+        }
+        if (isFutureProfileRisky(profile)) {
+            warnings.add(FutureQualityWarning.RISK_FLAGS_PRESENT);
+        }
+        if (warnings.isEmpty()) {
+            warnings.add(FutureQualityWarning.NO_MAJOR_WARNING);
+        }
+        return List.copyOf(warnings);
+    }
+
+    /**
+     * Future-only composite quality score from 0 to 100 for a rich profile.
+     */
+    public static int calculateFutureCompositeQualityScore(FutureCandidateProfile profile) {
+        if (profile == null) {
+            return 0;
+        }
+        return calculateFutureCompositeQualityScore(
+                profile.getMatchScore(),
+                profile.getMissingSkills().size(),
+                profile.getWorkload(),
+                profile.getNormalizedStatus(),
+                isFutureProfileRisky(profile));
+    }
+
+    /**
+     * Future-only composite quality score from 0 to 100 using primitive values.
+     */
+    public static int calculateFutureCompositeQualityScore(
+            double matchScore,
+            int missingSkillCount,
+            int workload,
+            String rawStatus,
+            boolean risky) {
+        int score = normalizeFuturePercentage(matchScore);
+        int safeMissing = Math.max(0, missingSkillCount);
+        int safeWorkload = Math.max(0, workload);
+        ApplicationStatus status = parseFutureApplicationStatus(rawStatus);
+        int composite = Math.round(score * 0.65f);
+
+        composite += Math.max(0, 20 - (safeMissing * 5));
+
+        WorkloadSeverity severity = classifyWorkloadSeverity(safeWorkload);
+        if (severity == WorkloadSeverity.NONE || severity == WorkloadSeverity.LOW) {
+            composite += 10;
+        } else if (severity == WorkloadSeverity.MEDIUM) {
+            composite += 4;
+        } else if (severity == WorkloadSeverity.HIGH) {
+            composite -= 8;
+        } else if (severity == WorkloadSeverity.EXTREME) {
+            composite -= 18;
+        }
+
+        if (status == ApplicationStatus.PENDING || status == ApplicationStatus.REVIEWING) {
+            composite += 5;
+        } else if (status == ApplicationStatus.APPLIED) {
+            composite += 3;
+        } else if (status == null) {
+            composite -= 15;
+        } else {
+            composite -= 25;
+        }
+
+        if (risky) {
+            composite -= 12;
+        }
+        return clampToRange(composite, 0, 100);
+    }
+
+    /**
+     * Future-only review confidence score from 0 to 100. Higher means the helper has enough clean
+     * profile data to make its advisory quality score less tentative.
+     */
+    public static int calculateFutureReviewConfidenceScore(FutureCandidateProfile profile) {
+        if (profile == null) {
+            return 0;
+        }
+        int confidence = 35;
+        if (!isUnknownLabel(profile.getCandidateId())) {
+            confidence += 8;
+        }
+        if (!isUnknownLabel(profile.getApplicantName())) {
+            confidence += 8;
+        }
+        if (!isUnknownLabel(profile.getApplicationId())) {
+            confidence += 8;
+        }
+        if (!isUnknownLabel(profile.getJobId()) && !isUnknownLabel(profile.getJobTitle())) {
+            confidence += 8;
+        }
+        if (parseFutureApplicationStatus(profile.getNormalizedStatus()) != null) {
+            confidence += 8;
+        }
+        if (!profile.getMatchedSkills().isEmpty() || !profile.getMissingSkills().isEmpty()) {
+            confidence += 10;
+        }
+        if (profile.getPreviousMatchScore() >= 0) {
+            confidence += 5;
+        }
+        if (!profile.getRiskFlags().isEmpty()) {
+            confidence += 5;
+        }
+        if (profile.getWorkloadSeverity() != WorkloadSeverity.UNKNOWN) {
+            confidence += 5;
+        }
+        if (hasFutureProfileIncompleteInformation(profile)) {
+            confidence -= 20;
+        }
+        return clampToRange(confidence, 0, 100);
+    }
+
+    /**
+     * Future-only explanation of how the quality score was produced.
+     */
+    public static String explainFutureQualityScore(FutureCandidateProfile profile) {
+        if (profile == null) {
+            return "Future quality score is 0 because the profile is missing.";
+        }
+        int score = calculateFutureCompositeQualityScore(profile);
+        int confidence = calculateFutureReviewConfidenceScore(profile);
+        return "Future quality score"
+                + "\nCandidate: " + profile.getApplicantName()
+                + "\nComposite score: " + score + "/100"
+                + "\nQuality band: " + classifyFutureQualityBand(profile).getLabel()
+                + "\nReview confidence: " + confidence + "/100"
+                + "\nScore basis: match score contributes most, missing skills reduce the score, manageable workload adds a small bonus, non-reviewable or unknown status reduces the score, and risk flags apply a fixed penalty."
+                + "\nSignals: " + formatFutureQualitySignals(generateFutureQualitySignals(profile))
+                + "\nWarnings: " + formatFutureQualityWarnings(generateFutureQualityWarnings(profile));
+    }
+
+    /**
+     * Future-only comparator for two richer candidate profiles by quality score, confidence, then
+     * readable labels.
+     */
+    public static int compareFutureQualityScores(
+            FutureCandidateProfile left,
+            FutureCandidateProfile right) {
+        if (left == right) {
+            return 0;
+        }
+        if (left == null) {
+            return 1;
+        }
+        if (right == null) {
+            return -1;
+        }
+        int qualityComparison = Integer.compare(
+                calculateFutureCompositeQualityScore(right),
+                calculateFutureCompositeQualityScore(left));
+        if (qualityComparison != 0) {
+            return qualityComparison;
+        }
+        int confidenceComparison = Integer.compare(
+                calculateFutureReviewConfidenceScore(right),
+                calculateFutureReviewConfidenceScore(left));
+        if (confidenceComparison != 0) {
+            return confidenceComparison;
+        }
+        int nameComparison = normalizedSortText(left.getApplicantName())
+                .compareTo(normalizedSortText(right.getApplicantName()));
+        if (nameComparison != 0) {
+            return nameComparison;
+        }
+        return normalizedSortText(left.getApplicationId())
+                .compareTo(normalizedSortText(right.getApplicationId()));
+    }
+
+    /**
+     * Future-only dashboard card for pending candidate count.
+     */
+    public static FutureDashboardCard buildPendingCandidatesCard(List<FutureCandidateProfile> profiles) {
+        List<FutureCandidateProfile> safeProfiles = safeFutureCandidateProfiles(profiles);
+        int pending = 0;
+        for (FutureCandidateProfile profile : safeProfiles) {
+            if (isFutureProfileReviewable(profile)) {
+                pending++;
+            }
+        }
+        NotificationSeverity severity = pending >= MANY_REVIEWABLE_APPLICATIONS
+                ? NotificationSeverity.HIGH
+                : pending > 0 ? NotificationSeverity.MEDIUM : NotificationSeverity.LOW;
+        return new FutureDashboardCard(
+                "Pending candidates",
+                String.valueOf(pending),
+                safeProfiles.size() + " total future profiles",
+                severity,
+                pending > 0 ? "Open the review queue." : "No pending candidate action.");
+    }
+
+    /**
+     * Future-only dashboard card for urgent review count.
+     */
+    public static FutureDashboardCard buildUrgentReviewCountCard(List<FutureCandidateProfile> profiles) {
+        int urgent = 0;
+        for (FutureCandidateProfile profile : safeFutureCandidateProfiles(profiles)) {
+            if (calculateFutureCompositeQualityScore(profile) >= HIGH_CONFIDENCE_SCORE
+                    && isFutureProfileReviewable(profile)) {
+                urgent++;
+            }
+        }
+        return new FutureDashboardCard(
+                "Urgent reviews",
+                String.valueOf(urgent),
+                "Profiles with strong advisory quality",
+                urgent > 0 ? NotificationSeverity.HIGH : NotificationSeverity.LOW,
+                urgent > 0 ? "Review strongest candidates first." : "No urgent future reviews.");
+    }
+
+    /**
+     * Future-only dashboard card for strong candidates.
+     */
+    public static FutureDashboardCard buildStrongCandidatesCard(List<FutureCandidateProfile> profiles) {
+        int strong = 0;
+        for (FutureCandidateProfile profile : safeFutureCandidateProfiles(profiles)) {
+            if (isFutureProfileStrong(profile)) {
+                strong++;
+            }
+        }
+        return new FutureDashboardCard(
+                "Strong candidates",
+                String.valueOf(strong),
+                "High score, low missing-skill pressure",
+                strong > 0 ? NotificationSeverity.MEDIUM : NotificationSeverity.LOW,
+                strong > 0 ? "Prepare interview shortlist." : "Continue normal screening.");
+    }
+
+    /**
+     * Future-only dashboard card for risky candidates.
+     */
+    public static FutureDashboardCard buildRiskyCandidatesCard(List<FutureCandidateProfile> profiles) {
+        int risky = 0;
+        for (FutureCandidateProfile profile : safeFutureCandidateProfiles(profiles)) {
+            if (isFutureProfileRisky(profile)) {
+                risky++;
+            }
+        }
+        return new FutureDashboardCard(
+                "Risky candidates",
+                String.valueOf(risky),
+                "Profiles with workload, skill, status, or data warnings",
+                risky > 0 ? NotificationSeverity.MEDIUM : NotificationSeverity.LOW,
+                risky > 0 ? "Inspect warnings before decisions." : "No major risk flags.");
+    }
+
+    /**
+     * Future-only dashboard card for average match score.
+     */
+    public static FutureDashboardCard buildAverageMatchScoreCard(List<FutureCandidateProfile> profiles) {
+        List<FutureCandidateProfile> safeProfiles = safeFutureCandidateProfiles(profiles);
+        if (safeProfiles.isEmpty()) {
+            return new FutureDashboardCard("Average match score", "0.0%", "No future profiles", NotificationSeverity.LOW, "No score review needed.");
+        }
+        int total = 0;
+        for (FutureCandidateProfile profile : safeProfiles) {
+            total += profile.getMatchScore();
+        }
+        double average = total / (double) safeProfiles.size();
+        NotificationSeverity severity = average >= STRONG_MATCH_SCORE
+                ? NotificationSeverity.LOW
+                : average >= MODERATE_MATCH_SCORE ? NotificationSeverity.MEDIUM : NotificationSeverity.HIGH;
+        return new FutureDashboardCard(
+                "Average match score",
+                formatOneDecimal(average) + "%",
+                safeProfiles.size() + " future profiles scored",
+                severity,
+                average >= MODERATE_MATCH_SCORE ? "Maintain normal review pace." : "Check job-skill alignment.");
+    }
+
+    /**
+     * Future-only dashboard card for average workload.
+     */
+    public static FutureDashboardCard buildAverageWorkloadCard(List<FutureCandidateProfile> profiles) {
+        List<FutureCandidateProfile> safeProfiles = safeFutureCandidateProfiles(profiles);
+        if (safeProfiles.isEmpty()) {
+            return new FutureDashboardCard("Average workload", "0.0h", "No future profiles", NotificationSeverity.LOW, "No workload review needed.");
+        }
+        int total = 0;
+        for (FutureCandidateProfile profile : safeProfiles) {
+            total += profile.getWorkload();
+        }
+        double average = total / (double) safeProfiles.size();
+        NotificationSeverity severity = average >= HIGH_WORKLOAD_HOURS
+                ? NotificationSeverity.HIGH
+                : average >= MEDIUM_WORKLOAD_HOURS ? NotificationSeverity.MEDIUM : NotificationSeverity.LOW;
+        return new FutureDashboardCard(
+                "Average workload",
+                formatOneDecimal(average) + "h",
+                "Weekly workload across future profiles",
+                severity,
+                average >= HIGH_WORKLOAD_HOURS ? "Review overload risk." : "Workload looks manageable.");
+    }
+
+    /**
+     * Future-only dashboard card for missing skill pressure.
+     */
+    public static FutureDashboardCard buildMissingSkillPressureCard(List<FutureCandidateProfile> profiles) {
+        List<FutureCandidateProfile> safeProfiles = safeFutureCandidateProfiles(profiles);
+        int missingTotal = 0;
+        int highPressure = 0;
+        for (FutureCandidateProfile profile : safeProfiles) {
+            int missing = profile.getMissingSkills().size();
+            missingTotal += missing;
+            if (missing >= MANY_MISSING_SKILLS) {
+                highPressure++;
+            }
+        }
+        double average = safeProfiles.isEmpty() ? 0.0 : missingTotal / (double) safeProfiles.size();
+        NotificationSeverity severity = highPressure > 0 ? NotificationSeverity.MEDIUM : NotificationSeverity.LOW;
+        return new FutureDashboardCard(
+                "Missing skill pressure",
+                formatOneDecimal(average),
+                highPressure + " profile(s) with several missing skills",
+                severity,
+                highPressure > 0 ? "Review requirement fit." : "No broad skill pressure.");
+    }
+
+    /**
+     * Future-only dashboard card for review completion progress.
+     */
+    public static FutureDashboardCard buildReviewCompletionProgressCard(List<FutureCandidateProfile> profiles) {
+        List<FutureCandidateProfile> safeProfiles = safeFutureCandidateProfiles(profiles);
+        int completed = 0;
+        for (FutureCandidateProfile profile : safeProfiles) {
+            if (!isFutureProfileReviewable(profile)) {
+                completed++;
+            }
+        }
+        int percent = safeProfiles.isEmpty() ? 0 : Math.round((completed * 100.0f) / safeProfiles.size());
+        return new FutureDashboardCard(
+                "Review completion",
+                percent + "%",
+                completed + " of " + safeProfiles.size() + " profiles not pending review",
+                percent >= CLOSE_TO_FILLED_PERCENT ? NotificationSeverity.LOW : NotificationSeverity.MEDIUM,
+                percent >= CLOSE_TO_FILLED_PERCENT ? "Most future reviews are complete." : "Continue pending review.");
+    }
+
+    /**
+     * Future-only dashboard card for candidate quality distribution.
+     */
+    public static FutureDashboardCard buildCandidateQualityDistributionCard(List<FutureCandidateProfile> profiles) {
+        Map<FutureQualityBand, Integer> counts = countFutureQualityBands(profiles);
+        String value = "Excellent " + counts.get(FutureQualityBand.EXCELLENT)
+                + ", Good " + counts.get(FutureQualityBand.GOOD)
+                + ", Fair " + counts.get(FutureQualityBand.FAIR)
+                + ", Weak " + counts.get(FutureQualityBand.WEAK)
+                + ", Unsuitable " + counts.get(FutureQualityBand.UNSUITABLE);
+        int weakOrWorse = counts.get(FutureQualityBand.WEAK) + counts.get(FutureQualityBand.UNSUITABLE);
+        return new FutureDashboardCard(
+                "Quality distribution",
+                value,
+                counts.get(FutureQualityBand.UNKNOWN) + " unknown profile(s)",
+                weakOrWorse > 0 ? NotificationSeverity.MEDIUM : NotificationSeverity.LOW,
+                weakOrWorse > 0 ? "Inspect weak or unsuitable profiles." : "Quality distribution looks healthy.");
+    }
+
+    /**
+     * Future-only dashboard card for a notification digest.
+     */
+    public static FutureDashboardCard buildNotificationDigestCard(List<FutureCandidateProfile> profiles) {
+        String digest = generateCompactFutureDashboardDigest(profiles);
+        NotificationSeverity severity = digest.contains("urgent=0") ? NotificationSeverity.LOW : NotificationSeverity.HIGH;
+        return new FutureDashboardCard(
+                "Notification digest",
+                digest,
+                "Plain-text digest only; not connected to NotificationService",
+                severity,
+                severity == NotificationSeverity.HIGH ? "Review digest alerts." : "No digest alert.");
+    }
+
+    /**
+     * Future-only full dashboard snapshot builder. This returns plain Java objects only.
+     */
+    public static FutureDashboardSnapshot buildFullFutureDashboardSnapshot(List<FutureCandidateProfile> profiles) {
+        List<FutureCandidateProfile> safeProfiles = safeFutureCandidateProfiles(profiles);
+        List<FutureDashboardCard> overviewCards = List.of(
+                buildPendingCandidatesCard(safeProfiles),
+                buildUrgentReviewCountCard(safeProfiles),
+                buildStrongCandidatesCard(safeProfiles),
+                buildRiskyCandidatesCard(safeProfiles));
+        List<FutureDashboardCard> qualityCards = List.of(
+                buildAverageMatchScoreCard(safeProfiles),
+                buildAverageWorkloadCard(safeProfiles),
+                buildMissingSkillPressureCard(safeProfiles),
+                buildCandidateQualityDistributionCard(safeProfiles));
+        List<FutureDashboardCard> workflowCards = List.of(
+                buildReviewCompletionProgressCard(safeProfiles),
+                buildNotificationDigestCard(safeProfiles));
+
+        List<FutureDashboardSection> sections = List.of(
+                new FutureDashboardSection("Future MO overview", overviewCards),
+                new FutureDashboardSection("Future quality signals", qualityCards),
+                new FutureDashboardSection("Future workflow", workflowCards));
+
+        return new FutureDashboardSnapshot(
+                safeProfiles.size(),
+                countFutureReviewableProfiles(safeProfiles),
+                countFutureStrongProfiles(safeProfiles),
+                countFutureRiskyProfiles(safeProfiles),
+                sections,
+                generateCompactFutureDashboardDigest(safeProfiles));
+    }
+
+    /**
+     * Future-only card formatter for plain-text reports.
+     */
+    public static String formatFutureDashboardCardAsPlainText(FutureDashboardCard card) {
+        if (card == null) {
+            return "Dashboard card: unavailable";
+        }
+        return card.getCardTitle()
+                + ": " + card.getCardValue()
+                + "\nSeverity: " + card.getSeverity().getLabel()
+                + "\nSubtitle: " + card.getCardSubtitle()
+                + "\nRecommended action: " + card.getRecommendedAction();
+    }
+
+    /**
+     * Future-only section formatter for plain-text reports.
+     */
+    public static String formatFutureDashboardSectionAsPlainText(FutureDashboardSection section) {
+        if (section == null) {
+            return "Dashboard section: unavailable";
+        }
+        StringBuilder builder = new StringBuilder(section.getSectionTitle());
+        for (FutureDashboardCard card : section.getCards()) {
+            builder.append("\n\n").append(formatFutureDashboardCardAsPlainText(card));
+        }
+        return builder.toString();
+    }
+
+    /**
+     * Future-only snapshot formatter for plain-text reports.
+     */
+    public static String formatFutureDashboardSnapshotAsPlainText(FutureDashboardSnapshot snapshot) {
+        if (snapshot == null) {
+            return "Future dashboard snapshot: unavailable";
+        }
+        StringBuilder builder = new StringBuilder();
+        builder.append("Future dashboard snapshot")
+                .append("\nTotal profiles: ").append(snapshot.getTotalProfiles())
+                .append("\nReviewable profiles: ").append(snapshot.getReviewableProfiles())
+                .append("\nStrong profiles: ").append(snapshot.getStrongProfiles())
+                .append("\nRisky profiles: ").append(snapshot.getRiskyProfiles())
+                .append("\nDigest: ").append(snapshot.getCompactDigest());
+        for (FutureDashboardSection section : snapshot.getSections()) {
+            builder.append("\n\n").append(formatFutureDashboardSectionAsPlainText(section));
+        }
+        return builder.toString();
+    }
+
+    /**
+     * Future-only compact dashboard digest for MO users. This does not send notifications.
+     */
+    public static String generateCompactFutureDashboardDigest(List<FutureCandidateProfile> profiles) {
+        List<FutureCandidateProfile> safeProfiles = safeFutureCandidateProfiles(profiles);
+        int reviewable = countFutureReviewableProfiles(safeProfiles);
+        int urgent = 0;
+        int strong = 0;
+        int risky = 0;
+        int incomplete = 0;
+        for (FutureCandidateProfile profile : safeProfiles) {
+            if (calculateFutureCompositeQualityScore(profile) >= HIGH_CONFIDENCE_SCORE
+                    && isFutureProfileReviewable(profile)) {
+                urgent++;
+            }
+            if (isFutureProfileStrong(profile)) {
+                strong++;
+            }
+            if (isFutureProfileRisky(profile)) {
+                risky++;
+            }
+            if (hasFutureProfileIncompleteInformation(profile)) {
+                incomplete++;
+            }
+        }
+        return "profiles=" + safeProfiles.size()
+                + ", reviewable=" + reviewable
+                + ", urgent=" + urgent
+                + ", strong=" + strong
+                + ", risky=" + risky
+                + ", incomplete=" + incomplete;
+    }
+
+    private static int normalizeFuturePercentage(double rawScore) {
+        if (Double.isNaN(rawScore) || Double.isInfinite(rawScore)) {
+            return 0;
+        }
+        return clampToRange((int) Math.round(rawScore), 0, 100);
+    }
+
+    private static int normalizeFuturePreviousScore(Integer previousMatchScore) {
+        if (previousMatchScore == null || previousMatchScore < 0) {
+            return -1;
+        }
+        return normalizeMatchScore(previousMatchScore);
+    }
+
+    private static List<String> normalizeFutureTextList(List<String> values) {
+        if (values == null || values.isEmpty()) {
+            return List.of();
+        }
+        List<String> normalized = new ArrayList<>();
+        for (String value : values) {
+            if (value != null && !value.isBlank()) {
+                String trimmed = value.trim();
+                if (!normalized.contains(trimmed)) {
+                    normalized.add(trimmed);
+                }
+            }
+        }
+        return List.copyOf(normalized);
+    }
+
+    private static String normalizeFutureStatusLabel(String rawStatus) {
+        ApplicationStatus status = parseFutureApplicationStatus(rawStatus);
+        if (status != null) {
+            return status.name();
+        }
+        return "UNKNOWN";
+    }
+
+    private static CandidateGroup groupFutureProfileValues(
+            int matchScore,
+            int missingSkillCount,
+            int workload,
+            ApplicationStatus status) {
+        if (status == null) {
+            return CandidateGroup.UNKNOWN;
+        }
+        if (!needsDecision(status)) {
+            return CandidateGroup.NOT_PENDING;
+        }
+        int safeScore = normalizeMatchScore(matchScore);
+        int safeMissing = Math.max(0, missingSkillCount);
+        WorkloadSeverity severity = classifyWorkloadSeverity(workload);
+        if (safeScore < LOW_MATCH_SCORE
+                || safeMissing >= CRITICAL_MISSING_SKILLS
+                || severity == WorkloadSeverity.HIGH
+                || severity == WorkloadSeverity.EXTREME) {
+            return CandidateGroup.HIGH_RISK;
+        }
+        if (safeScore >= STRONG_MATCH_SCORE && safeMissing <= 1) {
+            return CandidateGroup.STRONG_FIT;
+        }
+        if (safeScore >= MODERATE_MATCH_SCORE && safeMissing <= MANY_MISSING_SKILLS) {
+            return CandidateGroup.POSSIBLE_FIT;
+        }
+        return CandidateGroup.WEAK_FIT;
+    }
+
+    private static String formatFuturePreviousScore(int previousMatchScore) {
+        return previousMatchScore < 0 ? "Not recorded" : previousMatchScore + "%";
+    }
+
+    private static String formatFutureList(List<String> values) {
+        List<String> safeValues = normalizeFutureTextList(values);
+        return safeValues.isEmpty() ? "None" : String.join(", ", safeValues);
+    }
+
+    private static boolean isUnknownLabel(String value) {
+        if (value == null || value.isBlank()) {
+            return true;
+        }
+        String normalized = value.trim().toUpperCase();
+        return "UNKNOWN".equals(normalized)
+                || "UNKNOWN APPLICANT".equals(normalized)
+                || "UNKNOWN APPLICATION".equals(normalized)
+                || "UNKNOWN JOB".equals(normalized);
+    }
+
+    private static String formatFutureQualitySignals(List<FutureQualitySignal> signals) {
+        if (signals == null || signals.isEmpty()) {
+            return FutureQualitySignal.NO_SIGNAL_DATA.getLabel();
+        }
+        List<String> labels = new ArrayList<>();
+        for (FutureQualitySignal signal : signals) {
+            labels.add(signal == null
+                    ? FutureQualitySignal.NO_SIGNAL_DATA.getLabel()
+                    : signal.getLabel());
+        }
+        return String.join(", ", labels);
+    }
+
+    private static String formatFutureQualityWarnings(List<FutureQualityWarning> warnings) {
+        if (warnings == null || warnings.isEmpty()) {
+            return FutureQualityWarning.NO_MAJOR_WARNING.getLabel();
+        }
+        List<String> labels = new ArrayList<>();
+        for (FutureQualityWarning warning : warnings) {
+            labels.add(warning == null
+                    ? FutureQualityWarning.INCOMPLETE_PROFILE.getLabel()
+                    : warning.getLabel());
+        }
+        return String.join(", ", labels);
+    }
+
+    private static String formatFutureBlockReasons(List<FutureReviewBlockReason> reasons) {
+        if (reasons == null || reasons.isEmpty()) {
+            return FutureReviewBlockReason.UNKNOWN.getLabel();
+        }
+        List<String> labels = new ArrayList<>();
+        for (FutureReviewBlockReason reason : reasons) {
+            labels.add(reason == null
+                    ? FutureReviewBlockReason.UNKNOWN.getLabel()
+                    : reason.getLabel());
+        }
+        return String.join(", ", labels);
+    }
+
+    private static List<FutureCandidateProfile> safeFutureCandidateProfiles(
+            List<FutureCandidateProfile> profiles) {
+        if (profiles == null || profiles.isEmpty()) {
+            return List.of();
+        }
+        return profiles.stream()
+                .filter(Objects::nonNull)
+                .map(MoApplicantRankingFutureExtensions::copyFutureCandidateProfile)
+                .toList();
+    }
+
+    private static int countFutureReviewableProfiles(List<FutureCandidateProfile> profiles) {
+        int count = 0;
+        for (FutureCandidateProfile profile : safeFutureCandidateProfiles(profiles)) {
+            if (isFutureProfileReviewable(profile)) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private static int countFutureStrongProfiles(List<FutureCandidateProfile> profiles) {
+        int count = 0;
+        for (FutureCandidateProfile profile : safeFutureCandidateProfiles(profiles)) {
+            if (isFutureProfileStrong(profile)) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private static int countFutureRiskyProfiles(List<FutureCandidateProfile> profiles) {
+        int count = 0;
+        for (FutureCandidateProfile profile : safeFutureCandidateProfiles(profiles)) {
+            if (isFutureProfileRisky(profile)) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private static Map<FutureQualityBand, Integer> countFutureQualityBands(
+            List<FutureCandidateProfile> profiles) {
+        Map<FutureQualityBand, Integer> counts = new EnumMap<>(FutureQualityBand.class);
+        for (FutureQualityBand band : FutureQualityBand.values()) {
+            counts.put(band, 0);
+        }
+        for (FutureCandidateProfile profile : safeFutureCandidateProfiles(profiles)) {
+            FutureQualityBand band = classifyFutureQualityBand(profile);
+            counts.put(band, counts.get(band) + 1);
+        }
+        return counts;
+    }
+
     private static int statusTieBreakerWeight(ApplicationStatus status) {
         if (status == ApplicationStatus.PENDING) {
             return 0;
@@ -2249,6 +3586,454 @@ public final class MoApplicantRankingFutureExtensions {
 
         public String getLabel() {
             return label;
+        }
+    }
+
+    public enum FutureReviewStage {
+        NOT_STARTED("Not started"),
+        INITIAL_SCREENING("Initial screening"),
+        SKILL_REVIEW("Skill review"),
+        WORKLOAD_REVIEW("Workload review"),
+        FINAL_DECISION("Final decision"),
+        COMPLETED("Completed"),
+        BLOCKED("Blocked"),
+        UNKNOWN("Unknown");
+
+        private final String label;
+
+        FutureReviewStage(String label) {
+            this.label = label;
+        }
+
+        public String getLabel() {
+            return label;
+        }
+    }
+
+    public enum FutureReviewAction {
+        START_REVIEW("Start review"),
+        REQUEST_MORE_INFO("Request more information"),
+        MARK_FOR_INTERVIEW("Mark for interview"),
+        MARK_FOR_WAITLIST("Mark for waitlist"),
+        MARK_FOR_REJECTION("Mark for rejection"),
+        ESCALATE_TO_ADMIN("Escalate to admin"),
+        DEFER_REVIEW("Defer review"),
+        COMPLETE_REVIEW("Complete review"),
+        NO_ACTION("No action");
+
+        private final String label;
+
+        FutureReviewAction(String label) {
+            this.label = label;
+        }
+
+        public String getLabel() {
+            return label;
+        }
+    }
+
+    public enum FutureReviewOutcome {
+        INTERVIEW_RECOMMENDED("Interview recommended"),
+        WAITLIST_RECOMMENDED("Waitlist recommended"),
+        REJECTION_RECOMMENDED("Rejection recommended"),
+        NEEDS_MORE_REVIEW("Needs more review"),
+        BLOCKED("Blocked"),
+        NOT_APPLICABLE("Not applicable"),
+        UNKNOWN("Unknown");
+
+        private final String label;
+
+        FutureReviewOutcome(String label) {
+            this.label = label;
+        }
+
+        public String getLabel() {
+            return label;
+        }
+    }
+
+    public enum FutureReviewBlockReason {
+        MISSING_CANDIDATE_ID("Missing candidate ID"),
+        MISSING_APPLICATION_ID("Missing application ID"),
+        MISSING_JOB_ID("Missing job ID"),
+        UNKNOWN_STATUS("Unknown status"),
+        NON_REVIEWABLE_STATUS("Non-reviewable status"),
+        EXTREME_WORKLOAD("Extreme workload"),
+        INCOMPLETE_SKILL_DATA("Incomplete skill data"),
+        NO_BLOCK("No block"),
+        UNKNOWN("Unknown");
+
+        private final String label;
+
+        FutureReviewBlockReason(String label) {
+            this.label = label;
+        }
+
+        public String getLabel() {
+            return label;
+        }
+    }
+
+    public enum FutureQualityBand {
+        EXCELLENT("Excellent"),
+        GOOD("Good"),
+        FAIR("Fair"),
+        WEAK("Weak"),
+        UNSUITABLE("Unsuitable"),
+        UNKNOWN("Unknown");
+
+        private final String label;
+
+        FutureQualityBand(String label) {
+            this.label = label;
+        }
+
+        public String getLabel() {
+            return label;
+        }
+    }
+
+    public enum FutureQualitySignal {
+        STRONG_MATCH_SCORE("Strong match score"),
+        SKILL_ALIGNMENT("Visible skill alignment"),
+        NO_MISSING_SKILLS("No missing skills recorded"),
+        MANAGEABLE_WORKLOAD("Manageable workload"),
+        IMPROVING_TREND("Improving ranking trend"),
+        STABLE_TREND("Stable ranking trend"),
+        REVIEWABLE_STATUS("Reviewable status"),
+        NO_SIGNAL_DATA("No signal data");
+
+        private final String label;
+
+        FutureQualitySignal(String label) {
+            this.label = label;
+        }
+
+        public String getLabel() {
+            return label;
+        }
+    }
+
+    public enum FutureQualityWarning {
+        LOW_MATCH_SCORE("Low match score"),
+        MANY_MISSING_SKILLS("Many missing skills"),
+        HIGH_WORKLOAD("High workload"),
+        NON_REVIEWABLE_STATUS("Non-reviewable status"),
+        INCOMPLETE_PROFILE("Incomplete profile"),
+        DECLINING_TREND("Declining ranking trend"),
+        RISK_FLAGS_PRESENT("Risk flags present"),
+        NO_MAJOR_WARNING("No major warning");
+
+        private final String label;
+
+        FutureQualityWarning(String label) {
+            this.label = label;
+        }
+
+        public String getLabel() {
+            return label;
+        }
+    }
+
+    /**
+     * Future-only enriched candidate profile for later MO ranking dashboards.
+     *
+     * <p>This object is intentionally not connected to current models, repositories, services, UI
+     * screens, or workflows. It exists only as a safe, immutable shape for future helper methods.
+     */
+    public static final class FutureCandidateProfile {
+        private final String candidateId;
+        private final String applicantName;
+        private final String applicationId;
+        private final String jobId;
+        private final String jobTitle;
+        private final String normalizedStatus;
+        private final int matchScore;
+        private final int previousMatchScore;
+        private final int workload;
+        private final List<String> matchedSkills;
+        private final List<String> missingSkills;
+        private final List<String> riskFlags;
+        private final RankingTrend rankingTrend;
+        private final ReviewPriority reviewPriority;
+        private final CandidateGroup candidateGroup;
+        private final WorkloadSeverity workloadSeverity;
+        private final String recommendationText;
+        private final String notes;
+
+        private FutureCandidateProfile(
+                String candidateId,
+                String applicantName,
+                String applicationId,
+                String jobId,
+                String jobTitle,
+                String normalizedStatus,
+                int matchScore,
+                int previousMatchScore,
+                int workload,
+                List<String> matchedSkills,
+                List<String> missingSkills,
+                List<String> riskFlags,
+                RankingTrend rankingTrend,
+                ReviewPriority reviewPriority,
+                CandidateGroup candidateGroup,
+                WorkloadSeverity workloadSeverity,
+                String recommendationText,
+                String notes) {
+            this.candidateId = safeLabel(candidateId, "UNKNOWN");
+            this.applicantName = safeLabel(applicantName, "Unknown applicant");
+            this.applicationId = safeLabel(applicationId, "UNKNOWN");
+            this.jobId = safeLabel(jobId, "UNKNOWN");
+            this.jobTitle = safeLabel(jobTitle, "Unknown job");
+            this.normalizedStatus = safeLabel(normalizedStatus, "UNKNOWN");
+            this.matchScore = normalizeMatchScore(matchScore);
+            this.previousMatchScore = previousMatchScore < 0 ? -1 : normalizeMatchScore(previousMatchScore);
+            this.workload = Math.max(0, workload);
+            this.matchedSkills = normalizeFutureTextList(matchedSkills);
+            this.missingSkills = normalizeFutureTextList(missingSkills);
+            this.riskFlags = normalizeFutureTextList(riskFlags);
+            this.rankingTrend = rankingTrend == null ? RankingTrend.UNKNOWN : rankingTrend;
+            this.reviewPriority = reviewPriority == null ? ReviewPriority.SKIP_FOR_NOW : reviewPriority;
+            this.candidateGroup = candidateGroup == null ? CandidateGroup.UNKNOWN : candidateGroup;
+            this.workloadSeverity = workloadSeverity == null ? WorkloadSeverity.UNKNOWN : workloadSeverity;
+            this.recommendationText = safeLabel(recommendationText, "Not applicable");
+            this.notes = notes == null ? "" : notes.trim();
+        }
+
+        public String getCandidateId() {
+            return candidateId;
+        }
+
+        public String getApplicantName() {
+            return applicantName;
+        }
+
+        public String getApplicationId() {
+            return applicationId;
+        }
+
+        public String getJobId() {
+            return jobId;
+        }
+
+        public String getJobTitle() {
+            return jobTitle;
+        }
+
+        public String getNormalizedStatus() {
+            return normalizedStatus;
+        }
+
+        public int getMatchScore() {
+            return matchScore;
+        }
+
+        public int getPreviousMatchScore() {
+            return previousMatchScore;
+        }
+
+        public int getWorkload() {
+            return workload;
+        }
+
+        public List<String> getMatchedSkills() {
+            return matchedSkills;
+        }
+
+        public List<String> getMissingSkills() {
+            return missingSkills;
+        }
+
+        public List<String> getRiskFlags() {
+            return riskFlags;
+        }
+
+        public RankingTrend getRankingTrend() {
+            return rankingTrend;
+        }
+
+        public ReviewPriority getReviewPriority() {
+            return reviewPriority;
+        }
+
+        public CandidateGroup getCandidateGroup() {
+            return candidateGroup;
+        }
+
+        public WorkloadSeverity getWorkloadSeverity() {
+            return workloadSeverity;
+        }
+
+        public String getRecommendationText() {
+            return recommendationText;
+        }
+
+        public String getNotes() {
+            return notes;
+        }
+
+        public boolean isReviewable() {
+            return isFutureProfileReviewable(this);
+        }
+
+        public boolean isStrong() {
+            return isFutureProfileStrong(this);
+        }
+
+        public boolean isRisky() {
+            return isFutureProfileRisky(this);
+        }
+
+        public boolean hasIncompleteInformation() {
+            return hasFutureProfileIncompleteInformation(this);
+        }
+
+        public String toCompactLabel() {
+            return buildFutureProfileCompactLabel(this);
+        }
+
+        public String toDetailedLabel() {
+            return buildFutureProfileDetailedLabel(this);
+        }
+    }
+
+    /**
+     * Future-only dashboard card. It is plain data and is not wired into Swing or services.
+     */
+    public static final class FutureDashboardCard {
+        private final String cardTitle;
+        private final String cardValue;
+        private final String cardSubtitle;
+        private final NotificationSeverity severity;
+        private final String recommendedAction;
+
+        public FutureDashboardCard(
+                String cardTitle,
+                String cardValue,
+                String cardSubtitle,
+                NotificationSeverity severity,
+                String recommendedAction) {
+            this.cardTitle = safeLabel(cardTitle, "Untitled card");
+            this.cardValue = safeLabel(cardValue, "");
+            this.cardSubtitle = safeLabel(cardSubtitle, "");
+            this.severity = severity == null ? NotificationSeverity.LOW : severity;
+            this.recommendedAction = safeLabel(recommendedAction, "No action suggested.");
+        }
+
+        public String getCardTitle() {
+            return cardTitle;
+        }
+
+        public String getCardValue() {
+            return cardValue;
+        }
+
+        public String getCardSubtitle() {
+            return cardSubtitle;
+        }
+
+        public NotificationSeverity getSeverity() {
+            return severity;
+        }
+
+        public String getRecommendedAction() {
+            return recommendedAction;
+        }
+
+        public String toPlainText() {
+            return formatFutureDashboardCardAsPlainText(this);
+        }
+    }
+
+    /**
+     * Future-only dashboard section for grouping dashboard cards without depending on UI widgets.
+     */
+    public static final class FutureDashboardSection {
+        private final String sectionTitle;
+        private final List<FutureDashboardCard> cards;
+
+        public FutureDashboardSection(String sectionTitle, List<FutureDashboardCard> cards) {
+            this.sectionTitle = safeLabel(sectionTitle, "Future dashboard section");
+            if (cards == null || cards.isEmpty()) {
+                this.cards = List.of();
+            } else {
+                this.cards = cards.stream()
+                        .filter(Objects::nonNull)
+                        .toList();
+            }
+        }
+
+        public String getSectionTitle() {
+            return sectionTitle;
+        }
+
+        public List<FutureDashboardCard> getCards() {
+            return cards;
+        }
+
+        public String toPlainText() {
+            return formatFutureDashboardSectionAsPlainText(this);
+        }
+    }
+
+    /**
+     * Future-only dashboard snapshot for MO summary previews.
+     */
+    public static final class FutureDashboardSnapshot {
+        private final int totalProfiles;
+        private final int reviewableProfiles;
+        private final int strongProfiles;
+        private final int riskyProfiles;
+        private final List<FutureDashboardSection> sections;
+        private final String compactDigest;
+
+        public FutureDashboardSnapshot(
+                int totalProfiles,
+                int reviewableProfiles,
+                int strongProfiles,
+                int riskyProfiles,
+                List<FutureDashboardSection> sections,
+                String compactDigest) {
+            this.totalProfiles = Math.max(0, totalProfiles);
+            this.reviewableProfiles = Math.max(0, reviewableProfiles);
+            this.strongProfiles = Math.max(0, strongProfiles);
+            this.riskyProfiles = Math.max(0, riskyProfiles);
+            if (sections == null || sections.isEmpty()) {
+                this.sections = List.of();
+            } else {
+                this.sections = sections.stream()
+                        .filter(Objects::nonNull)
+                        .toList();
+            }
+            this.compactDigest = safeLabel(compactDigest, "");
+        }
+
+        public int getTotalProfiles() {
+            return totalProfiles;
+        }
+
+        public int getReviewableProfiles() {
+            return reviewableProfiles;
+        }
+
+        public int getStrongProfiles() {
+            return strongProfiles;
+        }
+
+        public int getRiskyProfiles() {
+            return riskyProfiles;
+        }
+
+        public List<FutureDashboardSection> getSections() {
+            return sections;
+        }
+
+        public String getCompactDigest() {
+            return compactDigest;
+        }
+
+        public String toPlainText() {
+            return formatFutureDashboardSnapshotAsPlainText(this);
         }
     }
 
