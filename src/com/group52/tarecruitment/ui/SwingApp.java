@@ -11,6 +11,7 @@ import com.group52.tarecruitment.service.ApplicationService;
 import com.group52.tarecruitment.service.AiMatchingService;
 import com.group52.tarecruitment.service.AiMatchingServiceAdapter;
 import com.group52.tarecruitment.service.AuthService;
+import com.group52.tarecruitment.service.ExportService;
 import com.group52.tarecruitment.service.JobService;
 import com.group52.tarecruitment.service.MoApplicantRankingService;
 import com.group52.tarecruitment.service.NotificationService;
@@ -130,6 +131,7 @@ public class SwingApp {
     private final AiMatchingService aiMatchingService;
     private final MoApplicantRankingService moApplicantRankingService;
     private final AdminService adminService;
+    private final ExportService exportService;
     private final Path dataDirectory;
 
     private JFrame frame;
@@ -153,6 +155,17 @@ public class SwingApp {
 
     public SwingApp(AuthService authService, JobService jobService, ApplicationService applicationService,
                     Path dataDirectory, AdminService adminService) {
+        this(authService, jobService, applicationService, dataDirectory, adminService, null, null);
+    }
+
+    public SwingApp(AuthService authService, JobService jobService, ApplicationService applicationService,
+                    Path dataDirectory, AdminService adminService, NotificationService notificationService) {
+        this(authService, jobService, applicationService, dataDirectory, adminService, notificationService, null);
+    }
+
+    public SwingApp(AuthService authService, JobService jobService, ApplicationService applicationService,
+                    Path dataDirectory, AdminService adminService, NotificationService notificationService,
+                    ExportService exportService) {
         this.authService = authService;
         this.jobService = jobService;
         this.applicationService = applicationService;
@@ -161,11 +174,7 @@ public class SwingApp {
                 applicationService, new AiMatchingServiceAdapter(this.aiMatchingService));
         this.dataDirectory = dataDirectory;
         this.adminService = adminService;
-    }
-
-    public SwingApp(AuthService authService, JobService jobService, ApplicationService applicationService,
-                    Path dataDirectory, AdminService adminService, NotificationService notificationService) {
-        this(authService, jobService, applicationService, dataDirectory, adminService);
+        this.exportService = exportService;
     }
 
     public void start() {
@@ -613,6 +622,32 @@ public class SwingApp {
 
     private void showToast(String title, String message, int messageType) {
         JOptionPane.showMessageDialog(frame, message, title, messageType);
+    }
+
+    /**
+     * Runs a CSV export action and shows a friendly dialog reporting the resulting
+     * file path. Empty datasets are still written as header-only files; any I/O or
+     * validation problem is surfaced through a clear error dialog instead of a stack trace.
+     */
+    private void exportCsv(String reportLabel, java.util.function.Supplier<Path> exportAction) {
+        if (exportService == null) {
+            JOptionPane.showMessageDialog(frame,
+                    "Export service is not available in this build.",
+                    "Export Unavailable", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+        try {
+            Path exportedPath = exportAction.get();
+            String message = reportLabel + " exported to:\n" + exportedPath.toAbsolutePath();
+            JOptionPane.showMessageDialog(frame, message, "Export Complete",
+                    JOptionPane.INFORMATION_MESSAGE);
+        } catch (IllegalArgumentException ex) {
+            JOptionPane.showMessageDialog(frame, ex.getMessage(),
+                    "Export Failed", JOptionPane.WARNING_MESSAGE);
+        } catch (IllegalStateException ex) {
+            JOptionPane.showMessageDialog(frame, ex.getMessage(),
+                    "Export Failed", JOptionPane.ERROR_MESSAGE);
+        }
     }
 
     private String scoreProgressBar(int score) {
@@ -2486,6 +2521,9 @@ public class SwingApp {
             JButton sortWorkloadButton = new JButton("Sort by Workload");
             styleSecondaryButton(sortWorkloadButton);
             sortWorkloadButton.addActionListener(e -> sortApplicantsByWorkload());
+            JButton exportApplicantsButton = new JButton("Export Applicants CSV");
+            stylePrimaryButton(exportApplicantsButton);
+            exportApplicantsButton.addActionListener(e -> exportApplicantsForSelectedJob());
             applicantActions.add(acceptButton);
             applicantActions.add(rejectButton);
             applicantActions.add(viewProfileButton);
@@ -2493,6 +2531,7 @@ public class SwingApp {
             applicantActions.add(explanationButton);
             applicantActions.add(sortMatchButton);
             applicantActions.add(sortWorkloadButton);
+            applicantActions.add(exportApplicantsButton);
             applicantActions.add(refreshApplicantsButton);
             applicantsPanel.add(applicantActions, BorderLayout.SOUTH);
 
@@ -2633,6 +2672,16 @@ public class SwingApp {
             selectedJobId = String.valueOf(jobsModel.getValueAt(modelRow, 0));
             refreshApplicants();
             contentLayout.show(contentPanel, TAB_APPLICANTS);
+        }
+
+        private void exportApplicantsForSelectedJob() {
+            if (selectedJobId == null || selectedJobId.isBlank()) {
+                JOptionPane.showMessageDialog(frame,
+                        "Please open a job's applicants from Dashboard before exporting.");
+                return;
+            }
+            final String jobId = selectedJobId;
+            exportCsv("Applicants for " + jobId, () -> exportService.exportApplicantsForJob(jobId));
         }
 
         private void refreshApplicants() {
@@ -3014,11 +3063,16 @@ public class SwingApp {
             JButton exportReportButton = new JButton("View Report");
             styleSecondaryButton(exportReportButton);
             exportReportButton.addActionListener(e -> showWorkloadReport());
+            JButton exportWorkloadCsvButton = new JButton("Export Workload CSV");
+            stylePrimaryButton(exportWorkloadCsvButton);
+            exportWorkloadCsvButton.addActionListener(e -> exportCsv(
+                    "TA Workload Summary", () -> exportService.exportTaWorkloadSummary()));
             JPanel workloadActions = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
             workloadActions.setOpaque(false);
             workloadActions.add(refreshWorkloadButton);
             workloadActions.add(showOverloadedButton);
             workloadActions.add(exportReportButton);
+            workloadActions.add(exportWorkloadCsvButton);
             workloadPanel.add(workloadActions, BorderLayout.SOUTH);
 
             accountModel = new DefaultTableModel(
@@ -3090,7 +3144,12 @@ public class SwingApp {
             JButton refreshJobsButton = new JButton("Refresh");
             styleSecondaryButton(refreshJobsButton);
             refreshJobsButton.addActionListener(e -> refreshJobs());
+            JButton exportJobsCsvButton = new JButton("Export Job Filling CSV");
+            stylePrimaryButton(exportJobsCsvButton);
+            exportJobsCsvButton.addActionListener(e -> exportCsv(
+                    "Job Filling Status", () -> exportService.exportJobFillingStatus()));
             jobsButtonRow.add(refreshJobsButton);
+            jobsButtonRow.add(exportJobsCsvButton);
             jobsActions.add(jobsButtonRow, BorderLayout.WEST);
             JLabel jobsStatsLabel = new JLabel(" ");
             jobsStatsLabel.setFont(new Font("Segoe UI", Font.PLAIN, 12));
@@ -3186,12 +3245,17 @@ public class SwingApp {
             JButton auditClearBtn = new JButton("Clear");
             styleSecondaryButton(auditClearBtn);
             auditClearBtn.addActionListener(e -> { auditSearchField.setText(""); refreshAuditLog(); });
+            JButton exportApplicationsCsvBtn = new JButton("Export All Applications CSV");
+            stylePrimaryButton(exportApplicationsCsvBtn);
+            exportApplicationsCsvBtn.addActionListener(e -> exportCsv(
+                    "All Applications", () -> exportService.exportAllApplications()));
             JPanel auditSearchBar = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
             auditSearchBar.setOpaque(false);
             auditSearchBar.add(auditSearchLabel);
             auditSearchBar.add(auditSearchField);
             auditSearchBar.add(auditSearchBtn);
             auditSearchBar.add(auditClearBtn);
+            auditSearchBar.add(exportApplicationsCsvBtn);
             JPanel auditHeader = new JPanel(new BorderLayout(0, 8));
             auditHeader.setOpaque(false);
             auditHeader.add(auditTitle, BorderLayout.NORTH);
