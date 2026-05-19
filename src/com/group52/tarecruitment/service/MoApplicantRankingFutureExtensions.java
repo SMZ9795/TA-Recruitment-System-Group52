@@ -3735,6 +3735,61 @@ public final class MoApplicantRankingFutureExtensions {
         }
     }
 
+    /** Future-only confidence labels for ranking recommendation explanations. */
+    public enum FutureDecisionConfidence {
+        HIGH("High confidence"),
+        MEDIUM("Medium confidence"),
+        LOW("Low confidence"),
+        NEEDS_REVIEW("Needs manual review");
+
+        private final String label;
+
+        FutureDecisionConfidence(String label) {
+            this.label = label;
+        }
+
+        public String getLabel() {
+            return label;
+        }
+    }
+
+    /** Future-only warning labels for ranking consistency checks. */
+    public enum FutureApplicantRiskFlag {
+        INCOMPLETE_PROFILE("Incomplete profile"),
+        LOW_SKILL_OVERLAP("Low skill overlap"),
+        WORKLOAD_PRESSURE("Workload pressure"),
+        STATUS_ALREADY_FINAL("Status already final"),
+        RANKING_DROP("Ranking score dropped"),
+        NO_WARNING("No warning");
+
+        private final String label;
+
+        FutureApplicantRiskFlag(String label) {
+            this.label = label;
+        }
+
+        public String getLabel() {
+            return label;
+        }
+    }
+
+    /** Future-only tone option for MO notification digest text. */
+    public enum FutureDigestTone {
+        CONCISE("Concise"),
+        NEUTRAL("Neutral"),
+        DETAILED("Detailed");
+
+        private final String label;
+
+        FutureDigestTone(String label) {
+            this.label = label;
+        }
+
+        public String getLabel() {
+            return label;
+        }
+    }
+
     /**
      * Future-only enriched candidate profile for later MO ranking dashboards.
      *
@@ -4227,6 +4282,61 @@ public final class MoApplicantRankingFutureExtensions {
                     + " | missingSkills=" + missingSkillsCount
                     + " | workload=" + currentWorkloadHours + "h/week"
                     + " | priority=" + getReviewPriority().getLabel();
+        }
+    }
+
+    /** Future-use immutable workload estimate for MO review planning. */
+    public static final class FutureWorkloadForecast {
+        public final int reviewableApplications;
+        public final int reviewerCount;
+        public final int minutesPerReview;
+        public final int urgentApplications;
+        public final int daysAvailable;
+        public final int totalEstimatedMinutes;
+        public final int estimatedDaysToClear;
+        public final int backlogAfterWindow;
+        public final boolean overloaded;
+
+        private FutureWorkloadForecast(
+                int reviewableApplications, int reviewerCount, int minutesPerReview,
+                int urgentApplications, int daysAvailable, int totalEstimatedMinutes,
+                int estimatedDaysToClear, int backlogAfterWindow, boolean overloaded) {
+            this.reviewableApplications = reviewableApplications;
+            this.reviewerCount = reviewerCount;
+            this.minutesPerReview = minutesPerReview;
+            this.urgentApplications = urgentApplications;
+            this.daysAvailable = daysAvailable;
+            this.totalEstimatedMinutes = totalEstimatedMinutes;
+            this.estimatedDaysToClear = estimatedDaysToClear;
+            this.backlogAfterWindow = backlogAfterWindow;
+            this.overloaded = overloaded;
+        }
+
+        public String toReadableText() {
+            return reviewableApplications + " applications, " + reviewerCount + " reviewers, "
+                    + estimatedDaysToClear + " estimated days, " + backlogAfterWindow
+                    + " possible backlog, overloaded=" + overloaded;
+        }
+    }
+
+    /** Future-use immutable notification digest for MO ranking review summaries. */
+    public static final class FutureNotificationDigest {
+        public final String title;
+        public final String body;
+        public final int urgentSuggestions;
+        public final int highRiskApplicants;
+        public final int highConfidenceRecommendations;
+        public final FutureDigestTone tone;
+
+        private FutureNotificationDigest(
+                String title, String body, int urgentSuggestions, int highRiskApplicants,
+                int highConfidenceRecommendations, FutureDigestTone tone) {
+            this.title = title;
+            this.body = body;
+            this.urgentSuggestions = Math.max(0, urgentSuggestions);
+            this.highRiskApplicants = Math.max(0, highRiskApplicants);
+            this.highConfidenceRecommendations = Math.max(0, highConfidenceRecommendations);
+            this.tone = tone == null ? FutureDigestTone.NEUTRAL : tone;
         }
     }
 
