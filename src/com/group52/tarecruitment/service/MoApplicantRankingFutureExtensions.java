@@ -4,6 +4,7 @@ import com.group52.tarecruitment.model.ApplicationStatus;
 import com.group52.tarecruitment.model.JobStatus;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
 
@@ -1197,6 +1198,202 @@ public final class MoApplicantRankingFutureExtensions {
                 + safeConfig.toSummaryText();
     }
 
+    /** Future-only confidence label for a possible MO ranking decision. */
+    public static FutureDecisionConfidence estimateDecisionConfidence(
+            int matchScore, int missingSkillsCount, int currentWorkloadHours,
+            int tieBreakerSignals, ApplicationStatus status) {
+        if (!needsDecision(status)) {
+            return FutureDecisionConfidence.NEEDS_REVIEW;
+        }
+
+        int safeScore = normalizeMatchScore(matchScore);
+        int safeMissingSkills = Math.max(0, missingSkillsCount);
+        int safeWorkload = Math.max(0, currentWorkloadHours);
+        int safeTieBreakers = Math.max(0, tieBreakerSignals);
+
+        int confidenceScore = safeScore
+                - (safeMissingSkills * 8)
+                - Math.max(0, safeWorkload - MEDIUM_WORKLOAD_HOURS) * 2
+                + Math.min(12, safeTieBreakers * 3);
+
+        if (safeMissingSkills >= CRITICAL_MISSING_SKILLS || safeWorkload >= HIGH_WORKLOAD_HOURS + 5) {
+            return FutureDecisionConfidence.LOW;
+        }
+        if (confidenceScore >= 78) {
+            return FutureDecisionConfidence.HIGH;
+        }
+        if (confidenceScore >= 55) {
+            return FutureDecisionConfidence.MEDIUM;
+        }
+        return FutureDecisionConfidence.LOW;
+    }
+
+    /** Future-only workload forecast for MO planning and queue sizing. */
+    public static FutureWorkloadForecast buildWorkloadForecast(
+            int reviewableApplications, int reviewerCount, int minutesPerReview,
+            int urgentApplications, int daysAvailable) {
+        int safeReviewable = Math.max(0, reviewableApplications);
+        int safeReviewers = Math.max(1, reviewerCount);
+        int safeMinutes = Math.max(1, minutesPerReview);
+        int safeUrgent = Math.max(0, urgentApplications);
+        int safeDays = Math.max(1, daysAvailable);
+        int totalMinutes = safeReviewable * safeMinutes;
+        int dailyCapacityMinutes = safeReviewers * 240;
+        int estimatedDays = Math.max(1, (int) Math.ceil(totalMinutes / (double) dailyCapacityMinutes));
+        int backlogAfterWindow = Math.max(0, safeReviewable - ((dailyCapacityMinutes * safeDays) / safeMinutes));
+        boolean overloaded = estimatedDays > safeDays || safeUrgent > safeReviewers * 3;
+
+        return new FutureWorkloadForecast(safeReviewable, safeReviewers, safeMinutes, safeUrgent,
+                safeDays, totalMinutes, estimatedDays, backlogAfterWindow, overloaded);
+    }
+
+    /** Future-only notification digest builder for an MO review inbox. */
+    public static FutureNotificationDigest buildFutureMoDigest(
+            List<FutureCandidateSnapshot> candidates,
+            FutureWorkloadForecast forecast,
+            FutureDigestTone tone) {
+        List<FutureCandidateSnapshot> safeCandidates = safeFutureCandidateSnapshots(candidates);
+        FutureDigestTone safeTone = tone == null ? FutureDigestTone.NEUTRAL : tone;
+        int urgent = 0;
+        int highRisk = 0;
+        int highConfidence = 0;
+
+        for (FutureCandidateSnapshot candidate : safeCandidates) {
+            if (candidate.getReviewPriority() == ReviewPriority.URGENT) {
+                urgent++;
+            }
+            if (candidate.getRiskLevel() == CandidateRiskLevel.HIGH) {
+                highRisk++;
+            }
+            FutureDecisionConfidence confidence = estimateDecisionConfidence(
+                    candidate.getMatchScore(),
+                    candidate.getMissingSkillsCount(),
+                    candidate.getCurrentWorkloadHours(),
+                    candidate.getMatchedSkillsCount(),
+                    candidate.getStatus());
+            if (confidence == FutureDecisionConfidence.HIGH) {
+                highConfidence++;
+            }
+        }
+
+        String title = safeTone == FutureDigestTone.CONCISE
+                ? "MO ranking digest"
+                : "Future MO applicant ranking digest";
+        String body = "Reviewable candidates: " + safeCandidates.size()
+                + "\nUrgent review suggestions: " + urgent
+                + "\nHigh-risk applicants: " + highRisk
+                + "\nHigh-confidence recommendations: " + highConfidence
+                + "\nWorkload: " + (forecast == null ? "No forecast available" : forecast.toReadableText());
+        return new FutureNotificationDigest(title, body, urgent, highRisk, highConfidence, safeTone);
+    }
+
+    /** Future-only audit summary formatter for explanation and export previews. */
+    public static String summarizeAuditEntries(List<String> auditEntries, int maxVisibleEntries) {
+        List<String> visibleEntries = new ArrayList<>();
+        int safeMax = Math.max(1, maxVisibleEntries);
+        int skippedBlankEntries = 0;
+
+        if (auditEntries != null) {
+            for (String entry : auditEntries) {
+                if (entry == null || entry.isBlank()) {
+                    skippedBlankEntries++;
+                } else if (visibleEntries.size() < safeMax) {
+                    visibleEntries.add(entry.trim());
+                }
+            }
+        }
+
+        int totalEntries = auditEntries == null ? 0 : auditEntries.size();
+        int hiddenEntries = Math.max(0, totalEntries - skippedBlankEntries - visibleEntries.size());
+        return "Total audit entries: " + totalEntries
+                + "\nVisible entries: " + visibleEntries
+                + "\nHidden entries: " + hiddenEntries
+                + "\nSkipped blank entries: " + skippedBlankEntries;
+    }
+
+    /** Future-only normalizer for skill lists used by preview ranking utilities. */
+    public static List<String> normalizeSkillList(List<String> skills) {
+        if (skills == null || skills.isEmpty()) {
+            return List.of();
+        }
+        LinkedHashSet<String> normalized = new LinkedHashSet<>();
+        for (String skill : skills) {
+            if (skill != null && !skill.isBlank()) {
+                normalized.add(skill.trim().toLowerCase());
+            }
+        }
+        return List.copyOf(normalized);
+    }
+
+    /** Future-only required-skill overlap ratio. Returns {@code 0.0} when no requirements exist. */
+    public static double calculateSkillOverlapRatio(List<String> requiredSkills, List<String> applicantSkills) {
+        List<String> required = normalizeSkillList(requiredSkills);
+        List<String> applicant = normalizeSkillList(applicantSkills);
+        if (required.isEmpty() || applicant.isEmpty()) {
+            return 0.0;
+        }
+        int matches = 0;
+        for (String requiredSkill : required) {
+            if (applicant.contains(requiredSkill)) {
+                matches++;
+            }
+        }
+        return matches / (double) required.size();
+    }
+
+    /** Future-only consistency checks for ranking explanations. */
+    public static List<FutureApplicantRiskFlag> detectPotentialRankingWarnings(
+            FutureCandidateSnapshot candidate,
+            List<String> requiredSkills,
+            List<String> applicantSkills) {
+        List<FutureApplicantRiskFlag> warnings = new ArrayList<>();
+        if (candidate == null) {
+            warnings.add(FutureApplicantRiskFlag.INCOMPLETE_PROFILE);
+            return List.copyOf(warnings);
+        }
+        if (candidate.getApplicationId().isBlank() || candidate.getApplicantName().isBlank()) {
+            warnings.add(FutureApplicantRiskFlag.INCOMPLETE_PROFILE);
+        }
+        if (calculateSkillOverlapRatio(requiredSkills, applicantSkills) < 0.35) {
+            warnings.add(FutureApplicantRiskFlag.LOW_SKILL_OVERLAP);
+        }
+        if (candidate.getCurrentWorkloadHours() >= HIGH_WORKLOAD_HOURS) {
+            warnings.add(FutureApplicantRiskFlag.WORKLOAD_PRESSURE);
+        }
+        if (!needsDecision(candidate.getStatus())) {
+            warnings.add(FutureApplicantRiskFlag.STATUS_ALREADY_FINAL);
+        }
+        if (candidate.getRankingTrend() == RankingTrend.DECLINED) {
+            warnings.add(FutureApplicantRiskFlag.RANKING_DROP);
+        }
+        if (warnings.isEmpty()) {
+            warnings.add(FutureApplicantRiskFlag.NO_WARNING);
+        }
+        return List.copyOf(warnings);
+    }
+
+    /** Future-only CSV preview builder for candidate-like snapshots. */
+    public static String formatFutureCsvPreview(List<FutureCandidateSnapshot> candidates, int maxRows) {
+        StringBuilder csv = new StringBuilder();
+        csv.append("Application ID,Applicant Name,Status,Match Score,Trend,Risk Level,Priority\n");
+        int rows = 0;
+        int safeMaxRows = Math.max(1, maxRows);
+        for (FutureCandidateSnapshot candidate : safeFutureCandidateSnapshots(candidates)) {
+            if (rows >= safeMaxRows) {
+                break;
+            }
+            csv.append(csvValue(candidate.getApplicationId())).append(",");
+            csv.append(csvValue(candidate.getApplicantName())).append(",");
+            csv.append(csvValue(readableStatusLabel(candidate.getStatus()))).append(",");
+            csv.append(candidate.getMatchScore()).append(",");
+            csv.append(csvValue(candidate.getRankingTrend().getLabel())).append(",");
+            csv.append(csvValue(candidate.getRiskLevel().getLabel())).append(",");
+            csv.append(csvValue(candidate.getReviewPriority().getLabel())).append("\n");
+            rows++;
+        }
+        return csv.toString();
+    }
+
     private static List<MoApplicantRankingService.RankedApplicant> safeApplicants(
             List<MoApplicantRankingService.RankedApplicant> applicants) {
         if (applicants == null || applicants.isEmpty()) {
@@ -1556,6 +1753,61 @@ public final class MoApplicantRankingFutureExtensions {
         }
     }
 
+    /** Future-only confidence labels for ranking recommendation explanations. */
+    public enum FutureDecisionConfidence {
+        HIGH("High confidence"),
+        MEDIUM("Medium confidence"),
+        LOW("Low confidence"),
+        NEEDS_REVIEW("Needs manual review");
+
+        private final String label;
+
+        FutureDecisionConfidence(String label) {
+            this.label = label;
+        }
+
+        public String getLabel() {
+            return label;
+        }
+    }
+
+    /** Future-only warning labels for ranking consistency checks. */
+    public enum FutureApplicantRiskFlag {
+        INCOMPLETE_PROFILE("Incomplete profile"),
+        LOW_SKILL_OVERLAP("Low skill overlap"),
+        WORKLOAD_PRESSURE("Workload pressure"),
+        STATUS_ALREADY_FINAL("Status already final"),
+        RANKING_DROP("Ranking score dropped"),
+        NO_WARNING("No warning");
+
+        private final String label;
+
+        FutureApplicantRiskFlag(String label) {
+            this.label = label;
+        }
+
+        public String getLabel() {
+            return label;
+        }
+    }
+
+    /** Future-only tone option for MO notification digest text. */
+    public enum FutureDigestTone {
+        CONCISE("Concise"),
+        NEUTRAL("Neutral"),
+        DETAILED("Detailed");
+
+        private final String label;
+
+        FutureDigestTone(String label) {
+            this.label = label;
+        }
+
+        public String getLabel() {
+            return label;
+        }
+    }
+
     /**
      * Future-use applicant signal object built from primitive values.
      *
@@ -1746,6 +1998,61 @@ public final class MoApplicantRankingFutureExtensions {
                     + " | missingSkills=" + missingSkillsCount
                     + " | workload=" + currentWorkloadHours + "h/week"
                     + " | priority=" + getReviewPriority().getLabel();
+        }
+    }
+
+    /** Future-use immutable workload estimate for MO review planning. */
+    public static final class FutureWorkloadForecast {
+        public final int reviewableApplications;
+        public final int reviewerCount;
+        public final int minutesPerReview;
+        public final int urgentApplications;
+        public final int daysAvailable;
+        public final int totalEstimatedMinutes;
+        public final int estimatedDaysToClear;
+        public final int backlogAfterWindow;
+        public final boolean overloaded;
+
+        private FutureWorkloadForecast(
+                int reviewableApplications, int reviewerCount, int minutesPerReview,
+                int urgentApplications, int daysAvailable, int totalEstimatedMinutes,
+                int estimatedDaysToClear, int backlogAfterWindow, boolean overloaded) {
+            this.reviewableApplications = reviewableApplications;
+            this.reviewerCount = reviewerCount;
+            this.minutesPerReview = minutesPerReview;
+            this.urgentApplications = urgentApplications;
+            this.daysAvailable = daysAvailable;
+            this.totalEstimatedMinutes = totalEstimatedMinutes;
+            this.estimatedDaysToClear = estimatedDaysToClear;
+            this.backlogAfterWindow = backlogAfterWindow;
+            this.overloaded = overloaded;
+        }
+
+        public String toReadableText() {
+            return reviewableApplications + " applications, " + reviewerCount + " reviewers, "
+                    + estimatedDaysToClear + " estimated days, " + backlogAfterWindow
+                    + " possible backlog, overloaded=" + overloaded;
+        }
+    }
+
+    /** Future-use immutable notification digest for MO ranking review summaries. */
+    public static final class FutureNotificationDigest {
+        public final String title;
+        public final String body;
+        public final int urgentSuggestions;
+        public final int highRiskApplicants;
+        public final int highConfidenceRecommendations;
+        public final FutureDigestTone tone;
+
+        private FutureNotificationDigest(
+                String title, String body, int urgentSuggestions, int highRiskApplicants,
+                int highConfidenceRecommendations, FutureDigestTone tone) {
+            this.title = title;
+            this.body = body;
+            this.urgentSuggestions = Math.max(0, urgentSuggestions);
+            this.highRiskApplicants = Math.max(0, highRiskApplicants);
+            this.highConfidenceRecommendations = Math.max(0, highConfidenceRecommendations);
+            this.tone = tone == null ? FutureDigestTone.NEUTRAL : tone;
         }
     }
 
