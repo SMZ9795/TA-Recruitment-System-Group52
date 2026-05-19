@@ -1,11 +1,13 @@
 package com.group52.tarecruitment.service;
 
 import com.group52.tarecruitment.model.Application;
+import com.group52.tarecruitment.model.ApplicationAuditLog;
 import com.group52.tarecruitment.model.ApplicationStatus;
 import com.group52.tarecruitment.model.Job;
 import com.group52.tarecruitment.model.JobStatus;
 import com.group52.tarecruitment.model.NotificationType;
 import com.group52.tarecruitment.model.Role;
+import com.group52.tarecruitment.repository.ApplicationAuditLogRepository;
 import com.group52.tarecruitment.repository.ApplicationRepository;
 import com.group52.tarecruitment.repository.JobRepository;
 import com.group52.tarecruitment.util.IdGenerator;
@@ -21,6 +23,7 @@ public class ApplicationService {
     private final JobRepository jobRepository;
     private final WorkloadService workloadService;
     private final NotificationService notificationService;
+    private ApplicationAuditLogRepository auditLogRepository;
 
     public ApplicationService(ApplicationRepository applicationRepository, JobRepository jobRepository) {
         this(applicationRepository, jobRepository, null, null);
@@ -37,6 +40,25 @@ public class ApplicationService {
         this.jobRepository = jobRepository;
         this.workloadService = workloadService;
         this.notificationService = notificationService;
+    }
+
+    public void setAuditLogRepository(ApplicationAuditLogRepository auditLogRepository) {
+        this.auditLogRepository = auditLogRepository;
+    }
+
+    public List<ApplicationAuditLog> getAuditLogs() {
+        if (auditLogRepository == null) return List.of();
+        return auditLogRepository.findAll();
+    }
+
+    public List<ApplicationAuditLog> getAuditLogsByTaUserId(String taUserId) {
+        if (auditLogRepository == null) return List.of();
+        return auditLogRepository.findByTaUserId(taUserId);
+    }
+
+    public List<ApplicationAuditLog> getAuditLogsByJobId(String jobId) {
+        if (auditLogRepository == null) return List.of();
+        return auditLogRepository.findByJobId(jobId);
     }
 
     public Application applyForJob(String jobId, String taUserId) {
@@ -155,8 +177,11 @@ public class ApplicationService {
             throw new IllegalArgumentException("Only pending applications can be withdrawn.");
         }
 
+        ApplicationStatus prevStatus = application.getStatus();
         application.setStatus(newStatus);
         applicationRepository.save(application);
+        writeAuditLog(application.getId(), application.getTaUserId(), application.getJobId(),
+                normalizedOperatorUserId, prevStatus, newStatus);
         publishTaNotification(
                 NotificationType.WITHDRAW,
                 application.getTaUserId(),
@@ -205,8 +230,11 @@ public class ApplicationService {
             }
         }
 
+        ApplicationStatus prevStatus2 = application.getStatus();
         application.setStatus(newStatus);
         applicationRepository.save(application);
+        writeAuditLog(application.getId(), application.getTaUserId(), application.getJobId(),
+                normalizedMoId, prevStatus2, newStatus);
         if (newStatus == ApplicationStatus.ACCEPTED) {
             publishTaNotification(
                     NotificationType.ACCEPT,
@@ -329,5 +357,66 @@ public class ApplicationService {
 
     private String safeText(String value) {
         return value == null ? "" : value;
+    }
+
+    private void writeAuditLog(String applicationId, String taUserId, String jobId,
+            String operatorUserId, ApplicationStatus from, ApplicationStatus to) {
+        if (auditLogRepository == null) return;
+        auditLogRepository.save(new com.group52.tarecruitment.model.ApplicationAuditLog(
+                IdGenerator.nextId("AUD"),
+                safeText(applicationId), safeText(taUserId), safeText(jobId),
+                safeText(operatorUserId), from, to,
+                LocalDate.now().toString()));
+    }
+
+    public ApplicationStats getApplicationStats(String taUserId) {
+        List<Application> apps = getApplicationsByTaUserId(taUserId);
+        int total = apps.size();
+        long accepted = apps.stream().filter(a -> a.getStatus() == ApplicationStatus.ACCEPTED).count();
+        long rejected = apps.stream().filter(a -> a.getStatus() == ApplicationStatus.REJECTED).count();
+        long decided = accepted + rejected;
+        double acceptRate = decided == 0 ? 0.0 : (double) accepted / decided * 100.0;
+
+        double avgWaitDays = 0.0;
+        if (auditLogRepository != null) {
+            List<com.group52.tarecruitment.model.ApplicationAuditLog> logs =
+                    auditLogRepository.findByTaUserId(taUserId);
+            List<Long> waitDays = new ArrayList<>();
+            for (Application app : apps) {
+                if (app.getStatus() != ApplicationStatus.ACCEPTED && app.getStatus() != ApplicationStatus.REJECTED) {
+                    continue;
+                }
+                logs.stream()
+                        .filter(l -> l.getApplicationId().equals(app.getId())
+                                && (l.getToStatus() == ApplicationStatus.ACCEPTED
+                                        || l.getToStatus() == ApplicationStatus.REJECTED))
+                        .findFirst()
+                        .ifPresent(log -> {
+                            try {
+                                LocalDate applied = LocalDate.parse(app.getAppliedDate());
+                                LocalDate decided2 = LocalDate.parse(log.getChangedAt());
+                                waitDays.add(java.time.temporal.ChronoUnit.DAYS.between(applied, decided2));
+                            } catch (Exception ignored) {}
+                        });
+            }
+            if (!waitDays.isEmpty()) {
+                avgWaitDays = waitDays.stream().mapToLong(Long::longValue).average().orElse(0.0);
+            }
+        }
+        return new ApplicationStats(total, (int) accepted, acceptRate, avgWaitDays);
+    }
+
+    public static final class ApplicationStats {
+        public final int total;
+        public final int accepted;
+        public final double acceptRate;
+        public final double avgWaitDays;
+
+        public ApplicationStats(int total, int accepted, double acceptRate, double avgWaitDays) {
+            this.total = total;
+            this.accepted = accepted;
+            this.acceptRate = acceptRate;
+            this.avgWaitDays = avgWaitDays;
+        }
     }
 }

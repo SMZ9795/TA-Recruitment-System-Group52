@@ -11,7 +11,7 @@ import java.util.Optional;
 
 public class UserRepository {
     private static final String HEADER =
-            "id,role,name,email,password,programme,yearOfStudy,skills,availableHours,active,cvFilePath,avatarFilePath";
+            "id,role,name,email,password,programme,yearOfStudy,skills,availableHours,active,cvFilePath,avatarFilePath,failedLoginAttempts,lockedUntil";
 
     private final Path filePath;
 
@@ -29,7 +29,7 @@ public class UserRepository {
                 continue;
             }
             List<String> values = CsvUtil.parseLine(line);
-            if (values.size() != 10 && values.size() != 11 && values.size() != 12) {
+            if (values.size() < 10) {
                 throw invalidRecord(i + 1, null);
             }
             try {
@@ -85,7 +85,9 @@ public class UserRepository {
                     CsvUtil.escape(String.valueOf(user.getAvailableHours())),
                     CsvUtil.escape(String.valueOf(user.isActive())),
                     CsvUtil.escape(user.getCvFilePath()),
-                    CsvUtil.escape(user.getAvatarFilePath())));
+                    CsvUtil.escape(user.getAvatarFilePath()),
+                    CsvUtil.escape(String.valueOf(user.getFailedLoginAttempts())),
+                    CsvUtil.escape(user.getLockedUntil())));
         }
         FileUtil.writeAllLines(filePath, lines);
     }
@@ -93,7 +95,7 @@ public class UserRepository {
     private User toUser(List<String> values) {
         String cvFilePath = values.size() >= 11 ? values.get(10) : "";
         String avatarFilePath = values.size() >= 12 ? values.get(11) : "";
-        return new User(
+        User user = new User(
                 values.get(0),
                 Role.valueOf(values.get(1)),
                 values.get(2),
@@ -106,6 +108,9 @@ public class UserRepository {
                 Boolean.parseBoolean(values.get(9)),
                 cvFilePath,
                 avatarFilePath);
+        if (values.size() >= 13) user.setFailedLoginAttempts(parseInt(values.get(12)));
+        if (values.size() >= 14) user.setLockedUntil(values.get(13));
+        return user;
     }
 
     private int parseInt(String value) {

@@ -4,22 +4,20 @@ import com.group52.tarecruitment.model.Application;
 import com.group52.tarecruitment.model.ApplicationStatus;
 import com.group52.tarecruitment.model.Job;
 import com.group52.tarecruitment.model.JobStatus;
-import com.group52.tarecruitment.model.Notification;
-import com.group52.tarecruitment.model.NotificationType;
 import com.group52.tarecruitment.model.Role;
 import com.group52.tarecruitment.model.User;
+import com.group52.tarecruitment.repository.ApplicationAuditLogRepository;
 import com.group52.tarecruitment.repository.ApplicationRepository;
 import com.group52.tarecruitment.repository.JobRepository;
-import com.group52.tarecruitment.repository.NotificationRepository;
 import com.group52.tarecruitment.repository.UserRepository;
 import com.group52.tarecruitment.service.AdminService;
 import com.group52.tarecruitment.service.ApplicationService;
 import com.group52.tarecruitment.service.AiMatchingService;
 import com.group52.tarecruitment.service.AiMatchingServiceAdapter;
 import com.group52.tarecruitment.service.AuthService;
+import com.group52.tarecruitment.service.ExportService;
 import com.group52.tarecruitment.service.JobService;
 import com.group52.tarecruitment.service.MoApplicantRankingService;
-import com.group52.tarecruitment.service.NotificationService;
 import com.group52.tarecruitment.util.CvValidationUtil;
 import com.group52.tarecruitment.util.FileUtil;
 import com.group52.tarecruitment.util.JobFilterUtil;
@@ -54,8 +52,6 @@ public final class RecruitmentSystemTestRunner {
         runCase("Auth register/login success and validation failures", this::testAuthFlows);
         runCase("Job creation/update validation includes deadline and capacity", this::testJobValidationFlows);
         runCase("Application authorization and state transition rules", this::testApplicationAuthorizationAndTransitions);
-        runCase("MO pending application count uses only the MO's pending applications", this::testMoPendingApplicationCount);
-        runCase("MO accept fills job when final position is accepted", this::testMoAcceptFillsJobWhenCapacityReached);
         runCase("Job deletion is blocked when applications exist", this::testDeleteJobGuard);
         runCase("TA notification filtering and unread count", this::testTaNotificationFilteringAndUnreadCount);
         runCase("TA notification status summary and closed-job message", this::testTaNotificationSummaryAndClosedMessage);
@@ -63,19 +59,43 @@ public final class RecruitmentSystemTestRunner {
         runCase("AI matching returns 100 for complete matches", this::testAiMatchingCompleteMatch);
         runCase("AI matching returns partial score with missing skills", this::testAiMatchingPartialMatch);
         runCase("AI matching handles empty and invalid input", this::testAiMatchingEmptyAndInvalidInput);
+        runCase("TA job recommendation sorting places high match first", this::testTaJobRecommendationSorting);
+        runCase("TA job recommendation places low match jobs backward and handles hour limits", this::testTaJobRecommendationLowFitBackward);
         runCase("MO ranking sorts by match score descending", this::testMoRankingSortsByMatchScoreDescending);
         runCase("MO ranking filters pending applications and minimum score", this::testMoRankingFiltersPendingAndMinimumScore);
-        runCase("MO ranking needs-decision filter includes only reviewable applications", this::testMoRankingNeedsDecisionFilter);
         runCase("AdminService risk level respects TA availableHours, not hardcoded 20h", this::testAdminRiskLevelUsesAvailableHours);
         runCase("AdminService getRecruitmentSnapshot counts filled jobs and overloaded TAs", this::testRecruitmentSnapshot);
         runCase("AdminService searchTAWorkload filters by name and ID", this::testSearchTAWorkload);
         runCase("AdminService getWorkloadTrend returns correct label by job count", this::testWorkloadTrend);
-        runCase("Job lifecycle: closing a job blocks new applications", this::testJobLifecycleCloseBlocksApplication);
-        runCase("Job lifecycle: reopen restores apply, respects deadline and capacity", this::testJobLifecycleReopenAllowsApplication);
-        runCase("Job lifecycle: expired deadline auto-closes the job and rejects applications", this::testJobLifecycleAutoCloseOnDeadline);
-        runCase("Notification persistence survives repository restart", this::testNotificationPersistenceAfterRestart);
-        runCase("Application and job lifecycle events create persistent notifications", this::testApplicationAndJobEventsCreateNotifications);
-        runCase("Admin overload alert notification is persisted and de-duplicated", this::testAdminOverloadAlertNotification);
+        runCase("AdminService getWorkloadAlerts generates CRITICAL for overloaded and WARNING for at-risk TAs", this::testWorkloadAlerts);
+        runCase("AdminService getIdleTAs returns TAs with available hours but no accepted positions", this::testIdleTAs);
+        runCase("AdminService getDepartmentStats aggregates positions and hours per module", this::testDepartmentStats);
+        runCase("AuthService changePassword validates old password, strength, and uniqueness", this::testChangePassword);
+        runCase("AuthService changePassword succeeds with correct old password", this::testChangePasswordSuccessWithCorrectOldPassword);
+        runCase("AuthService changePassword fails with wrong old password", this::testChangePasswordFailsWithWrongOldPassword);
+        runCase("ApplicationService audit log records status changes", this::testAuditLogRecordsStatusChanges);
+        runCase("ApplicationService audit log query by TA and by Job ID", this::testAuditLogQueries);
+        runCase("AuthService login locks account after 5 failed attempts", this::testLoginLockAfterFailedAttempts);
+        runCase("AuthService lock expires and counter resets after successful login", this::testLoginLockExpiry);
+        runCase("AuthService password strength enforced at registration", this::testPasswordStrengthEnforced);
+        runCase("ExportService writes CSV files to data/exports with header even when data is empty",
+                this::testExportServiceCreatesCsvFiles);
+        runCase("ExportService CSV content carries the expected headers and per-row field values",
+                this::testExportServiceWritesCorrectFieldValues);
+
+        // Iteration 4 integration coverage (real services, not mocked literals)
+        runCase("WorkloadRules: balanced range covers [4h, 12h] inclusive boundaries",
+                this::testWorkloadRulesClassifyBalanced);
+        runCase("WorkloadRules: above 12h is OVERLOADED and reports transferable hours",
+                this::testWorkloadRulesClassifyOverloaded);
+        runCase("WorkloadRules: below 4h is UNDERUSED and reports missing hours",
+                this::testWorkloadRulesClassifyUnderused);
+        runCase("ApplicationRepository countByJobIdAndStatus returns only matching pending rows",
+                this::testPendingApplicationCountFromRepository);
+        runCase("ApplicationService.updateApplicationStatus auto-marks job FILLED when all positions accepted",
+                this::testJobAutoFilledWhenAllPositionsAccepted);
+        runCase("End-to-end iteration 4: apply -> accept -> workload counted -> exports include row",
+                this::testIterationFourEndToEndIntegration);
 
         System.out.println();
         System.out.println("==== TEST SUMMARY ====");
@@ -199,28 +219,28 @@ public final class RecruitmentSystemTestRunner {
                     "231226111",
                     "Clara",
                     "clara@bupt.cn",
-                    "password1");
+                    "Password1!");
             assertEquals("TA231226111", registered.getId(), "TA ID should be student-ID based.");
 
-            User loginById = context.authService.login("TA231226111", "password1");
+            User loginById = context.authService.login("TA231226111", "Password1!");
             assertEquals("clara@bupt.cn", loginById.getEmail(), "Login by user ID should work.");
 
-            User loginByEmail = context.authService.login("clara@bupt.cn", "password1");
+            User loginByEmail = context.authService.login("clara@bupt.cn", "Password1!");
             assertEquals("TA231226111", loginByEmail.getId(), "Login by email should work.");
 
             assertThrowsContains(
-                    "Incorrect password.",
+                    "Invalid credentials.",
                     () -> context.authService.login("clara@bupt.cn", "wrong-pass"),
                     "Wrong password should be rejected.");
             assertThrowsContains(
                     "Email is already registered.",
-                    () -> context.authService.registerTa("231226112", "Other", "clara@bupt.cn", "password1"),
+                    () -> context.authService.registerTa("231226112", "Other", "clara@bupt.cn", "Password1!"),
                     "Duplicate email should be rejected.");
 
             context.authService.setUserActive("TA231226111", false);
             assertThrowsContains(
                     "This account is inactive.",
-                    () -> context.authService.login("TA231226111", "password1"),
+                    () -> context.authService.login("TA231226111", "Password1!"),
                     "Inactive user should not be able to login.");
         }
     }
@@ -381,126 +401,6 @@ public final class RecruitmentSystemTestRunner {
         }
     }
 
-    private void testMoPendingApplicationCount() throws Exception {
-        try (TestContext context = new TestContext()) {
-            // Setup
-            User mo = newMo("MO-PENDING-1", "MO Pending", "mo.pending@bupt.cn");
-            User otherMo = newMo("MO-PENDING-2", "Other MO Pending", "other.pending@bupt.cn");
-            User ta1 = newTa("TA-PENDING-1", "Iris Pending", "iris.pending@bupt.cn");
-            User ta2 = newTa("TA-PENDING-2", "Jack Pending", "jack.pending@bupt.cn");
-            User ta3 = newTa("TA-PENDING-3", "Kara Pending", "kara.pending@bupt.cn");
-            context.userRepository.save(mo);
-            context.userRepository.save(otherMo);
-            context.userRepository.save(ta1);
-            context.userRepository.save(ta2);
-            context.userRepository.save(ta3);
-
-            Job moJobOne = context.jobService.createJob(
-                    "CS-MO-101",
-                    "MO Pending One",
-                    "desc",
-                    "Java",
-                    "6",
-                    "2",
-                    LocalDate.now().plusDays(7).toString(),
-                    mo.getId());
-            Job moJobTwo = context.jobService.createJob(
-                    "CS-MO-102",
-                    "MO Pending Two",
-                    "desc",
-                    "Python",
-                    "4",
-                    "1",
-                    LocalDate.now().plusDays(7).toString(),
-                    mo.getId());
-            Job otherMoJob = context.jobService.createJob(
-                    "CS-MO-103",
-                    "Other MO Job",
-                    "desc",
-                    "Java",
-                    "4",
-                    "1",
-                    LocalDate.now().plusDays(7).toString(),
-                    otherMo.getId());
-
-            context.applicationRepository.save(new Application(
-                    "APP-MO-PENDING-1",
-                    moJobOne.getId(),
-                    ta1.getId(),
-                    ApplicationStatus.PENDING,
-                    LocalDate.now().toString()));
-            context.applicationRepository.save(new Application(
-                    "APP-MO-PENDING-2",
-                    moJobTwo.getId(),
-                    ta2.getId(),
-                    ApplicationStatus.PENDING,
-                    LocalDate.now().toString()));
-            context.applicationRepository.save(new Application(
-                    "APP-MO-REJECTED-1",
-                    moJobOne.getId(),
-                    ta3.getId(),
-                    ApplicationStatus.REJECTED,
-                    LocalDate.now().toString()));
-            context.applicationRepository.save(new Application(
-                    "APP-OTHER-MO-PENDING-1",
-                    otherMoJob.getId(),
-                    ta3.getId(),
-                    ApplicationStatus.PENDING,
-                    LocalDate.now().toString()));
-
-            // Action
-            int pendingCount = context.applicationService.getPendingApplicationCountForMo(mo.getId());
-
-            // Expected result
-            assertEquals(2, pendingCount, "MO pending count should include only pending applications for that MO's jobs.");
-
-            context.applicationService.updateApplicationStatus(
-                    "APP-MO-PENDING-2",
-                    mo.getId(),
-                    ApplicationStatus.REJECTED);
-            assertEquals(
-                    1,
-                    context.applicationService.getPendingApplicationCountForMo(mo.getId()),
-                    "Rejecting one application should immediately reduce the MO pending count.");
-        }
-    }
-
-    private void testMoAcceptFillsJobWhenCapacityReached() throws Exception {
-        try (TestContext context = new TestContext()) {
-            // Setup
-            User mo = newMo("MO-FILL-1", "MO Fill", "mo.fill@bupt.cn");
-            User ta = newTa("TA-FILL-1", "Lena Fill", "lena.fill@bupt.cn");
-            context.userRepository.save(mo);
-            context.userRepository.save(ta);
-
-            Job job = context.jobService.createJob(
-                    "CS-FILL-101",
-                    "Capacity Lab",
-                    "desc",
-                    "Java",
-                    "6",
-                    "1",
-                    LocalDate.now().plusDays(7).toString(),
-                    mo.getId());
-            Application application = context.applicationService.applyForJob(job.getId(), ta.getId());
-
-            // Action
-            context.applicationService.updateApplicationStatus(
-                    application.getId(),
-                    mo.getId(),
-                    ApplicationStatus.ACCEPTED);
-
-            // Expected result
-            Job reloadedJob = context.jobRepository.findById(job.getId())
-                    .orElseThrow(() -> new AssertionError("Job should still exist after accepting an applicant."));
-            assertEquals(JobStatus.FILLED, reloadedJob.getStatus(), "Job should become FILLED when capacity is reached.");
-            assertEquals(
-                    0,
-                    context.applicationService.getPendingApplicationCountForMo(mo.getId()),
-                    "Pending count should refresh to zero after the only pending application is accepted.");
-        }
-    }
-
     private void testTaNotificationFilteringAndUnreadCount() {
         Job openJob = new Job(
                 "JOB-NOTIFY-1",
@@ -619,7 +519,7 @@ public final class RecruitmentSystemTestRunner {
             User mo = newMo("MO4001", "Prof Zhao", "prof.zhao@bupt.cn");
             context.userRepository.save(mo);
 
-            User ta = context.authService.registerTa("231226999", "Iris", "iris@bupt.cn", "password1");
+            User ta = context.authService.registerTa("231226999", "Iris", "iris@bupt.cn", "Password1!");
             User taForProfile = context.authService.findById(ta.getId())
                     .orElseThrow(() -> new AssertionError("Registered TA should be queryable."));
             taForProfile.setProgramme("Data Science");
@@ -687,6 +587,65 @@ public final class RecruitmentSystemTestRunner {
                 "Match score must be between 0 and 100.",
                 () -> new AiMatchingService.MatchResult(120, List.of("java"), List.of(), "invalid"),
                 "Out-of-range score should be rejected.");
+    }
+
+    private void testTaJobRecommendationSorting() {
+        AiMatchingService service = new AiMatchingService();
+        User ta = new User();
+        ta.setId("TA-SORT-1");
+        ta.setRole(com.group52.tarecruitment.model.Role.TA);
+        ta.setAvailableHours(20);
+        ta.setSkills("Java, Python, SQL");
+
+        Job job1 = new Job("JOB-REC-1", "CS101", "Intro", "Support", "Java, Python", 10, 1, "2026-12-01", "MO01", JobStatus.OPEN);
+        Job job2 = new Job("JOB-REC-2", "CS102", "Web", "Support", "HTML, CSS", 10, 1, "2026-12-01", "MO01", JobStatus.OPEN);
+        Job job3 = new Job("JOB-REC-3", "CS103", "Data", "Support", "Python", 10, 1, "2026-12-01", "MO01", JobStatus.OPEN);
+
+        List<Job> jobs = new java.util.ArrayList<>(List.of(job2, job1, job3));
+
+        jobs.sort(java.util.Comparator
+                .<Job>comparingInt(job -> service.recommendJob(ta, job, 0).getScore())
+                .reversed()
+                .thenComparing(Job::getId));
+
+        assertEquals("JOB-REC-1", jobs.get(0).getId(), "High match job should be first");
+        assertEquals("JOB-REC-3", jobs.get(1).getId(), "High match job should be second");
+        assertEquals("JOB-REC-2", jobs.get(2).getId(), "Low match job should be last");
+    }
+
+    private void testTaJobRecommendationLowFitBackward() {
+        AiMatchingService service = new AiMatchingService();
+        User ta = new User();
+        ta.setId("TA-SORT-2");
+        ta.setRole(com.group52.tarecruitment.model.Role.TA);
+        ta.setAvailableHours(10);
+        ta.setSkills("Java");
+
+        Job jobOverHours = new Job("JOB-LOW-1", "CS101", "Intro", "Support", "Java", 20, 1, "2026-12-01", "MO01", JobStatus.OPEN); // match 100%, 20h > 10h remaining -> -20 penalty -> 80
+        Job jobPartialFit = new Job("JOB-LOW-2", "CS102", "Intro2", "Support", "Java, Python", 5, 1, "2026-12-01", "MO01", JobStatus.OPEN); // match 50%, 5h <= 10h remaining -> +10 bonus -> 60
+        Job jobLowFit = new Job("JOB-LOW-3", "CS103", "Intro3", "Support", "C++", 5, 1, "2026-12-01", "MO01", JobStatus.OPEN); // match 0%, 5h <= 10h remaining -> +10 bonus -> 10
+
+        AiMatchingService.RecommendationResult r1 = service.recommendJob(ta, jobOverHours, 0);
+        AiMatchingService.RecommendationResult r2 = service.recommendJob(ta, jobPartialFit, 0);
+        AiMatchingService.RecommendationResult r3 = service.recommendJob(ta, jobLowFit, 0);
+
+        assertEquals(80, r1.getScore(), "Over hours should have penalty");
+        assertFalse(r1.isHoursFit(), "Over hours should not fit rules");
+
+        assertEquals(60, r2.getScore(), "Partial fit should have bonus if hours fit");
+        assertTrue(r2.isHoursFit(), "Hours fit rules should apply");
+
+        assertEquals(10, r3.getScore(), "Low fit should also have hours check");
+
+        List<Job> jobs = new java.util.ArrayList<>(List.of(jobLowFit, jobOverHours, jobPartialFit));
+        jobs.sort(java.util.Comparator
+                .<Job>comparingInt(job -> service.recommendJob(ta, job, 0).getScore())
+                .reversed()
+                .thenComparing(Job::getId));
+
+        assertEquals("JOB-LOW-1", jobs.get(0).getId(), "Over hours (score 80) is first");
+        assertEquals("JOB-LOW-2", jobs.get(1).getId(), "Partial fit (score 60) is second");
+        assertEquals("JOB-LOW-3", jobs.get(2).getId(), "Low fit (score 10) is last");
     }
 
     private void testMoRankingSortsByMatchScoreDescending() throws Exception {
@@ -792,71 +751,191 @@ public final class RecruitmentSystemTestRunner {
         }
     }
 
-    private void testMoRankingNeedsDecisionFilter() throws Exception {
+    private void testExportServiceCreatesCsvFiles() throws Exception {
         try (TestContext context = new TestContext()) {
-            Job targetJob = new Job(
-                    "JOB-RANK-3",
-                    "ECS7004",
-                    "Review Queue",
-                    "Support labs",
-                    "Java",
-                    4,
-                    3,
-                    LocalDate.now().plusDays(30).toString(),
-                    "MO-RANK",
-                    JobStatus.OPEN);
-            context.jobRepository.save(targetJob);
+            Path exportsDir = context.tempDirectory.resolve("exports");
+            ExportService exportService = new ExportService(
+                    context.userRepository,
+                    context.jobRepository,
+                    context.applicationRepository,
+                    context.adminService,
+                    exportsDir);
 
-            User applied = newTa("TA-NEEDS-APPLIED", "Applied Needs", "applied.needs@bupt.cn");
-            User reviewing = newTa("TA-NEEDS-REVIEWING", "Reviewing Needs", "reviewing.needs@bupt.cn");
-            User pending = newTa("TA-NEEDS-PENDING", "Pending Needs", "pending.needs@bupt.cn");
-            User accepted = newTa("TA-NEEDS-ACCEPTED", "Accepted Done", "accepted.needs@bupt.cn");
-            User rejected = newTa("TA-NEEDS-REJECTED", "Rejected Done", "rejected.needs@bupt.cn");
-            context.userRepository.save(applied);
-            context.userRepository.save(reviewing);
-            context.userRepository.save(pending);
-            context.userRepository.save(accepted);
-            context.userRepository.save(rejected);
+            Path emptyApplicationsCsv = exportService.exportAllApplications();
+            assertTrue(Files.exists(emptyApplicationsCsv),
+                    "Export file should be created even when there's no application data.");
+            assertTrue(emptyApplicationsCsv.startsWith(exportsDir),
+                    "Exported file must be saved under the configured exports directory.");
+            assertTrue(emptyApplicationsCsv.getFileName().toString().startsWith("all_applications_"),
+                    "Filename must start with 'all_applications_' for the all-applications report.");
+            assertTrue(emptyApplicationsCsv.getFileName().toString().endsWith(".csv"),
+                    "Filename must use the .csv extension.");
+            List<String> emptyLines = Files.readAllLines(emptyApplicationsCsv);
+            assertEquals(1, emptyLines.size(),
+                    "Empty export should contain only the header row, not blank data rows.");
+            assertEquals(
+                    String.join(",", asQuoted(ExportService.APPLICATIONS_HEADER)),
+                    emptyLines.get(0),
+                    "Header row must match ExportService.APPLICATIONS_HEADER.");
 
-            context.applicationRepository.save(new Application(
-                    "APP-NEEDS-APPLIED", targetJob.getId(), applied.getId(), ApplicationStatus.APPLIED, "2026-05-01"));
-            context.applicationRepository.save(new Application(
-                    "APP-NEEDS-REVIEWING", targetJob.getId(), reviewing.getId(), ApplicationStatus.REVIEWING, "2026-05-01"));
-            context.applicationRepository.save(new Application(
-                    "APP-NEEDS-PENDING", targetJob.getId(), pending.getId(), ApplicationStatus.PENDING, "2026-05-01"));
-            context.applicationRepository.save(new Application(
-                    "APP-NEEDS-ACCEPTED", targetJob.getId(), accepted.getId(), ApplicationStatus.ACCEPTED, "2026-05-01"));
-            context.applicationRepository.save(new Application(
-                    "APP-NEEDS-REJECTED", targetJob.getId(), rejected.getId(), ApplicationStatus.REJECTED, "2026-05-01"));
+            User mo = newMo("MO-EXPORT-1", "Export MO", "export.mo@bupt.cn");
+            User ta = newTa("TA-EXPORT-1", "Export TA", "export.ta@bupt.cn");
+            context.userRepository.save(mo);
+            context.userRepository.save(ta);
+            Job job = context.jobService.createJob(
+                    "EX101", "Export Module", "desc", "Java", "6", "2",
+                    LocalDate.now().plusDays(7).toString(), mo.getId());
+            context.applicationService.applyForJob(job.getId(), ta.getId());
 
-            MoApplicantRankingService rankingService = new MoApplicantRankingService(
-                    context.applicationService, new AiMatchingServiceAdapter(new AiMatchingService()));
-            List<MoApplicantRankingService.RankedApplicant> ranked = rankingService.rankApplicants(
-                    targetJob,
-                    context.applicationRepository.findByJobId(targetJob.getId()),
-                    Map.of(
-                            applied.getId(), applied,
-                            reviewing.getId(), reviewing,
-                            pending.getId(), pending,
-                            accepted.getId(), accepted,
-                            rejected.getId(), rejected),
-                    new MoApplicantRankingService.RankingOptions(
-                            false,
-                            true,
-                            0,
-                            MoApplicantRankingService.SortMode.MATCH_SCORE_DESC));
+            Path workloadCsv = exportService.exportTaWorkloadSummary();
+            assertTrue(Files.exists(workloadCsv),
+                    "Workload export file should be created.");
+            assertTrue(workloadCsv.getFileName().toString().startsWith("ta_workload_summary_"),
+                    "Workload filename prefix must be 'ta_workload_summary_'.");
 
-            Set<ApplicationStatus> statuses = new HashSet<>();
-            for (MoApplicantRankingService.RankedApplicant applicant : ranked) {
-                statuses.add(applicant.getStatus());
-            }
-            assertEquals(3, ranked.size(), "Needs-decision filter should keep APPLIED, REVIEWING, and PENDING only.");
-            assertTrue(statuses.contains(ApplicationStatus.APPLIED), "APPLIED applications should need a decision.");
-            assertTrue(statuses.contains(ApplicationStatus.REVIEWING), "REVIEWING applications should need a decision.");
-            assertTrue(statuses.contains(ApplicationStatus.PENDING), "PENDING applications should need a decision.");
-            assertFalse(statuses.contains(ApplicationStatus.ACCEPTED), "ACCEPTED applications should not need a decision.");
-            assertFalse(statuses.contains(ApplicationStatus.REJECTED), "REJECTED applications should not need a decision.");
+            Path jobFillingCsv = exportService.exportJobFillingStatus();
+            assertTrue(Files.exists(jobFillingCsv),
+                    "Job filling status export file should be created.");
+            assertTrue(jobFillingCsv.getFileName().toString().startsWith("job_filling_status_"),
+                    "Job filling filename prefix must be 'job_filling_status_'.");
+
+            Path applicantsCsv = exportService.exportApplicantsForJob(job.getId());
+            assertTrue(Files.exists(applicantsCsv),
+                    "Applicants CSV file should be created.");
+            assertTrue(applicantsCsv.getFileName().toString().startsWith("applicants_EX101_"),
+                    "Applicants filename should embed sanitized module code.");
+
+            assertThrowsContains(
+                    "Job ID is required",
+                    () -> exportService.exportApplicantsForJob(" "),
+                    "Blank job ID must be rejected for applicant export.");
+            assertThrowsContains(
+                    "Job not found",
+                    () -> exportService.exportApplicantsForJob("JOB-DOES-NOT-EXIST"),
+                    "Unknown job ID must be rejected with a clear message.");
+
+            Path firstRun = exportService.exportJobFillingStatus();
+            Path secondRun = exportService.exportJobFillingStatus();
+            assertTrue(Files.exists(firstRun) && Files.exists(secondRun),
+                    "Repeated exports must both produce files.");
+            assertFalse(firstRun.equals(secondRun),
+                    "Repeated exports in the same second must resolve to distinct filenames.");
         }
+    }
+
+    private void testExportServiceWritesCorrectFieldValues() throws Exception {
+        try (TestContext context = new TestContext()) {
+            Path exportsDir = context.tempDirectory.resolve("exports");
+            ExportService exportService = new ExportService(
+                    context.userRepository,
+                    context.jobRepository,
+                    context.applicationRepository,
+                    context.adminService,
+                    exportsDir);
+
+            User mo = newMo("MO-EXPORT-2", "Export MO 2", "export.mo2@bupt.cn");
+            User taAccepted = newTa("TA-EXPORT-A", "Alice Accepted", "alice.accepted@bupt.cn");
+            taAccepted.setProgramme("Data Science");
+            taAccepted.setSkills("Java;Python");
+            taAccepted.setAvailableHours(10);
+            User taPending = newTa("TA-EXPORT-B", "Bob Pending", "bob.pending@bupt.cn");
+            taPending.setProgramme("Software Engineering");
+            taPending.setSkills("Java");
+            taPending.setAvailableHours(8);
+            context.userRepository.save(mo);
+            context.userRepository.save(taAccepted);
+            context.userRepository.save(taPending);
+
+            Job job = context.jobService.createJob(
+                    "EX202", "Field Check Module", "Run labs",
+                    "Java", "6", "2",
+                    LocalDate.now().plusDays(10).toString(),
+                    mo.getId());
+            Application acceptedApp = context.applicationService.applyForJob(job.getId(), taAccepted.getId());
+            context.applicationService.updateApplicationStatus(
+                    acceptedApp.getId(), mo.getId(), ApplicationStatus.ACCEPTED);
+            context.applicationService.applyForJob(job.getId(), taPending.getId());
+
+            Path applicationsCsv = exportService.exportAllApplications();
+            List<String> applicationLines = Files.readAllLines(applicationsCsv);
+            assertEquals(3, applicationLines.size(),
+                    "All applications export must contain header plus one row per application.");
+            assertEquals(
+                    String.join(",", asQuoted(ExportService.APPLICATIONS_HEADER)),
+                    applicationLines.get(0),
+                    "All-applications header must list every documented field.");
+            String acceptedRow = findRowContaining(applicationLines, "Alice Accepted");
+            assertTrue(acceptedRow.contains("\"EX202\""),
+                    "Application row should expose the module code.");
+            assertTrue(acceptedRow.contains("\"Field Check Module\""),
+                    "Application row should expose the module name.");
+            assertTrue(acceptedRow.contains("\"ACCEPTED\""),
+                    "Application row should expose the storage status.");
+            assertTrue(acceptedRow.contains("\"alice.accepted@bupt.cn\""),
+                    "Application row should expose the TA email.");
+
+            Path workloadCsv = exportService.exportTaWorkloadSummary();
+            List<String> workloadLines = Files.readAllLines(workloadCsv);
+            assertEquals(
+                    String.join(",", asQuoted(ExportService.WORKLOAD_HEADER)),
+                    workloadLines.get(0),
+                    "Workload header must match ExportService.WORKLOAD_HEADER exactly.");
+            assertEquals(2, workloadLines.size(),
+                    "Only TAs with accepted positions should appear in the workload summary.");
+            String workloadRow = workloadLines.get(1);
+            assertTrue(workloadRow.contains("\"Alice Accepted\""),
+                    "Workload row must contain the TA's name.");
+            assertTrue(workloadRow.contains("\"10\""),
+                    "Workload row must contain availableHours=10 for Alice.");
+            assertTrue(workloadRow.contains("\"6\""),
+                    "Workload row must contain totalAssignedHours=6 from the accepted 6h/week job.");
+
+            Path jobFillingCsv = exportService.exportJobFillingStatus();
+            List<String> jobLines = Files.readAllLines(jobFillingCsv);
+            assertEquals(
+                    String.join(",", asQuoted(ExportService.JOB_FILLING_HEADER)),
+                    jobLines.get(0),
+                    "Job filling header must match ExportService.JOB_FILLING_HEADER exactly.");
+            assertEquals(2, jobLines.size(),
+                    "Job filling export should produce one row per job.");
+            String jobRow = jobLines.get(1);
+            assertTrue(jobRow.contains("\"EX202\""), "Job filling row must include moduleCode.");
+            assertTrue(jobRow.contains("\"1/2\""),
+                    "Job filling row must record 1 accepted of 2 positions as 1/2 ratio.");
+
+            Path applicantsCsv = exportService.exportApplicantsForJob(job.getId());
+            List<String> applicantLines = Files.readAllLines(applicantsCsv);
+            assertEquals(
+                    String.join(",", asQuoted(ExportService.APPLICANT_LIST_HEADER)),
+                    applicantLines.get(0),
+                    "Applicant list header must match ExportService.APPLICANT_LIST_HEADER exactly.");
+            assertEquals(3, applicantLines.size(),
+                    "Applicant export must include header plus one row per applicant of the job.");
+            String pendingRow = findRowContaining(applicantLines, "Bob Pending");
+            assertTrue(pendingRow.contains("\"Software Engineering\""),
+                    "Applicant row should expose the TA programme.");
+            assertTrue(pendingRow.contains("\"Java\""),
+                    "Applicant row should expose the TA skills.");
+            assertTrue(pendingRow.contains("\"PENDING\""),
+                    "Applicant row should expose the application status.");
+        }
+    }
+
+    private static String findRowContaining(List<String> rows, String needle) {
+        for (String row : rows) {
+            if (row.contains(needle)) {
+                return row;
+            }
+        }
+        throw new AssertionError("Expected a CSV row containing \"" + needle + "\" but none was found.");
+    }
+
+    private static String[] asQuoted(String[] values) {
+        String[] quoted = new String[values.length];
+        for (int i = 0; i < values.length; i++) {
+            quoted[i] = "\"" + values[i] + "\"";
+        }
+        return quoted;
     }
 
     private void runCase(String caseName, ThrowingRunnable testCase) throws Exception {
@@ -1071,293 +1150,162 @@ public final class RecruitmentSystemTestRunner {
         }
     }
 
-    private void testJobLifecycleCloseBlocksApplication() throws Exception {
-        try (TestContext context = new TestContext()) {
-            User mo = newMo("MO-LC-1", "MO Lifecycle One", "mo.lc1@bupt.cn");
-            User ta = newTa("TA-LC-1", "TA Lifecycle One", "ta.lc1@bupt.cn");
-            context.userRepository.save(mo);
-            context.userRepository.save(ta);
+    // -------------------------------------------------------------------------
+    // New tests: WorkloadAlerts, IdleTAs, DepartmentStats
+    // -------------------------------------------------------------------------
 
-            Job job = context.jobService.createJob(
-                    "CS-LC-101",
-                    "Lifecycle Lab",
-                    "desc",
-                    "Java",
-                    "6",
-                    "1",
-                    LocalDate.now().plusDays(7).toString(),
-                    mo.getId());
-            assertEquals(JobStatus.OPEN, job.getStatus(), "Newly created job should be OPEN.");
+    private void testWorkloadAlerts() throws Exception {
+        Path tmp = Files.createTempDirectory("ta-test-alerts");
+        try {
+            Path usersPath = tmp.resolve("users.csv");
+            Path jobsPath  = tmp.resolve("jobs.csv");
+            Path appsPath  = tmp.resolve("applications.csv");
 
-            Job closed = context.jobService.closeJob(job.getId(), mo.getId());
-            assertEquals(JobStatus.CLOSED, closed.getStatus(), "closeJob should move OPEN job to CLOSED.");
-            assertEquals(
-                    JobStatus.CLOSED,
-                    context.jobRepository.findById(job.getId()).orElseThrow().getStatus(),
-                    "CLOSED status must be persisted.");
+            // ta1: availableHours=10, will be assigned 14h → OVERLOADED → CRITICAL alert
+            // ta2: availableHours=10, will be assigned 9h  → AT_RISK (90%) → WARNING alert
+            // ta3: availableHours=8,  no accepted job       → idle → INFO alert
+            Files.writeString(usersPath,
+                "id,role,name,email,password,major,yearOfStudy,skills,availableHours,active,cvFilePath\n"
+                + "ta1,TA,Alice,alice@test.com,pass1234,CS,2,Java,10,true,\n"
+                + "ta2,TA,Bob,bob@test.com,pass1234,CS,2,Java,10,true,\n"
+                + "ta3,TA,Carol,carol@test.com,pass1234,CS,2,Java,8,true,\n");
+            Files.writeString(jobsPath,
+                "id,moduleCode,moduleName,description,requiredSkills,hoursPerWeek,positions,deadline,postedByMoId,status\n"
+                + "j1,CS101,A,Desc,Java,7,2,2099-12-31,mo1,OPEN\n"
+                + "j2,CS102,B,Desc,Java,7,2,2099-12-31,mo1,OPEN\n"
+                + "j3,CS103,C,Desc,Java,9,2,2099-12-31,mo1,OPEN\n");
+            Files.writeString(appsPath,
+                "id,jobId,taUserId,status,appliedDate\n"
+                + "app1,j1,ta1,ACCEPTED,2024-01-01\n"
+                + "app2,j2,ta1,ACCEPTED,2024-01-02\n"
+                + "app3,j3,ta2,ACCEPTED,2024-01-03\n");
 
-            assertThrowsContains(
-                    "closed and no longer accepts applications",
-                    () -> context.applicationService.applyForJob(job.getId(), ta.getId()),
-                    "TA must not be able to apply after the job is closed.");
+            AdminService svc = new AdminService(
+                new UserRepository(usersPath), new JobRepository(jobsPath), new ApplicationRepository(appsPath));
 
-            assertThrowsContains(
-                    "already closed",
-                    () -> context.jobService.closeJob(job.getId(), mo.getId()),
-                    "Closing an already-closed job must be rejected.");
+            List<AdminService.WorkloadAlert> alerts = svc.getWorkloadAlerts();
 
-            User otherMo = newMo("MO-LC-OTHER", "Other MO", "mo.other@bupt.cn");
-            context.userRepository.save(otherMo);
-            assertThrowsContains(
-                    "You can only edit jobs that you posted",
-                    () -> context.jobService.closeJob(job.getId(), otherMo.getId()),
-                    "Other MOs must not be able to close a job they did not post.");
-        }
-    }
+            // Must contain at least one CRITICAL (ta1 overloaded: 14h > 10h)
+            boolean hasCritical = alerts.stream()
+                .anyMatch(a -> a.getSeverity() == AdminService.AlertSeverity.CRITICAL
+                            && a.getTaUserId().equals("ta1"));
+            assertTrue(hasCritical, "Expected CRITICAL alert for overloaded ta1.");
 
-    private void testJobLifecycleReopenAllowsApplication() throws Exception {
-        try (TestContext context = new TestContext()) {
-            User mo = newMo("MO-LC-2", "MO Lifecycle Two", "mo.lc2@bupt.cn");
-            User ta = newTa("TA-LC-2", "TA Lifecycle Two", "ta.lc2@bupt.cn");
-            context.userRepository.save(mo);
-            context.userRepository.save(ta);
+            // Must contain at least one WARNING (ta2 at 90%)
+            boolean hasWarning = alerts.stream()
+                .anyMatch(a -> a.getSeverity() == AdminService.AlertSeverity.WARNING
+                            && a.getTaUserId().equals("ta2"));
+            assertTrue(hasWarning, "Expected WARNING alert for at-risk ta2.");
 
-            Job job = context.jobService.createJob(
-                    "CS-LC-201",
-                    "Reopen Lab",
-                    "desc",
-                    "Java",
-                    "6",
-                    "1",
-                    LocalDate.now().plusDays(10).toString(),
-                    mo.getId());
-            context.jobService.closeJob(job.getId(), mo.getId());
+            // Must contain INFO for idle ta3
+            boolean hasInfo = alerts.stream()
+                .anyMatch(a -> a.getSeverity() == AdminService.AlertSeverity.INFO
+                            && a.getTaUserId().equals("ta3"));
+            assertTrue(hasInfo, "Expected INFO alert for idle ta3.");
 
-            Job reopened = context.jobService.reopenJob(job.getId(), mo.getId());
-            assertEquals(JobStatus.OPEN, reopened.getStatus(), "reopenJob should restore status to OPEN.");
-
-            Application application = context.applicationService.applyForJob(job.getId(), ta.getId());
-            assertEquals(
-                    ApplicationStatus.PENDING,
-                    application.getStatus(),
-                    "TA should be able to apply once the job is reopened.");
-
-            assertThrowsContains(
-                    "already open",
-                    () -> context.jobService.reopenJob(job.getId(), mo.getId()),
-                    "Reopening an already-open job must be rejected.");
-
-            // Reopening must respect deadline; rewrite the row with an expired deadline and try again.
-            Job expired = context.jobRepository.findById(job.getId()).orElseThrow();
-            expired.setStatus(JobStatus.CLOSED);
-            expired.setDeadline(LocalDate.now().minusDays(1).toString());
-            context.jobRepository.save(expired);
-            assertThrowsContains(
-                    "deadline has passed",
-                    () -> context.jobService.reopenJob(job.getId(), mo.getId()),
-                    "Reopening past-deadline jobs must be rejected.");
-
-            // Reopening a job whose offers fill all positions should be rejected too.
-            Job filledJob = context.jobService.createJob(
-                    "CS-LC-202",
-                    "Filled Lab",
-                    "desc",
-                    "Java",
-                    "6",
-                    "1",
-                    LocalDate.now().plusDays(12).toString(),
-                    mo.getId());
-            context.applicationRepository.save(new Application(
-                    "APP-LC-FILL",
-                    filledJob.getId(),
-                    ta.getId(),
-                    ApplicationStatus.ACCEPTED,
-                    LocalDate.now().toString()));
-            Job persistedFilled = context.jobRepository.findById(filledJob.getId()).orElseThrow();
-            persistedFilled.setStatus(JobStatus.CLOSED);
-            context.jobRepository.save(persistedFilled);
-            assertThrowsContains(
-                    "filled",
-                    () -> context.jobService.reopenJob(filledJob.getId(), mo.getId()),
-                    "Reopening a fully-filled job must be rejected.");
-        }
-    }
-
-    private void testJobLifecycleAutoCloseOnDeadline() throws Exception {
-        try (TestContext context = new TestContext()) {
-            User mo = newMo("MO-LC-3", "MO Lifecycle Three", "mo.lc3@bupt.cn");
-            User ta = newTa("TA-LC-3", "TA Lifecycle Three", "ta.lc3@bupt.cn");
-            context.userRepository.save(mo);
-            context.userRepository.save(ta);
-
-            // Jobs created via the service must have a future deadline, so we plant the expired row directly.
-            Job expired = new Job(
-                    "JOB-LC-EXPIRED",
-                    "CS-LC-301",
-                    "Expired Lab",
-                    "desc",
-                    "Java",
-                    6,
-                    1,
-                    LocalDate.now().minusDays(2).toString(),
-                    mo.getId(),
-                    JobStatus.OPEN);
-            Job futureOpen = new Job(
-                    "JOB-LC-FUTURE",
-                    "CS-LC-302",
-                    "Future Lab",
-                    "desc",
-                    "Java",
-                    6,
-                    1,
-                    LocalDate.now().plusDays(5).toString(),
-                    mo.getId(),
-                    JobStatus.OPEN);
-            context.jobRepository.save(expired);
-            context.jobRepository.save(futureOpen);
-
-            List<Job> swept = context.jobService.autoCloseExpiredJobs();
-            assertEquals(1, swept.size(), "Only the expired job should be swept.");
-            assertEquals(
-                    JobStatus.CLOSED,
-                    context.jobRepository.findById(expired.getId()).orElseThrow().getStatus(),
-                    "Expired job must be persisted as CLOSED.");
-            assertEquals(
-                    JobStatus.OPEN,
-                    context.jobRepository.findById(futureOpen.getId()).orElseThrow().getStatus(),
-                    "Future-deadline jobs must remain OPEN.");
-
-            // Sweeping again should be a no-op.
-            assertEquals(0, context.jobService.autoCloseExpiredJobs().size(), "Second sweep should find nothing.");
-
-            // End-to-end: an expired OPEN job must self-heal to CLOSED when a TA tries to apply.
-            Job stale = new Job(
-                    "JOB-LC-STALE",
-                    "CS-LC-303",
-                    "Stale Lab",
-                    "desc",
-                    "Java",
-                    6,
-                    1,
-                    LocalDate.now().minusDays(1).toString(),
-                    mo.getId(),
-                    JobStatus.OPEN);
-            context.jobRepository.save(stale);
-            assertThrowsContains(
-                    "passed its deadline",
-                    () -> context.applicationService.applyForJob(stale.getId(), ta.getId()),
-                    "Applying to an expired job should be rejected.");
-            assertEquals(
-                    JobStatus.CLOSED,
-                    context.jobRepository.findById(stale.getId()).orElseThrow().getStatus(),
-                    "Apply-time validation should self-heal stale OPEN jobs to CLOSED.");
-        }
-    }
-
-    private void testNotificationPersistenceAfterRestart() throws Exception {
-        try (TestContext context = new TestContext()) {
-            context.notificationService.publish(
-                    Role.TA,
-                    NotificationType.APPLY,
-                    "TA-NTF-01",
-                    "Application submitted.",
-                    "APP-NTF-01");
-            context.notificationService.publish(
-                    Role.TA,
-                    NotificationType.ACCEPT,
-                    "TA-NTF-01",
-                    "Application accepted.",
-                    "APP-NTF-01");
-
-            NotificationRepository restartedRepository = new NotificationRepository(context.notificationsFilePath);
-            NotificationService restartedService = new NotificationService(restartedRepository);
-            List<Notification> restored = restartedService.getNotificationsForUser("TA-NTF-01");
-            assertEquals(2, restored.size(), "Notifications should still exist after restarting repository.");
-
-            boolean hasApply = restored.stream().anyMatch(n -> n.getType() == NotificationType.APPLY);
-            boolean hasAccept = restored.stream().anyMatch(n -> n.getType() == NotificationType.ACCEPT);
-            assertTrue(hasApply, "Restored notifications should include APPLY.");
-            assertTrue(hasAccept, "Restored notifications should include ACCEPT.");
-        }
-    }
-
-    private void testApplicationAndJobEventsCreateNotifications() throws Exception {
-        try (TestContext context = new TestContext()) {
-            User mo = newMo("MO-NTF-01", "MO NTF", "mo.ntf@bupt.cn");
-            User ta = newTa("TA-NTF-02", "TA NTF", "ta.ntf@bupt.cn");
-            context.userRepository.save(mo);
-            context.userRepository.save(ta);
-
-            Job job = context.jobService.createJob(
-                    "CS-NTF-101",
-                    "Notification Integration Lab",
-                    "desc",
-                    "Java",
-                    "6",
-                    "2",
-                    LocalDate.now().plusDays(8).toString(),
-                    mo.getId());
-
-            Application application = context.applicationService.applyForJob(job.getId(), ta.getId());
-            context.applicationService.updateApplicationStatus(application.getId(), mo.getId(), ApplicationStatus.ACCEPTED);
-            context.jobService.closeJob(job.getId(), mo.getId());
-            context.jobService.reopenJob(job.getId(), mo.getId());
-
-            List<Notification> notifications = context.notificationService.getNotificationsForUser(ta.getId());
-            Set<NotificationType> types = new HashSet<>();
-            for (Notification notification : notifications) {
-                types.add(notification.getType());
+            // CRITICAL must come before WARNING in sorted list
+            int critIdx = -1, warnIdx = -1;
+            for (int i = 0; i < alerts.size(); i++) {
+                if (alerts.get(i).getSeverity() == AdminService.AlertSeverity.CRITICAL && critIdx < 0) critIdx = i;
+                if (alerts.get(i).getSeverity() == AdminService.AlertSeverity.WARNING  && warnIdx < 0) warnIdx = i;
             }
+            assertTrue(critIdx < warnIdx, "CRITICAL alerts should appear before WARNING alerts.");
 
-            assertTrue(types.contains(NotificationType.APPLY), "TA should receive APPLY notification.");
-            assertTrue(types.contains(NotificationType.ACCEPT), "TA should receive ACCEPT notification.");
-            assertTrue(types.contains(NotificationType.JOB_CLOSE), "TA should receive JOB_CLOSE notification.");
-            assertTrue(types.contains(NotificationType.JOB_REOPEN), "TA should receive JOB_REOPEN notification.");
+        } finally {
+            try (var walk = Files.walk(tmp)) {
+                walk.sorted(Comparator.reverseOrder()).forEach(p -> {
+                    try { Files.deleteIfExists(p); } catch (Exception ignored) {}
+                });
+            }
         }
     }
 
-    private void testAdminOverloadAlertNotification() throws Exception {
-        try (TestContext context = new TestContext()) {
-            User mo = newMo("MO-NTF-02", "MO Alert", "mo.alert@bupt.cn");
-            User ta = new User(
-                    "TA-NTF-03",
-                    Role.TA,
-                    "TA Alert",
-                    "ta.alert@bupt.cn",
-                    "password1",
-                    "Computer Science",
-                    2,
-                    "Java",
-                    4,
-                    true,
-                    "");
-            context.userRepository.save(mo);
-            context.userRepository.save(ta);
+    private void testIdleTAs() throws Exception {
+        Path tmp = Files.createTempDirectory("ta-test-idle");
+        try {
+            Path usersPath = tmp.resolve("users.csv");
+            Path jobsPath  = tmp.resolve("jobs.csv");
+            Path appsPath  = tmp.resolve("applications.csv");
 
-            Job heavyJob = context.jobService.createJob(
-                    "CS-NTF-201",
-                    "Heavy Lab",
-                    "desc",
-                    "Java",
-                    "6",
-                    "1",
-                    LocalDate.now().plusDays(10).toString(),
-                    mo.getId());
-            Application application = context.applicationService.applyForJob(heavyJob.getId(), ta.getId());
-            context.applicationService.updateApplicationStatus(application.getId(), mo.getId(), ApplicationStatus.ACCEPTED);
+            // ta1 has accepted job → not idle
+            // ta2 has available hours but no accepted job → idle
+            // ta3 has availableHours=0 → excluded from idle list
+            Files.writeString(usersPath,
+                "id,role,name,email,password,major,yearOfStudy,skills,availableHours,active,cvFilePath\n"
+                + "ta1,TA,Alice,alice@test.com,pass1234,CS,2,Java,10,true,\n"
+                + "ta2,TA,Bob,bob@test.com,pass1234,CS,2,Java,8,true,\n"
+                + "ta3,TA,Carol,carol@test.com,pass1234,CS,2,Java,0,true,\n");
+            Files.writeString(jobsPath,
+                "id,moduleCode,moduleName,description,requiredSkills,hoursPerWeek,positions,deadline,postedByMoId,status\n"
+                + "j1,CS101,A,Desc,Java,5,2,2099-12-31,mo1,OPEN\n");
+            Files.writeString(appsPath,
+                "id,jobId,taUserId,status,appliedDate\n"
+                + "app1,j1,ta1,ACCEPTED,2024-01-01\n");
 
-            int createdOnce = context.adminService.publishOverloadAlerts();
-            int createdTwice = context.adminService.publishOverloadAlerts();
-            assertEquals(1, createdOnce, "First overload publish should create exactly one alert.");
-            assertEquals(0, createdTwice, "Second overload publish should be de-duplicated.");
+            AdminService svc = new AdminService(
+                new UserRepository(usersPath), new JobRepository(jobsPath), new ApplicationRepository(appsPath));
 
-            NotificationRepository restartedRepository = new NotificationRepository(context.notificationsFilePath);
-            NotificationService restartedService = new NotificationService(restartedRepository);
-            List<Notification> persisted = restartedService.getNotificationsForUser(ta.getId());
-            long overloadCount = persisted.stream()
-                    .filter(notification -> notification.getType() == NotificationType.OVERLOAD_ALERT)
-                    .count();
-            assertEquals(1L, overloadCount, "Overload alert should persist and remain unique after restart.");
+            List<User> idle = svc.getIdleTAs();
+
+            assertEquals(1, idle.size(), "Only ta2 should be idle.");
+            assertEquals("ta2", idle.get(0).getId(), "Idle TA should be ta2.");
+
+        } finally {
+            try (var walk = Files.walk(tmp)) {
+                walk.sorted(Comparator.reverseOrder()).forEach(p -> {
+                    try { Files.deleteIfExists(p); } catch (Exception ignored) {}
+                });
+            }
+        }
+    }
+
+    private void testDepartmentStats() throws Exception {
+        Path tmp = Files.createTempDirectory("ta-test-dept");
+        try {
+            Path usersPath = tmp.resolve("users.csv");
+            Path jobsPath  = tmp.resolve("jobs.csv");
+            Path appsPath  = tmp.resolve("applications.csv");
+
+            // Two jobs in CS101, one job in CS102
+            Files.writeString(usersPath,
+                "id,role,name,email,password,major,yearOfStudy,skills,availableHours,active,cvFilePath\n"
+                + "ta1,TA,Alice,alice@test.com,pass1234,CS,2,Java,20,true,\n");
+            Files.writeString(jobsPath,
+                "id,moduleCode,moduleName,description,requiredSkills,hoursPerWeek,positions,deadline,postedByMoId,status\n"
+                + "j1,CS101,Algorithms,Desc,Java,5,2,2099-12-31,mo1,OPEN\n"
+                + "j2,CS101,Algorithms,Desc,Java,3,1,2099-12-31,mo1,OPEN\n"
+                + "j3,CS102,Databases,Desc,SQL,4,3,2099-12-31,mo1,OPEN\n");
+            Files.writeString(appsPath,
+                "id,jobId,taUserId,status,appliedDate\n"
+                + "app1,j1,ta1,ACCEPTED,2024-01-01\n"
+                + "app2,j3,ta1,ACCEPTED,2024-01-02\n");
+
+            AdminService svc = new AdminService(
+                new UserRepository(usersPath), new JobRepository(jobsPath), new ApplicationRepository(appsPath));
+
+            List<AdminService.ModuleStats> stats = svc.getDepartmentStats();
+
+            assertEquals(2, stats.size(), "Should have stats for 2 modules.");
+
+            // Stats are sorted by moduleCode: CS101 first
+            AdminService.ModuleStats cs101 = stats.get(0);
+            assertEquals("CS101", cs101.moduleCode, "First module should be CS101.");
+            assertEquals(3, cs101.totalPositions, "CS101 total positions: 2+1=3.");
+            assertEquals(1, cs101.assignedTAs, "CS101 has 1 accepted TA (ta1 via j1).");
+            assertEquals(5, cs101.totalAssignedHours, "CS101 assigned hours: 5h from j1.");
+
+            AdminService.ModuleStats cs102 = stats.get(1);
+            assertEquals("CS102", cs102.moduleCode, "Second module should be CS102.");
+            assertEquals(3, cs102.totalPositions, "CS102 total positions: 3.");
+            assertEquals(1, cs102.assignedTAs, "CS102 has 1 accepted TA (ta1 via j3).");
+            assertEquals(4, cs102.totalAssignedHours, "CS102 assigned hours: 4h from j3.");
+
+        } finally {
+            try (var walk = Files.walk(tmp)) {
+                walk.sorted(Comparator.reverseOrder()).forEach(p -> {
+                    try { Files.deleteIfExists(p); } catch (Exception ignored) {}
+                });
+            }
         }
     }
 
@@ -1413,6 +1361,300 @@ public final class RecruitmentSystemTestRunner {
         }
     }
 
+    private void testChangePassword() throws Exception {
+        try (TestContext context = new TestContext()) {
+            context.authService.registerTa("231226900", "Tester", "tester@bupt.cn", "Pass1234!");
+            // Wrong old password
+            assertThrowsContains("Current password is incorrect.",
+                    () -> context.authService.changePassword("TA231226900", "wrong", "NewPass1!", "NewPass1!"),
+                    "Wrong old password should be rejected.");
+            // New == old
+            assertThrowsContains("New password must differ",
+                    () -> context.authService.changePassword("TA231226900", "Pass1234!", "Pass1234!", "Pass1234!"),
+                    "Same password should be rejected.");
+            // Confirm mismatch
+            assertThrowsContains("do not match",
+                    () -> context.authService.changePassword("TA231226900", "Pass1234!", "NewPass1!", "NewPass2!"),
+                    "Mismatched confirm should be rejected.");
+            // Weak new password
+            assertThrowsContains("uppercase",
+                    () -> context.authService.changePassword("TA231226900", "Pass1234!", "newpass1!", "newpass1!"),
+                    "Weak password should be rejected.");
+            // Success
+            context.authService.changePassword("TA231226900", "Pass1234!", "NewPass1!", "NewPass1!");
+            User u = context.authService.login("TA231226900", "NewPass1!");
+            assertEquals("TA231226900", u.getId(), "Login with new password should succeed.");
+        }
+    }
+
+    private void testChangePasswordSuccessWithCorrectOldPassword() throws Exception {
+        try (TestContext context = new TestContext()) {
+            context.authService.registerTa("231226910", "SuccessUser", "success@bupt.cn", "OldPass1!");
+            // Correct old password — should succeed and allow login with new password
+            context.authService.changePassword("TA231226910", "OldPass1!", "NewPass2@", "NewPass2@");
+            User u = context.authService.login("TA231226910", "NewPass2@");
+            assertEquals("TA231226910", u.getId(), "Login with new password should succeed after correct change.");
+        }
+    }
+
+    private void testChangePasswordFailsWithWrongOldPassword() throws Exception {
+        try (TestContext context = new TestContext()) {
+            context.authService.registerTa("231226911", "FailUser", "fail@bupt.cn", "OldPass1!");
+            // Wrong old password — should be rejected and original password still works
+            assertThrowsContains("Current password is incorrect.",
+                    () -> context.authService.changePassword("TA231226911", "WrongOld!", "NewPass2@", "NewPass2@"),
+                    "Wrong old password must be rejected.");
+            // Original password still valid
+            User u = context.authService.login("TA231226911", "OldPass1!");
+            assertEquals("TA231226911", u.getId(), "Original password should still work after failed change attempt.");
+        }
+    }
+
+    private void testAuditLogRecordsStatusChanges() throws Exception {
+        try (TestContext context = new TestContext()) {
+            ApplicationAuditLogRepository auditRepo =
+                    new ApplicationAuditLogRepository(context.tempDirectory.resolve("audit_log.csv"));
+            context.applicationService.setAuditLogRepository(auditRepo);
+
+            User mo = context.authService.createMoAccount("MO1", "mo1@bupt.cn", "MoPass1!");
+            User ta = context.authService.registerTa("231226901", "TA1", "ta1@bupt.cn", "TaPass1!");
+            Job job = context.jobService.createJob("CS101", "Intro CS", "Dept", "Java", 2, 10, "2099-12-31", mo.getId());
+            Application app = context.applicationService.applyForJob(job.getId(), ta.getId());
+
+            context.applicationService.updateApplicationStatus(app.getId(), mo.getId(), ApplicationStatus.ACCEPTED);
+
+            List<com.group52.tarecruitment.model.ApplicationAuditLog> logs = auditRepo.findAll();
+            assertEquals(1, logs.size(), "One audit log entry should be written.");
+            assertEquals(ApplicationStatus.ACCEPTED, logs.get(0).getToStatus(), "Log should record ACCEPTED.");
+            assertEquals(mo.getId(), logs.get(0).getOperatorUserId(), "Operator should be MO.");
+        }
+    }
+
+    private void testAuditLogQueries() throws Exception {
+        try (TestContext context = new TestContext()) {
+            ApplicationAuditLogRepository auditRepo =
+                    new ApplicationAuditLogRepository(context.tempDirectory.resolve("audit_log.csv"));
+            context.applicationService.setAuditLogRepository(auditRepo);
+
+            User mo = context.authService.createMoAccount("MO2", "mo2@bupt.cn", "MoPass2!");
+            User ta1 = context.authService.registerTa("231226902", "TA2", "ta2@bupt.cn", "TaPass2!");
+            User ta2 = context.authService.registerTa("231226903", "TA3", "ta3@bupt.cn", "TaPass3!");
+            Job job1 = context.jobService.createJob("CS102", "Algo", "Dept", "Java", 2, 10, "2099-12-31", mo.getId());
+            Job job2 = context.jobService.createJob("CS103", "OS", "Dept", "C", 2, 10, "2099-12-31", mo.getId());
+            Application app1 = context.applicationService.applyForJob(job1.getId(), ta1.getId());
+            Application app2 = context.applicationService.applyForJob(job2.getId(), ta2.getId());
+            context.applicationService.updateApplicationStatus(app1.getId(), mo.getId(), ApplicationStatus.ACCEPTED);
+            context.applicationService.updateApplicationStatus(app2.getId(), mo.getId(), ApplicationStatus.REJECTED);
+
+            List<com.group52.tarecruitment.model.ApplicationAuditLog> byTa = auditRepo.findByTaUserId(ta1.getId());
+            assertEquals(1, byTa.size(), "findByTaUserId should return only ta1's log.");
+            List<com.group52.tarecruitment.model.ApplicationAuditLog> byJob = auditRepo.findByJobId(job2.getId());
+            assertEquals(1, byJob.size(), "findByJobId should return only job2's log.");
+        }
+    }
+
+    private void testLoginLockAfterFailedAttempts() throws Exception {
+        try (TestContext context = new TestContext()) {
+            context.authService.registerTa("231226904", "LockTest", "lock@bupt.cn", "LockPass1!");
+            for (int i = 0; i < 4; i++) {
+                try { context.authService.login("lock@bupt.cn", "wrong"); } catch (Exception ignored) {}
+            }
+            // 5th attempt should trigger lock
+            assertThrowsContains("Too many failed attempts",
+                    () -> context.authService.login("lock@bupt.cn", "wrong"),
+                    "5th failed attempt should lock the account.");
+            // Even correct password should be blocked while locked
+            assertThrowsContains("locked",
+                    () -> context.authService.login("lock@bupt.cn", "LockPass1!"),
+                    "Locked account should reject even correct password.");
+        }
+    }
+
+    private void testLoginLockExpiry() throws Exception {
+        try (TestContext context = new TestContext()) {
+            context.authService.registerTa("231226905", "ExpireTest", "expire@bupt.cn", "ExpPass1!");
+            // Manually set lock to past time
+            com.group52.tarecruitment.model.User u = context.authService.findById("TA231226905").orElseThrow();
+            u.setLockedUntil(java.time.LocalDateTime.now().minusMinutes(1).toString());
+            u.setFailedLoginAttempts(5);
+            context.userRepository.save(u);
+            // Login should succeed (lock expired)
+            User loggedIn = context.authService.login("expire@bupt.cn", "ExpPass1!");
+            assertEquals("TA231226905", loggedIn.getId(), "Login should succeed after lock expires.");
+            // Counter should be reset
+            User reloaded = context.authService.findById("TA231226905").orElseThrow();
+            assertEquals(0, reloaded.getFailedLoginAttempts(), "Failed attempts should reset after successful login.");
+        }
+    }
+
+    private void testPasswordStrengthEnforced() throws Exception {
+        try (TestContext context = new TestContext()) {
+            assertThrowsContains("uppercase",
+                    () -> context.authService.registerTa("231226906", "Weak", "weak@bupt.cn", "password1!"),
+                    "No uppercase should be rejected.");
+            assertThrowsContains("digit",
+                    () -> context.authService.registerTa("231226906", "Weak", "weak@bupt.cn", "Password!"),
+                    "No digit should be rejected.");
+            assertThrowsContains("special",
+                    () -> context.authService.registerTa("231226906", "Weak", "weak@bupt.cn", "Password1"),
+                    "No special char should be rejected.");
+            assertThrowsContains("8 characters",
+                    () -> context.authService.registerTa("231226906", "Weak", "weak@bupt.cn", "P1!"),
+                    "Too short should be rejected.");
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // Iteration 4 integration tests (rewritten to call real services rather
+    // than mocked literals). They replace the earlier ghost tests that either
+    // referenced non-existent APIs or asserted hard-coded values without
+    // exercising production code.
+    // ---------------------------------------------------------------------
+
+    private void testWorkloadRulesClassifyBalanced() {
+        assertEquals(com.group52.tarecruitment.util.WorkloadRules.WorkloadStatus.BALANCED,
+                com.group52.tarecruitment.util.WorkloadRules.classify(8),
+                "8h/week sits inside [4, 12] and must be BALANCED.");
+        assertEquals(com.group52.tarecruitment.util.WorkloadRules.WorkloadStatus.BALANCED,
+                com.group52.tarecruitment.util.WorkloadRules.classify(
+                        com.group52.tarecruitment.util.WorkloadRules.UNDERUSED_THRESHOLD_HOURS),
+                "Lower-bound (4h) must be classified BALANCED, not UNDERUSED.");
+        assertEquals(com.group52.tarecruitment.util.WorkloadRules.WorkloadStatus.BALANCED,
+                com.group52.tarecruitment.util.WorkloadRules.classify(
+                        com.group52.tarecruitment.util.WorkloadRules.OVERLOADED_THRESHOLD_HOURS),
+                "Upper-bound (12h) must be classified BALANCED, not OVERLOADED.");
+    }
+
+    private void testWorkloadRulesClassifyOverloaded() {
+        assertEquals(com.group52.tarecruitment.util.WorkloadRules.WorkloadStatus.OVERLOADED,
+                com.group52.tarecruitment.util.WorkloadRules.classify(16),
+                "16h/week must be OVERLOADED (> 12).");
+        int transferable = com.group52.tarecruitment.util.WorkloadRules.transferableHours(16);
+        assertEquals(com.group52.tarecruitment.util.WorkloadRules.DEFAULT_MAX_TRANSFER_HOURS, transferable,
+                "Overload of 4h above threshold should expose the full default transfer window.");
+        assertEquals(0, com.group52.tarecruitment.util.WorkloadRules.transferableHours(12),
+                "Exactly at threshold should not propose any transfer.");
+    }
+
+    private void testWorkloadRulesClassifyUnderused() {
+        assertEquals(com.group52.tarecruitment.util.WorkloadRules.WorkloadStatus.UNDERUSED,
+                com.group52.tarecruitment.util.WorkloadRules.classify(2),
+                "2h/week must be UNDERUSED (< 4).");
+        assertEquals(2, com.group52.tarecruitment.util.WorkloadRules.missingHoursToBalanced(2),
+                "Underused TA must report missing hours up to the balanced threshold.");
+        assertEquals(0, com.group52.tarecruitment.util.WorkloadRules.missingHoursToBalanced(8),
+                "Already-balanced TA must report zero missing hours.");
+    }
+
+    private void testPendingApplicationCountFromRepository() throws Exception {
+        try (TestContext context = new TestContext()) {
+            User mo = newMo("MO7001", "Prof Pending", "pending.mo@bupt.cn");
+            User ta1 = newTa("TA107000001", "Pending TA1", "pending1@bupt.cn");
+            User ta2 = newTa("TA107000002", "Pending TA2", "pending2@bupt.cn");
+            context.userRepository.save(mo);
+            context.userRepository.save(ta1);
+            context.userRepository.save(ta2);
+
+            Job job = context.jobService.createJob(
+                    "CS940", "Pending Count Lab", "desc", "Java",
+                    "6", "3", LocalDate.now().plusDays(10).toString(), mo.getId());
+
+            context.applicationService.applyForJob(job.getId(), ta1.getId());
+            Application app2 = context.applicationService.applyForJob(job.getId(), ta2.getId());
+            context.applicationService.updateApplicationStatus(
+                    app2.getId(), mo.getId(), ApplicationStatus.REJECTED);
+
+            long pending = context.applicationRepository.countByJobIdAndStatus(
+                    job.getId(), ApplicationStatus.PENDING);
+            long rejected = context.applicationRepository.countByJobIdAndStatus(
+                    job.getId(), ApplicationStatus.REJECTED);
+            assertEquals(1L, pending, "Only one pending application should be reported by the repository.");
+            assertEquals(1L, rejected, "Rejected count should exclude pending and accepted applications.");
+            assertEquals(0L, context.applicationRepository.countByJobIdAndStatus(
+                            job.getId(), ApplicationStatus.ACCEPTED),
+                    "No applications have been accepted yet for this job.");
+        }
+    }
+
+    private void testJobAutoFilledWhenAllPositionsAccepted() throws Exception {
+        try (TestContext context = new TestContext()) {
+            User mo = newMo("MO8001", "Prof Fill", "fill.mo@bupt.cn");
+            User ta1 = newTa("TA108000001", "Fill TA1", "fill1@bupt.cn");
+            User ta2 = newTa("TA108000002", "Fill TA2", "fill2@bupt.cn");
+            context.userRepository.save(mo);
+            context.userRepository.save(ta1);
+            context.userRepository.save(ta2);
+
+            Job job = context.jobService.createJob(
+                    "CS941", "Auto-fill Lab", "desc", "Java",
+                    "6", "1", LocalDate.now().plusDays(10).toString(), mo.getId());
+
+            Application app1 = context.applicationService.applyForJob(job.getId(), ta1.getId());
+            Application app2 = context.applicationService.applyForJob(job.getId(), ta2.getId());
+
+            context.applicationService.updateApplicationStatus(
+                    app1.getId(), mo.getId(), ApplicationStatus.ACCEPTED);
+            Job afterFirstAccept = context.jobService.getJobById(job.getId())
+                    .orElseThrow(() -> new AssertionError("Job should still exist after first accept."));
+            assertEquals(JobStatus.FILLED, afterFirstAccept.getStatus(),
+                    "Job with one position should flip to FILLED after the first accept.");
+
+            assertThrowsContains("positions limit",
+                    () -> context.applicationService.updateApplicationStatus(
+                            app2.getId(), mo.getId(), ApplicationStatus.ACCEPTED),
+                    "Accepting a second TA after the position is filled must be rejected.");
+        }
+    }
+
+    private void testIterationFourEndToEndIntegration() throws Exception {
+        try (TestContext context = new TestContext()) {
+            User mo = newMo("MO9001", "Prof E2E", "e2e.mo@bupt.cn");
+            context.userRepository.save(mo);
+
+            Job job = context.jobService.createJob(
+                    "AI401", "AI E2E Lab", "End-to-end coverage", "Java;Python;SQL",
+                    "10", "1", LocalDate.now().plusDays(30).toString(), mo.getId());
+
+            User ta = newTa("TA109000001", "E2E TA", "e2e.ta@bupt.cn");
+            ta.setSkills("Java;Python;SQL");
+            ta.setAvailableHours(20);
+            ta.setProgramme("Computer Science");
+            context.userRepository.save(ta);
+
+            AiMatchingService matcher = new AiMatchingService();
+            AiMatchingService.RecommendationResult recommendation = matcher.recommendJob(ta, job, 0);
+            assertTrue(recommendation.getScore() >= 80,
+                    "Full skill overlap with spare hours should give a Recommended score.");
+            assertTrue(recommendation.isHoursFit(), "TA with 20h available must fit a 10h/week job.");
+
+            Application app = context.applicationService.applyForJob(job.getId(), ta.getId());
+            context.applicationService.updateApplicationStatus(
+                    app.getId(), mo.getId(), ApplicationStatus.ACCEPTED);
+
+            assertEquals(job.getHoursPerWeek(),
+                    context.applicationService.getAcceptedWorkloadHoursForTa(ta.getId()),
+                    "After accept, the workload service should count the job's weekly hours for the TA.");
+            Job reloaded = context.jobService.getJobById(job.getId())
+                    .orElseThrow(() -> new AssertionError("Job should exist after accept."));
+            assertEquals(JobStatus.FILLED, reloaded.getStatus(),
+                    "Single-position job should be FILLED after the only accept.");
+
+            Path exportsDir = context.tempDirectory.resolve("exports");
+            ExportService exportService = new ExportService(
+                    context.userRepository,
+                    context.jobRepository,
+                    context.applicationRepository,
+                    context.adminService,
+                    exportsDir);
+            Path applicationsCsv = exportService.exportAllApplications();
+            List<String> applicationLines = Files.readAllLines(applicationsCsv);
+            assertTrue(applicationLines.size() >= 2,
+                    "Applications export should contain a header plus at least the E2E application row.");
+            boolean containsTa = applicationLines.stream().anyMatch(line -> line.contains(ta.getId()));
+            assertTrue(containsTa, "Applications CSV should include the TA that completed the E2E flow.");
+        }
+    }
+
     private static void assertThrowsContains(String expectedMessagePart, Runnable runnable, String message) {
         try {
             runnable.run();
@@ -1432,13 +1674,10 @@ public final class RecruitmentSystemTestRunner {
         private final Path usersFilePath;
         private final Path jobsFilePath;
         private final Path applicationsFilePath;
-        private final Path notificationsFilePath;
         private final UserRepository userRepository;
         private final JobRepository jobRepository;
         private final ApplicationRepository applicationRepository;
-        private final NotificationRepository notificationRepository;
         private final AuthService authService;
-        private final NotificationService notificationService;
         private final JobService jobService;
         private final ApplicationService applicationService;
         private final AdminService adminService;
@@ -1448,17 +1687,14 @@ public final class RecruitmentSystemTestRunner {
             this.usersFilePath = tempDirectory.resolve("users.csv");
             this.jobsFilePath = tempDirectory.resolve("jobs.csv");
             this.applicationsFilePath = tempDirectory.resolve("applications.csv");
-            this.notificationsFilePath = tempDirectory.resolve("notifications.csv");
 
             this.userRepository = new UserRepository(usersFilePath);
             this.jobRepository = new JobRepository(jobsFilePath);
             this.applicationRepository = new ApplicationRepository(applicationsFilePath);
-            this.notificationRepository = new NotificationRepository(notificationsFilePath);
             this.authService = new AuthService(userRepository);
-            this.notificationService = new NotificationService(notificationRepository);
-            this.jobService = new JobService(jobRepository, applicationRepository, notificationService);
-            this.applicationService = new ApplicationService(applicationRepository, jobRepository, null, notificationService);
-            this.adminService = new AdminService(userRepository, jobRepository, applicationRepository, notificationService);
+            this.jobService = new JobService(jobRepository, applicationRepository);
+            this.applicationService = new ApplicationService(applicationRepository, jobRepository);
+            this.adminService = new AdminService(userRepository, jobRepository, applicationRepository);
         }
 
         @Override
