@@ -11,9 +11,20 @@ import com.group52.tarecruitment.repository.ApplicationRepository;
 import com.group52.tarecruitment.repository.JobRepository;
 import com.group52.tarecruitment.repository.UserRepository;
 import com.group52.tarecruitment.service.WorkloadBalancerService.WorkloadRecommendation;
+import java.io.BufferedWriter;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -25,18 +36,29 @@ public class AdminService {
     private final ApplicationRepository applicationRepository;
     private final NotificationService notificationService;
     private final WorkloadBalancerService workloadBalancerService;
+    private final JobService jobService;
+
+    /** In-memory audit log for the current session. */
+    private final List<AuditLogEntry> auditLog = Collections.synchronizedList(new ArrayList<>());
 
     public AdminService(UserRepository userRepository, JobRepository jobRepository,
                         ApplicationRepository applicationRepository) {
-        this(userRepository, jobRepository, applicationRepository, null);
+        this(userRepository, jobRepository, applicationRepository, null, null);
     }
 
     public AdminService(UserRepository userRepository, JobRepository jobRepository,
                         ApplicationRepository applicationRepository, NotificationService notificationService) {
+        this(userRepository, jobRepository, applicationRepository, notificationService, null);
+    }
+
+    public AdminService(UserRepository userRepository, JobRepository jobRepository,
+                        ApplicationRepository applicationRepository, NotificationService notificationService,
+                        JobService jobService) {
         this.userRepository = userRepository;
         this.jobRepository = jobRepository;
         this.applicationRepository = applicationRepository;
         this.notificationService = notificationService;
+        this.jobService = jobService;
         this.workloadBalancerService = new WorkloadBalancerService(userRepository, jobRepository, applicationRepository);
     }
 
@@ -129,18 +151,34 @@ public class AdminService {
 
     /** Per-job overview entry used in the Jobs Overview panel. */
     public static class JobOverview {
+        public final String jobId;
         public final String moduleCode;
         public final String moduleName;
+        public final String description;
+        public final String requiredSkills;
+        public final int hoursPerWeek;
         public final int positions;
         public final int filled;
+        public final String deadline;
+        public final String postedByMoId;
+        public final String postedByMoName;
         public final JobStatus status;
 
-        public JobOverview(String moduleCode, String moduleName,
-                           int positions, int filled, JobStatus status) {
+        public JobOverview(String jobId, String moduleCode, String moduleName,
+                           String description, String requiredSkills, int hoursPerWeek,
+                           int positions, int filled, String deadline,
+                           String postedByMoId, String postedByMoName, JobStatus status) {
+            this.jobId = jobId;
             this.moduleCode = moduleCode;
             this.moduleName = moduleName;
+            this.description = description;
+            this.requiredSkills = requiredSkills;
+            this.hoursPerWeek = hoursPerWeek;
             this.positions = positions;
             this.filled = filled;
+            this.deadline = deadline;
+            this.postedByMoId = postedByMoId;
+            this.postedByMoName = postedByMoName;
             this.status = status;
         }
 
@@ -150,6 +188,69 @@ public class AdminService {
 
         public String filledRatio() {
             return filled + "/" + positions;
+        }
+    }
+
+    // ========================= Application overview types =========================
+
+    /** Enriched application entry for Admin's Applications Overview panel. */
+    public static class EnrichedApplication {
+        public final String applicationId;
+        public final String jobId;
+        public final String moduleCode;
+        public final String moduleName;
+        public final String taUserId;
+        public final String taName;
+        public final ApplicationStatus status;
+        public final String appliedDate;
+
+        public EnrichedApplication(String applicationId, String jobId, String moduleCode,
+                                   String moduleName, String taUserId, String taName,
+                                   ApplicationStatus status, String appliedDate) {
+            this.applicationId = applicationId;
+            this.jobId = jobId;
+            this.moduleCode = moduleCode;
+            this.moduleName = moduleName;
+            this.taUserId = taUserId;
+            this.taName = taName;
+            this.status = status;
+            this.appliedDate = appliedDate;
+        }
+    }
+
+    /** Application statistics summary. */
+    public static class ApplicationStats {
+        public final int total;
+        public final int pending;
+        public final int accepted;
+        public final int rejected;
+        public final int withdrawn;
+
+        public ApplicationStats(int total, int pending, int accepted, int rejected, int withdrawn) {
+            this.total = total;
+            this.pending = pending;
+            this.accepted = accepted;
+            this.rejected = rejected;
+            this.withdrawn = withdrawn;
+        }
+    }
+
+    // ========================= Audit log types =========================
+
+    /** In-memory audit log entry for admin operations. */
+    public static class AuditLogEntry {
+        public final String timestamp;
+        public final String adminUserId;
+        public final String action;
+        public final String targetId;
+        public final String details;
+
+        public AuditLogEntry(String adminUserId, String action, String targetId, String details) {
+            this.timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+            this.adminUserId = adminUserId;
+            this.action = action;
+            this.targetId = targetId;
+            this.details = details;
         }
     }
 
@@ -320,9 +421,12 @@ public class AdminService {
                     .filter(a -> a.getJobId().equals(job.getId())
                             && a.getStatus() == ApplicationStatus.ACCEPTED)
                     .count();
+            String moName = resolveMoName(job.getPostedByMoId());
             result.add(new JobOverview(
-                    job.getModuleCode(), job.getModuleName(),
-                    job.getPositions(), filled, job.getStatus()));
+                    job.getId(), job.getModuleCode(), job.getModuleName(),
+                    job.getDescription(), job.getRequiredSkills(), job.getHoursPerWeek(),
+                    job.getPositions(), filled, job.getDeadline(),
+                    job.getPostedByMoId(), moName, job.getStatus()));
         }
         result.sort(Comparator.comparingInt(o -> (o.isFull() ? 1 : 0)));
         return result;
