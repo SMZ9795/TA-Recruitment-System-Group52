@@ -1,0 +1,2 @@
+.\tests\com\group52\tarecruitment\tests\RecruitmentSystemTestRunner.java
+.\tests\com\group52\tarecruitment\tests\WorkloadBalancerTestRunner.java

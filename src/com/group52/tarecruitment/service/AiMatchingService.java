@@ -421,23 +421,18 @@ public class AiMatchingService {
         int score = matchResult.getScore();
 
         // ---- Workload hard cutoff ----
-        // If the TA physically cannot take this job, cap score and label immediately
+        // If the TA physically cannot take this job, apply penalty
         if (!hoursFit && !availabilityNotSet) {
-            score = Math.min(score, 25);
+            score = Math.max(0, score - 20);
             String reason = matchResult.getReason()
                     + " Hours conflict: only " + remainingHours + "h/week available but this job needs "
                     + job.getHoursPerWeek() + "h/week.";
-            return new RecommendationResult(score, "Not Available", reason,
-                    false, remainingHours,
-                    "You do not have enough available hours for this job. Consider withdrawing from another position first.");
+            // We just update the score, but proceed to label logic below
         }
 
         // ---- Normal scoring with workload bonus ----
         if (hoursFit && !availabilityNotSet) {
-            // Bonus proportional to how well the hours fit
-            double fitRatio = (double) remainingHours / Math.max(1, ta.getAvailableHours());
-            int bonus = (int) Math.round(fitRatio * 10);
-            score = Math.min(100, score + bonus);
+            score = Math.min(100, score + 10);
         }
 
         // ---- Determine recommendation label ----

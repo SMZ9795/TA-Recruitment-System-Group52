@@ -6,6 +6,8 @@ import com.group52.tarecruitment.model.Job;
 import com.group52.tarecruitment.model.JobStatus;
 import com.group52.tarecruitment.model.NotificationType;
 import com.group52.tarecruitment.model.Role;
+import com.group52.tarecruitment.model.ApplicationAuditLog;
+import com.group52.tarecruitment.repository.ApplicationAuditLogRepository;
 import com.group52.tarecruitment.repository.ApplicationRepository;
 import com.group52.tarecruitment.repository.JobRepository;
 import com.group52.tarecruitment.util.IdGenerator;
@@ -22,6 +24,7 @@ public class ApplicationService {
     private final WorkloadService workloadService;
     private final NotificationService notificationService;
     private final com.group52.tarecruitment.repository.UserRepository userRepository;
+    private ApplicationAuditLogRepository auditLogRepository;
 
     public ApplicationService(ApplicationRepository applicationRepository, JobRepository jobRepository) {
         this(applicationRepository, jobRepository, null, null, null);
@@ -182,13 +185,15 @@ public class ApplicationService {
         if (!application.getTaUserId().equalsIgnoreCase(normalizedOperatorUserId)) {
             throw new IllegalArgumentException("You can only withdraw your own application.");
         }
-        if (!isReviewableStatus(application.getStatus()) && application.getStatus() != ApplicationStatus.ACCEPTED) {
-            throw new IllegalArgumentException("Only pending or accepted applications can be withdrawn.");
+        if (!isReviewableStatus(application.getStatus())) {
+            throw new IllegalArgumentException("Only pending applications can be withdrawn.");
         }
 
         ApplicationStatus oldStatus = application.getStatus();
         application.setStatus(newStatus);
         applicationRepository.save(application);
+        writeAuditLog(application.getId(), application.getTaUserId(), application.getJobId(),
+                normalizedOperatorUserId, oldStatus, newStatus);
 
         if (oldStatus == ApplicationStatus.ACCEPTED && workloadService != null) {
             workloadService.unassignJob(application.getTaUserId(), application.getJobId());
@@ -254,8 +259,12 @@ public class ApplicationService {
             }
         }
 
+        ApplicationStatus oldStatus = application.getStatus();
         application.setStatus(newStatus);
         applicationRepository.save(application);
+        writeAuditLog(application.getId(), application.getTaUserId(), application.getJobId(),
+                normalizedMoId, oldStatus, newStatus);
+        
         if (newStatus == ApplicationStatus.ACCEPTED) {
             publishTaNotification(
                     NotificationType.ACCEPT,
@@ -384,5 +393,24 @@ public class ApplicationService {
 
     private String safeText(String value) {
         return value == null ? "" : value;
+    }
+
+    public void setAuditLogRepository(ApplicationAuditLogRepository auditLogRepository) {
+        this.auditLogRepository = auditLogRepository;
+    }
+
+    public List<ApplicationAuditLog> getAuditLogs() {
+        if (auditLogRepository == null) return List.of();
+        return auditLogRepository.findAll();
+    }
+
+    private void writeAuditLog(String applicationId, String taUserId, String jobId,
+            String operatorUserId, ApplicationStatus from, ApplicationStatus to) {
+        if (auditLogRepository == null) return;
+        auditLogRepository.save(new ApplicationAuditLog(
+                IdGenerator.nextId("AUD"),
+                safeText(applicationId), safeText(taUserId), safeText(jobId),
+                safeText(operatorUserId), from, to,
+                LocalDate.now().toString()));
     }
 }

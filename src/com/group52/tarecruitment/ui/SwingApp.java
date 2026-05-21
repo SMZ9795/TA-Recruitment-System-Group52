@@ -156,6 +156,7 @@ public class SwingApp {
     private MoPanel moPanel;
     private AdminPanel adminPanel;
     private JTextArea recommendationArea;
+    private JLabel demoCaptionLabel;
 
     public SwingApp(AuthService authService, JobService jobService, ApplicationService applicationService) {
         this(authService, jobService, applicationService, null, null, null);
@@ -4548,4 +4549,116 @@ public class SwingApp {
         }
     }
 
+    // ========================= Demo support methods =========================
+
+    JFrame getMainFrame() {
+        return frame;
+    }
+
+    void demoEnterAs(User user) {
+        SwingUtilities.invokeLater(() -> onLoginSuccess(user));
+    }
+
+    void demoRefreshCurrentPanel() {
+        SwingUtilities.invokeLater(() -> {
+            // Best-effort refresh of whatever panel is currently showing
+        });
+    }
+
+    void demoReturnToLogin() {
+        SwingUtilities.invokeLater(this::showLoginPage);
+    }
+
+    void demoShowCaption(String captionEn, String captionCn) {
+        SwingUtilities.invokeLater(() -> showDemoCaption(captionEn, captionCn, false));
+    }
+
+    void demoAppendCaption(String captionEn, String captionCn) {
+        SwingUtilities.invokeLater(() -> showDemoCaption(captionEn, captionCn, true));
+    }
+
+    void demoHideCaption() {
+        SwingUtilities.invokeLater(() -> {
+            if (demoCaptionLabel != null) {
+                demoCaptionLabel.setVisible(false);
+            }
+        });
+    }
+
+    private void showDemoCaption(String captionEn, String captionCn, boolean append) {
+        if (frame == null) {
+            return;
+        }
+        ensureDemoCaption();
+        String existing = "";
+        if (append && demoCaptionLabel.isVisible() && demoCaptionLabel.getText() != null) {
+            existing = demoCaptionLabel.getText()
+                    .replace("<html>", "")
+                    .replace("</html>", "");
+        }
+        String html = "<html><div style='text-align:center;line-height:1.55'>"
+                + (existing.isEmpty() ? "" : existing + "<br>")
+                + "<span style='color:#FFFFFF;font-size:14px'><b>" + escapeHtml(captionEn) + "</b></span><br>"
+                + "<span style='color:#E6DBFF;font-size:13px'>" + escapeHtml(captionCn) + "</span>"
+                + "</div></html>";
+        demoCaptionLabel.setText(html);
+        demoCaptionLabel.setVisible(true);
+        repositionDemoCaption();
+    }
+
+    private void ensureDemoCaption() {
+        if (demoCaptionLabel != null) {
+            return;
+        }
+        demoCaptionLabel = new JLabel("", SwingConstants.CENTER) {
+            @Override
+            protected void paintComponent(java.awt.Graphics g) {
+                java.awt.Graphics2D g2 = (java.awt.Graphics2D) g.create();
+                g2.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING,
+                        java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+                g2.setColor(new Color(40, 19, 78, 235));
+                g2.fillRoundRect(0, 0, getWidth(), getHeight(), 18, 18);
+                g2.setColor(new Color(123, 92, 240, 180));
+                g2.setStroke(new java.awt.BasicStroke(1.4f));
+                g2.drawRoundRect(0, 0, getWidth() - 1, getHeight() - 1, 18, 18);
+                g2.dispose();
+                super.paintComponent(g);
+            }
+        };
+        demoCaptionLabel.setOpaque(false);
+        demoCaptionLabel.setBorder(BorderFactory.createEmptyBorder(12, 24, 12, 24));
+        demoCaptionLabel.setVisible(false);
+
+        javax.swing.JLayeredPane layeredPane = frame.getLayeredPane();
+        layeredPane.add(demoCaptionLabel, javax.swing.JLayeredPane.POPUP_LAYER);
+
+        frame.addComponentListener(new java.awt.event.ComponentAdapter() {
+            @Override
+            public void componentResized(java.awt.event.ComponentEvent e) {
+                repositionDemoCaption();
+            }
+        });
+    }
+
+    private void repositionDemoCaption() {
+        if (demoCaptionLabel == null || frame == null) {
+            return;
+        }
+        int frameWidth = frame.getContentPane().getWidth();
+        int frameHeight = frame.getContentPane().getHeight();
+        Dimension pref = demoCaptionLabel.getPreferredSize();
+        int width = Math.min(Math.max(pref.width, 540), frameWidth - 80);
+        int height = pref.height;
+        int x = (frameWidth - width) / 2;
+        int y = frameHeight - height - 28;
+        demoCaptionLabel.setBounds(x, y, width, height);
+        demoCaptionLabel.revalidate();
+        demoCaptionLabel.repaint();
+    }
+
+    private static String escapeHtml(String s) {
+        if (s == null) return "";
+        return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
+    }
 }
+

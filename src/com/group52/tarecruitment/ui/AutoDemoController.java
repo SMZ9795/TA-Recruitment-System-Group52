@@ -283,9 +283,7 @@ final class AutoDemoController {
             User mo = authService.login(moEmail, moPassword);
             Optional<Application> pending = applicationService.getApplicationsByJobId(jobId).stream()
                     .filter(a -> taUserId.equalsIgnoreCase(a.getTaUserId()))
-                    .filter(a -> a.getStatus() == ApplicationStatus.PENDING
-                            || a.getStatus() == ApplicationStatus.APPLIED
-                            || a.getStatus() == ApplicationStatus.REVIEWING)
+                    .filter(a -> a.getStatus() == ApplicationStatus.PENDING)
                     .findFirst();
             if (pending.isPresent()) {
                 applicationService.updateApplicationStatus(
