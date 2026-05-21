@@ -1177,6 +1177,8 @@ public class SwingApp {
         protected JButton createAvatarChoiceButton(String fileName, String label, java.util.function.Consumer<String> onSelect) {
             JButton button = new JButton();
             button.setPreferredSize(new Dimension(76, 76));
+            button.setMinimumSize(new Dimension(76, 76));
+            button.setMaximumSize(new Dimension(76, 76));
             button.setFocusPainted(false);
             button.setContentAreaFilled(false);
             button.setOpaque(true);
@@ -1231,7 +1233,7 @@ public class SwingApp {
             card.setBorder(BorderFactory.createCompoundBorder(
                     BorderFactory.createLineBorder(new Color(226, 229, 236), 1, true),
                     BorderFactory.createEmptyBorder(24, 24, 24, 24)));
-            card.setPreferredSize(new Dimension(980, 560));
+            card.setPreferredSize(new Dimension(980, 640));
 
             JPanel left = new JPanel();
             left.setOpaque(false);
@@ -1248,26 +1250,52 @@ public class SwingApp {
             JLabel avatarSectionLabel = new JLabel("Avatar Preview");
             avatarSectionLabel.setFont(new Font("Segoe UI", Font.BOLD, 14));
             avatarSectionLabel.setForeground(new Color(36, 41, 56));
-            avatarPreview = new JLabel(loadAvatarIcon("", 220));
+            avatarPreview = new JLabel(loadAvatarIcon("", 160));
             avatarPreview.setAlignmentX(CENTER_ALIGNMENT);
-            avatarPreview.setPreferredSize(new Dimension(220, 220));
+            avatarPreview.setPreferredSize(new Dimension(160, 160));
+            avatarPreview.setMaximumSize(new Dimension(160, 160));
+            avatarPreview.setMinimumSize(new Dimension(160, 160));
             avatarPreview.setBorder(BorderFactory.createCompoundBorder(
                     BorderFactory.createLineBorder(new Color(214, 219, 229), 1, true),
                     BorderFactory.createEmptyBorder(10, 10, 10, 10)));
             avatarPathLabel = new JLabel("Using default avatar");
             avatarPathLabel.setForeground(MUTED_TEXT_COLOR);
             avatarPathLabel.setAlignmentX(CENTER_ALIGNMENT);
-            avatarWallPanel = new JPanel(new GridLayout(2, 2, 10, 10));
+            avatarWallPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 10, 10));
             avatarWallPanel.setOpaque(false);
+            avatarWallPanel.setMaximumSize(new Dimension(280, 150));
             for (String fileName : presetAvatarFiles) {
                 JButton choiceButton = createAvatarChoiceButton(fileName, fileName, this::selectPresetAvatar);
                 avatarChoiceButtons.add(choiceButton);
                 avatarWallPanel.add(choiceButton);
             }
-            JButton resetAvatarButton = new JButton("Use Default Avatar");
+            
+            JPanel actionPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 10, 0));
+            actionPanel.setOpaque(false);
+            
+            JButton uploadButton = new JButton("Upload Image");
+            styleSecondaryButton(uploadButton);
+            uploadButton.addActionListener(e -> {
+                JFileChooser chooser = new JFileChooser();
+                chooser.setDialogTitle("Select Avatar Image");
+                chooser.setFileFilter(new javax.swing.filechooser.FileNameExtensionFilter("Images", "jpg", "jpeg", "png"));
+                if (chooser.showOpenDialog(SwingApp.this.frame) == JFileChooser.APPROVE_OPTION) {
+                    java.io.File file = chooser.getSelectedFile();
+                    selectedAvatarPath = file.getAbsolutePath();
+                    avatarPreview.setIcon(loadAvatarIcon(selectedAvatarPath, 160));
+                    avatarPathLabel.setText(file.getName());
+                    for (JButton btn : avatarChoiceButtons) {
+                        btn.setBorder(BorderFactory.createLineBorder(new Color(214, 219, 229), 2, true));
+                    }
+                }
+            });
+            
+            JButton resetAvatarButton = new JButton("Use Default");
             styleSecondaryButton(resetAvatarButton);
-            resetAvatarButton.setAlignmentX(CENTER_ALIGNMENT);
             resetAvatarButton.addActionListener(e -> resetRegisterAvatar());
+            
+            actionPanel.add(uploadButton);
+            actionPanel.add(resetAvatarButton);
             left.add(heading);
             left.add(Box.createVerticalStrut(8));
             left.add(subheading);
@@ -1280,7 +1308,7 @@ public class SwingApp {
             left.add(Box.createVerticalStrut(14));
             left.add(avatarWallPanel);
             left.add(Box.createVerticalStrut(12));
-            left.add(resetAvatarButton);
+            left.add(actionPanel);
 
             JPanel right = new JPanel(new GridLayout(0, 2, 12, 12));
             right.setOpaque(false);
