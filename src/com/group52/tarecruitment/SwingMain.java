@@ -34,7 +34,7 @@ public class SwingMain {
         ApplicationService applicationService =
                 new ApplicationService(applicationRepository, jobRepository, workloadService, notificationService);
         AdminService adminService =
-                new AdminService(userRepository, jobRepository, applicationRepository, notificationService);
+                new AdminService(userRepository, jobRepository, applicationRepository, notificationService, jobService);
 
         SwingApp app = new SwingApp(
                 authService,

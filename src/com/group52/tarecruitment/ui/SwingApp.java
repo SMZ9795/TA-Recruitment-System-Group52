@@ -124,6 +124,11 @@ public class SwingApp {
     private static final String ICON_JOB = "job.png";
     private static final String ICON_NOTIFICATION = "notification.png";
     private static final String ICON_PROFILE = "my.png";
+    private static final String ICON_APPLICANT = "applicant.png";
+    private static final String ICON_WORKLOAD = "workload.png";
+    private static final String ICON_ACCOUNTS = "accounts.png";
+    private static final String ICON_APPLICATIONS = "applications.png";
+    private static final String ICON_AUDIT = "audit.png";
 
     private final AuthService authService;
     private final JobService jobService;
@@ -259,20 +264,26 @@ public class SwingApp {
         rightArea.setOpaque(false);
         if (logoutAction != null) {
             JButton logoutButton = new JButton("Logout");
-            stylePrimaryButton(logoutButton);
-            logoutButton.setBackground(QMUL_PURPLE);
+            logoutButton.setFont(new Font("Segoe UI", Font.BOLD, 13));
+            logoutButton.setForeground(Color.WHITE);
+            logoutButton.setBackground(new Color(255, 255, 255, 40));
+            logoutButton.setBorder(BorderFactory.createEmptyBorder(6, 16, 6, 16));
+            logoutButton.setFocusPainted(false);
+            logoutButton.setOpaque(true);
+            logoutButton.setContentAreaFilled(true);
+            logoutButton.setBorderPainted(false);
             logoutButton.addMouseListener(new java.awt.event.MouseAdapter() {
                 @Override
                 public void mouseEntered(java.awt.event.MouseEvent e) {
                     if (logoutButton.isEnabled()) {
-                        logoutButton.setBackground(new Color(107, 63, 160));
+                        logoutButton.setBackground(new Color(255, 255, 255, 60));
                     }
                 }
 
                 @Override
                 public void mouseExited(java.awt.event.MouseEvent e) {
                     if (logoutButton.isEnabled()) {
-                        logoutButton.setBackground(QMUL_PURPLE);
+                        logoutButton.setBackground(new Color(255, 255, 255, 40));
                     }
                 }
             });
@@ -474,6 +485,21 @@ public class SwingApp {
         if (key.contains("my") || key.contains("profile")) {
             return loadNavIcon(ICON_PROFILE);
         }
+        if (key.contains("applicant")) {
+            return loadNavIcon(ICON_APPLICANT);
+        }
+        if (key.contains("workload")) {
+            return loadNavIcon(ICON_WORKLOAD);
+        }
+        if (key.contains("account")) {
+            return loadNavIcon(ICON_ACCOUNTS);
+        }
+        if (key.contains("application")) {
+            return loadNavIcon(ICON_APPLICATIONS);
+        }
+        if (key.contains("audit")) {
+            return loadNavIcon(ICON_AUDIT);
+        }
         return null;
     }
 
@@ -553,11 +579,13 @@ public class SwingApp {
     }
 
     private void styleUnifiedButton(JButton button, boolean bold, boolean danger) {
+        Color normalBg = danger ? new Color(220, 53, 69) : QMUL_PURPLE;
+        Color hoverBg = danger ? new Color(200, 35, 51) : new Color(107, 63, 160);
         button.setOpaque(true);
         button.setContentAreaFilled(true);
         button.setBorderPainted(false);
         button.setFocusPainted(false);
-        button.setBackground(QMUL_PURPLE);
+        button.setBackground(normalBg);
         button.setForeground(Color.WHITE);
         button.setFont(new Font("Segoe UI", bold ? Font.BOLD : Font.PLAIN, 14));
         button.setBorder(BorderFactory.createEmptyBorder(10, 18, 10, 18));
@@ -568,14 +596,14 @@ public class SwingApp {
             @Override
             public void mouseEntered(java.awt.event.MouseEvent e) {
                 if (button.isEnabled()) {
-                    button.setBackground(new Color(107, 63, 160));
+                    button.setBackground(hoverBg);
                 }
             }
 
             @Override
             public void mouseExited(java.awt.event.MouseEvent e) {
                 if (button.isEnabled()) {
-                    button.setBackground(QMUL_PURPLE);
+                    button.setBackground(normalBg);
                 }
             }
         });
@@ -678,20 +706,20 @@ public class SwingApp {
                 Color fg = Color.WHITE;
                 Color bg = BADGE_PURPLE;
                 if (status.contains("ACCEPTED") || status.contains("OPEN")) {
-                    fg = Color.WHITE;
-                    bg = BADGE_GREEN;
+                    fg = new Color(6, 95, 70);
+                    bg = new Color(209, 250, 229);
                 } else if (status.contains("REJECTED") || status.contains("CLOSED")) {
-                    fg = Color.WHITE;
-                    bg = BADGE_RED;
+                    fg = new Color(153, 27, 27);
+                    bg = new Color(254, 226, 226);
                 } else if (status.contains("PENDING") || status.contains("REVIEWING") || status.contains("APPLIED")) {
-                    fg = Color.WHITE;
-                    bg = BADGE_ORANGE;
+                    fg = new Color(146, 64, 14);
+                    bg = new Color(254, 243, 199);
                 } else if (status.contains("WITHDRAWN")) {
-                    fg = Color.WHITE;
-                    bg = new Color(124, 133, 150);
+                    fg = new Color(71, 85, 105);
+                    bg = new Color(241, 245, 249);
                 } else if (status.contains("FILLED")) {
-                    fg = Color.WHITE;
-                    bg = new Color(123, 92, 240);
+                    fg = new Color(91, 33, 182);
+                    bg = new Color(237, 233, 254);
                 }
 
                 if (!isSelected) {
@@ -1693,13 +1721,28 @@ public class SwingApp {
             }
             form.add(avatarPanel);
 
-            profilePanel.add(form, BorderLayout.CENTER);
-            JPanel profileActions = new JPanel(new FlowLayout(FlowLayout.LEFT));
+            JTextField[] taFields = {profileNameField, profileYearField, profileProgrammeField, profileHoursField};
+            for (JTextField f : taFields) {
+                f.setBorder(BorderFactory.createCompoundBorder(
+                    BorderFactory.createLineBorder(new Color(200, 200, 200)),
+                    BorderFactory.createEmptyBorder(8, 10, 8, 10)
+                ));
+            }
+            profileSkillsArea.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(new Color(200, 200, 200)),
+                BorderFactory.createEmptyBorder(8, 10, 8, 10)
+            ));
+            JPanel formWrapper = new JPanel(new BorderLayout());
+            formWrapper.setOpaque(false);
+            formWrapper.add(form, BorderLayout.NORTH);
+            JPanel profileActions = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 16));
+            profileActions.setOpaque(false);
             JButton saveButton = new JButton("Save Profile");
             stylePrimaryButton(saveButton);
             saveButton.addActionListener(e -> saveProfile());
             profileActions.add(saveButton);
-            profilePanel.add(profileActions, BorderLayout.SOUTH);
+            formWrapper.add(profileActions, BorderLayout.SOUTH);
+            profilePanel.add(new JScrollPane(formWrapper), BorderLayout.CENTER);
 
             notificationModel = new DefaultTableModel(
                     new Object[] {"ID", "Read", "Type", "Message", "Date"}, 0) {
@@ -2000,6 +2043,11 @@ public class SwingApp {
                 case JOB_CLOSE -> "Job Closed";
                 case JOB_REOPEN -> "Job Reopened";
                 case OVERLOAD_ALERT -> "Overload Alert";
+                case ADMIN_ACCOUNT_CREATED -> "Account Created";
+                case ADMIN_ACCOUNT_STATUS_CHANGED -> "Account Status Changed";
+                case ADMIN_JOB_FORCE_CLOSED -> "Job Force-Closed";
+                case ADMIN_JOBS_AUTO_CLOSED -> "Jobs Auto-Closed";
+                case SYSTEM_ALERT -> "System Alert";
             };
         }
 
@@ -2386,6 +2434,12 @@ public class SwingApp {
                 }
             };
             jobsTable = new JTable(jobsModel);
+            jobsTable.getColumnModel().getColumn(0).setPreferredWidth(80);
+            jobsTable.getColumnModel().getColumn(1).setPreferredWidth(250);
+            jobsTable.getColumnModel().getColumn(2).setPreferredWidth(60);
+            jobsTable.getColumnModel().getColumn(3).setPreferredWidth(60);
+            jobsTable.getColumnModel().getColumn(4).setPreferredWidth(100);
+            jobsTable.getColumnModel().getColumn(5).setPreferredWidth(90);
             styleDataTable(jobsTable);
             applyStatusRenderer(jobsTable, 4);
             installTableRowHover(jobsTable);
@@ -2419,10 +2473,10 @@ public class SwingApp {
             moNotificationArea.setWrapStyleWord(true);
             moNotificationArea.setFont(new Font("Segoe UI", Font.PLAIN, 13));
             moNotificationArea.setForeground(HEADER_TEXT);
-            moNotificationArea.setBackground(Color.WHITE);
-            moNotificationArea.setBorder(BorderFactory.createEmptyBorder(8, 10, 8, 10));
+            moNotificationArea.setBackground(new Color(248, 249, 250));
+            moNotificationArea.setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 12));
             JScrollPane moNotificationScrollPane = new JScrollPane(moNotificationArea);
-            moNotificationScrollPane.setBorder(BorderFactory.createLineBorder(CARD_BORDER));
+            moNotificationScrollPane.setBorder(BorderFactory.createLineBorder(new Color(230, 230, 235), 1, true));
             moNotificationScrollPane.setPreferredSize(new Dimension(0, 126));
             moNotificationPanel.add(moNotificationHeader, BorderLayout.NORTH);
             moNotificationPanel.add(moNotificationScrollPane, BorderLayout.CENTER);
@@ -2439,7 +2493,8 @@ public class SwingApp {
             jobsScrollPane.setBorder(BorderFactory.createEmptyBorder());
             jobsScrollPane.getViewport().setBackground(Color.WHITE);
             dashboardPanel.add(createCardPanel(jobsScrollPane, 0, 0, 0, 0), BorderLayout.CENTER);
-            JPanel jobActions = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
+            JPanel jobActions = new JPanel(new FlowLayout(FlowLayout.LEFT, 12, 12));
+            jobActions.setBorder(BorderFactory.createEmptyBorder(4, 0, 10, 0));
             jobActions.setOpaque(false);
             JButton postButton = new JButton("Post New Job");
             stylePrimaryButton(postButton);
@@ -2585,12 +2640,27 @@ public class SwingApp {
             applicantsPanel.add(applicantActions, BorderLayout.SOUTH);
 
             JPanel profilePanel = new JPanel(new BorderLayout());
-            profilePanel.setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 12));
-            JPanel profileForm = new JPanel(new GridLayout(0, 2, 10, 10));
+            profilePanel.setBorder(BorderFactory.createEmptyBorder(20, 20, 20, 20));
+            profilePanel.setOpaque(false);
+            JPanel profileCard = new JPanel(new BorderLayout(0, 24));
+            profileCard.setBackground(CARD_WHITE);
+            profileCard.setBorder(BorderFactory.createCompoundBorder(
+                    BorderFactory.createLineBorder(CARD_BORDER),
+                    BorderFactory.createEmptyBorder(30, 30, 30, 30)));
+            profileCard.add(createSectionTitle("My Profile", "View and edit your personal information"), BorderLayout.NORTH);
+            JPanel profileForm = new JPanel(new GridLayout(0, 2, 16, 20));
+            profileForm.setOpaque(false);
             profileNameField = new JTextField();
             profileProgrammeField = new JTextField();
             profileEmailField = new JTextField();
             profileHoursField = new JTextField();
+            JTextField[] moFields = {profileNameField, profileProgrammeField, profileEmailField, profileHoursField};
+            for (JTextField f : moFields) {
+                f.setBorder(BorderFactory.createCompoundBorder(
+                    BorderFactory.createLineBorder(new Color(200, 200, 200)),
+                    BorderFactory.createEmptyBorder(8, 10, 8, 10)
+                ));
+            }
             profileForm.add(new JLabel("Full Name"));
             profileForm.add(profileNameField);
             profileForm.add(new JLabel("Department/School"));
@@ -2599,13 +2669,18 @@ public class SwingApp {
             profileForm.add(profileEmailField);
             profileForm.add(new JLabel("Available Hours/Week"));
             profileForm.add(profileHoursField);
-            profilePanel.add(profileForm, BorderLayout.CENTER);
-            JPanel profileActions = new JPanel(new FlowLayout(FlowLayout.LEFT));
+            JPanel formWrapper = new JPanel(new BorderLayout());
+            formWrapper.setOpaque(false);
+            formWrapper.add(profileForm, BorderLayout.NORTH);
+            profileCard.add(formWrapper, BorderLayout.CENTER);
+            JPanel profileActions = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+            profileActions.setOpaque(false);
             JButton saveProfileButton = new JButton("Save Profile");
             stylePrimaryButton(saveProfileButton);
             saveProfileButton.addActionListener(e -> saveProfile());
             profileActions.add(saveProfileButton);
-            profilePanel.add(profileActions, BorderLayout.SOUTH);
+            profileCard.add(profileActions, BorderLayout.SOUTH);
+            profilePanel.add(profileCard, BorderLayout.NORTH);
 
             contentPanel.add(dashboardPanel, TAB_DASHBOARD);
             contentPanel.add(applicantsPanel, TAB_APPLICANTS);
@@ -3203,6 +3278,8 @@ public class SwingApp {
         private static final String TAB_WORKLOAD = "workload";
         private static final String TAB_ACCOUNTS = "accounts";
         private static final String TAB_JOBS = "jobs";
+        private static final String TAB_APPLICATIONS = "applications";
+        private static final String TAB_AUDIT = "audit";
 
         private final JLabel titleLabel;
         private final CardLayout contentLayout;
@@ -3213,20 +3290,35 @@ public class SwingApp {
         private final JTable accountTable;
         private final DefaultTableModel jobsModel;
         private final JTable jobsTable;
-        private JTextArea recommendationArea;
+        private final DefaultTableModel applicationsModel;
+        private final JTable applicationsTable;
+        private final DefaultTableModel auditModel;
+        private final JTable auditTable;
+        private JComboBox<String> applicationStatusFilter;
 
         // Summary bar labels
         private final JLabel summaryTotalJobs = new JLabel("--");
         private final JLabel summaryFilledJobs = new JLabel("--");
         private final JLabel summaryOverloaded = new JLabel("--");
         private final JLabel summaryHighRisk = new JLabel("--");
+        private final JLabel summaryApplications = new JLabel("--");
         private final JTextField workloadSearchField = new JTextField();
+
+        // Notification bell
+        private JLabel notificationBadge;
+
+        // Current admin user
+        private User user;
+
+        // Cached job overview data for job actions
+        private List<AdminService.JobOverview> cachedJobOverviews = new ArrayList<>();
 
         private AdminPanel() {
             setLayout(new BorderLayout());
             titleLabel = new JLabel("Admin Dashboard");
             titleLabel.setFont(new Font("Segoe UI", Font.BOLD, 18));
             JPanel topBar = buildTopBar("Admin Dashboard", SwingApp.this::showLoginPage);
+            addNotificationBellToTopBar(topBar);
             JPanel northArea = new JPanel(new BorderLayout());
             northArea.setOpaque(false);
             northArea.add(topBar, BorderLayout.NORTH);
@@ -3236,7 +3328,7 @@ public class SwingApp {
             contentLayout = new CardLayout();
             contentPanel = new JPanel(contentLayout);
 
-            String[] navLabels = {"Workload Overview", "Manage Accounts", "Jobs Overview"};
+            String[] navLabels = {"Workload Overview", "Manage Accounts", "Jobs Overview", "Applications", "Audit Log"};
             Runnable[] navActions = {
                 () -> {
                     refreshWorkload();
@@ -3249,10 +3341,19 @@ public class SwingApp {
                 () -> {
                     refreshJobs();
                     contentLayout.show(contentPanel, TAB_JOBS);
+                },
+                () -> {
+                    refreshApplications();
+                    contentLayout.show(contentPanel, TAB_APPLICATIONS);
+                },
+                () -> {
+                    refreshAuditLog();
+                    contentLayout.show(contentPanel, TAB_AUDIT);
                 }
             };
             add(buildNavigationPanel(navLabels, navActions), BorderLayout.WEST);
 
+            // ========================= Workload Tab =========================
             workloadModel = new DefaultTableModel(
                     new Object[] {"TA ID", "TA Name", "Available h/week", "Assigned h/week", "Remaining h", "Risk"}, 0) {
                 @Override
@@ -3284,9 +3385,9 @@ public class SwingApp {
                     BorderFactory.createEmptyBorder(4, 8, 4, 8)));
             workloadSearchField.putClientProperty("JTextField.placeholderText", "Search TA name or ID...");
             workloadSearchField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
-                public void insertUpdate(javax.swing.event.DocumentEvent e) { filterWorkloadTable(); updateWorkloadRecommendations(); }
-                public void removeUpdate(javax.swing.event.DocumentEvent e) { filterWorkloadTable(); updateWorkloadRecommendations(); }
-                public void changedUpdate(javax.swing.event.DocumentEvent e) { filterWorkloadTable(); updateWorkloadRecommendations(); }
+                public void insertUpdate(javax.swing.event.DocumentEvent e) { filterWorkloadTable(); }
+                public void removeUpdate(javax.swing.event.DocumentEvent e) { filterWorkloadTable(); }
+                public void changedUpdate(javax.swing.event.DocumentEvent e) { filterWorkloadTable(); }
             });
             JPanel searchWrapper = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 0, 0));
             searchWrapper.setOpaque(false);
@@ -3300,7 +3401,6 @@ public class SwingApp {
             JPanel workloadCenter = new JPanel(new BorderLayout(0, 14));
             workloadCenter.setOpaque(false);
             workloadCenter.add(createCardPanel(workloadScrollPane, 0, 0, 0, 0), BorderLayout.CENTER);
-            workloadCenter.add(createCardPanel(buildRecommendationPanel(), 18, 18, 18, 18), BorderLayout.SOUTH);
             workloadPanel.add(workloadCenter, BorderLayout.CENTER);
 
             JButton refreshWorkloadButton = new JButton("Refresh");
@@ -3312,13 +3412,23 @@ public class SwingApp {
             JButton exportReportButton = new JButton("View Report");
             styleSecondaryButton(exportReportButton);
             exportReportButton.addActionListener(e -> showWorkloadReport());
-            JPanel workloadActions = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
+            JButton exportWorkloadCsvButton = new JButton("Export CSV");
+            styleSecondaryButton(exportWorkloadCsvButton);
+            exportWorkloadCsvButton.addActionListener(e -> exportWorkloadCsv());
+            JButton aiAnalysisButton = new JButton("AI Analysis");
+            stylePrimaryButton(aiAnalysisButton);
+            aiAnalysisButton.addActionListener(e -> showAiAnalysisDialog());
+            JPanel workloadActions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 16, 0));
+            workloadActions.setBorder(BorderFactory.createEmptyBorder(16, 0, 0, 0));
             workloadActions.setOpaque(false);
             workloadActions.add(refreshWorkloadButton);
             workloadActions.add(showOverloadedButton);
+            workloadActions.add(aiAnalysisButton);
             workloadActions.add(exportReportButton);
+            workloadActions.add(exportWorkloadCsvButton);
             workloadPanel.add(workloadActions, BorderLayout.SOUTH);
 
+            // ========================= Accounts Tab =========================
             accountModel = new DefaultTableModel(
                     new Object[] {"User ID", "Name", "Email", "Role", "Status"}, 0) {
                 @Override
@@ -3329,17 +3439,26 @@ public class SwingApp {
             accountTable = new JTable(accountModel);
             styleDataTable(accountTable);
             installTableRowHover(accountTable);
+            accountTable.addMouseListener(new java.awt.event.MouseAdapter() {
+                @Override
+                public void mouseClicked(java.awt.event.MouseEvent e) {
+                    if (e.getClickCount() == 2) {
+                        showAccountDetailDialog();
+                    }
+                }
+            });
             JPanel accountsPanel = new JPanel(new BorderLayout(0, 16));
             accountsPanel.setOpaque(false);
             JPanel accountsHeader = new JPanel(new BorderLayout());
             accountsHeader.setOpaque(false);
-            accountsHeader.add(createSectionTitle("User Accounts", "Create, activate, or reset accounts in one place."), BorderLayout.WEST);
+            accountsHeader.add(createSectionTitle("User Accounts", "Create, activate, or reset accounts in one place. Double-click for details."), BorderLayout.WEST);
             accountsPanel.add(createCardPanel(accountsHeader, 18, 18, 18, 18), BorderLayout.NORTH);
             JScrollPane accountsScrollPane = new JScrollPane(accountTable);
             accountsScrollPane.setBorder(BorderFactory.createEmptyBorder());
             accountsScrollPane.getViewport().setBackground(Color.WHITE);
             accountsPanel.add(createCardPanel(accountsScrollPane, 0, 0, 0, 0), BorderLayout.CENTER);
-            JPanel accountActions = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
+            JPanel accountActions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 16, 0));
+            accountActions.setBorder(BorderFactory.createEmptyBorder(16, 0, 0, 0));
             accountActions.setOpaque(false);
             JButton createMoButton = new JButton("Create New MO");
             stylePrimaryButton(createMoButton);
@@ -3359,6 +3478,7 @@ public class SwingApp {
             accountActions.add(refreshAccountsButton);
             accountsPanel.add(accountActions, BorderLayout.SOUTH);
 
+            // ========================= Jobs Tab =========================
             jobsModel = new DefaultTableModel(
                     new Object[] {"Module", "MO", "Filled/Total", "Status"}, 0) {
                 @Override
@@ -3371,24 +3491,49 @@ public class SwingApp {
             applyStatusRenderer(jobsTable, 3);
             applyFilledRatioRenderer(jobsTable, 2);
             installTableRowHover(jobsTable);
+            jobsTable.addMouseListener(new java.awt.event.MouseAdapter() {
+                @Override
+                public void mouseClicked(java.awt.event.MouseEvent e) {
+                    if (e.getClickCount() == 2) {
+                        showJobDetailDialog();
+                    }
+                }
+            });
             JPanel jobsPanel = new JPanel(new BorderLayout(0, 16));
             jobsPanel.setOpaque(false);
             JPanel jobsHeader = new JPanel(new BorderLayout());
             jobsHeader.setOpaque(false);
-            jobsHeader.add(createSectionTitle("Global Jobs", "A complete view of all modules and filling status."), BorderLayout.WEST);
+            jobsHeader.add(createSectionTitle("Global Jobs", "A complete view of all modules and filling status. Double-click for details."), BorderLayout.WEST);
             jobsPanel.add(createCardPanel(jobsHeader, 18, 18, 18, 18), BorderLayout.NORTH);
             JScrollPane jobsScrollPane = new JScrollPane(jobsTable);
             jobsScrollPane.setBorder(BorderFactory.createEmptyBorder());
             jobsScrollPane.getViewport().setBackground(Color.WHITE);
             jobsPanel.add(createCardPanel(jobsScrollPane, 0, 0, 0, 0), BorderLayout.CENTER);
             JPanel jobsActions = new JPanel(new BorderLayout());
+            jobsActions.setBorder(BorderFactory.createEmptyBorder(16, 0, 0, 0));
             jobsActions.setOpaque(false);
-            JPanel jobsButtonRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
+            JPanel jobsButtonRow = new JPanel(new FlowLayout(FlowLayout.RIGHT, 16, 0));
             jobsButtonRow.setOpaque(false);
             JButton refreshJobsButton = new JButton("Refresh");
             styleSecondaryButton(refreshJobsButton);
             refreshJobsButton.addActionListener(e -> refreshJobs());
+            JButton forceCloseButton = new JButton("Force Close");
+            styleDangerButton(forceCloseButton);
+            forceCloseButton.addActionListener(e -> forceCloseSelectedJob());
+            JButton forceReopenButton = new JButton("Force Reopen");
+            styleSecondaryButton(forceReopenButton);
+            forceReopenButton.addActionListener(e -> forceReopenSelectedJob());
+            JButton autoCloseButton = new JButton("Auto-Close Expired");
+            styleDangerButton(autoCloseButton);
+            autoCloseButton.addActionListener(e -> autoCloseExpiredJobs());
+            JButton exportJobsCsvButton = new JButton("Export CSV");
+            styleSecondaryButton(exportJobsCsvButton);
+            exportJobsCsvButton.addActionListener(e -> exportJobsCsv());
             jobsButtonRow.add(refreshJobsButton);
+            jobsButtonRow.add(forceCloseButton);
+            jobsButtonRow.add(forceReopenButton);
+            jobsButtonRow.add(autoCloseButton);
+            jobsButtonRow.add(exportJobsCsvButton);
             jobsActions.add(jobsButtonRow, BorderLayout.WEST);
             JLabel jobsStatsLabel = new JLabel(" ");
             jobsStatsLabel.setFont(new Font("Segoe UI", Font.PLAIN, 12));
@@ -3402,14 +3547,166 @@ public class SwingApp {
                         + "  |  Open: " + snap.openJobs);
             });
 
+            // ========================= Applications Tab =========================
+            applicationsModel = new DefaultTableModel(
+                    new Object[] {"App ID", "Module", "TA Name", "Status", "Applied Date"}, 0) {
+                @Override
+                public boolean isCellEditable(int row, int column) {
+                    return false;
+                }
+            };
+            applicationsTable = new JTable(applicationsModel);
+            styleDataTable(applicationsTable);
+            applyApplicationStatusRenderer(applicationsTable, 3);
+            installTableRowHover(applicationsTable);
+            JPanel applicationsPanel = new JPanel(new BorderLayout(0, 16));
+            applicationsPanel.setOpaque(false);
+            JPanel appsHeader = new JPanel(new BorderLayout(12, 0));
+            appsHeader.setOpaque(false);
+            appsHeader.add(createSectionTitle("Applications Overview",
+                    "Monitor all TA applications across the system (read-only)."), BorderLayout.WEST);
+            applicationStatusFilter = new JComboBox<>(new String[] {
+                    "All", "PENDING", "ACCEPTED", "REJECTED", "WITHDRAWN"});
+            applicationStatusFilter.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+            applicationStatusFilter.addActionListener(e -> refreshApplications());
+            JPanel filterWrapper = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 8, 0));
+            filterWrapper.setOpaque(false);
+            filterWrapper.add(new JLabel("Status:"));
+            filterWrapper.add(applicationStatusFilter);
+            appsHeader.add(filterWrapper, BorderLayout.EAST);
+            applicationsPanel.add(createCardPanel(appsHeader, 18, 18, 18, 18), BorderLayout.NORTH);
+            JScrollPane appsScrollPane = new JScrollPane(applicationsTable);
+            appsScrollPane.setBorder(BorderFactory.createEmptyBorder());
+            appsScrollPane.getViewport().setBackground(Color.WHITE);
+            applicationsPanel.add(createCardPanel(appsScrollPane, 0, 0, 0, 0), BorderLayout.CENTER);
+            // Stats footer
+            JPanel appsFooter = new JPanel(new FlowLayout(FlowLayout.RIGHT, 16, 0));
+            appsFooter.setBorder(BorderFactory.createEmptyBorder(16, 0, 0, 0));
+            appsFooter.setOpaque(false);
+            JButton refreshAppsButton = new JButton("Refresh");
+            styleSecondaryButton(refreshAppsButton);
+            refreshAppsButton.addActionListener(e -> refreshApplications());
+            appsFooter.add(refreshAppsButton);
+            JLabel appsStatsLabel = new JLabel(" ");
+            appsStatsLabel.setFont(new Font("Segoe UI", Font.ITALIC, 12));
+            appsStatsLabel.setForeground(new Color(107, 114, 128));
+            appsFooter.add(appsStatsLabel);
+            refreshAppsButton.addActionListener(e2 -> {
+                AdminService.ApplicationStats stats = adminService.getApplicationStatistics();
+                appsStatsLabel.setText("Total: " + stats.total + "  |  Pending: " + stats.pending
+                        + "  |  Accepted: " + stats.accepted + "  |  Rejected: " + stats.rejected
+                        + "  |  Withdrawn: " + stats.withdrawn);
+            });
+            applicationsPanel.add(appsFooter, BorderLayout.SOUTH);
+
+            // ========================= Audit Log Tab =========================
+            auditModel = new DefaultTableModel(
+                    new Object[] {"Timestamp", "Admin", "Action", "Target", "Details"}, 0) {
+                @Override
+                public boolean isCellEditable(int row, int column) {
+                    return false;
+                }
+            };
+            auditTable = new JTable(auditModel);
+            styleDataTable(auditTable);
+            installTableRowHover(auditTable);
+            JPanel auditPanel = new JPanel(new BorderLayout(0, 16));
+            auditPanel.setOpaque(false);
+            JPanel auditHeader = new JPanel(new BorderLayout());
+            auditHeader.setOpaque(false);
+            auditHeader.add(createSectionTitle("Audit Log",
+                    "Session-level record of all admin operations."), BorderLayout.WEST);
+            auditPanel.add(createCardPanel(auditHeader, 18, 18, 18, 18), BorderLayout.NORTH);
+            JScrollPane auditScrollPane = new JScrollPane(auditTable);
+            auditScrollPane.setBorder(BorderFactory.createEmptyBorder());
+            auditScrollPane.getViewport().setBackground(Color.WHITE);
+            auditPanel.add(createCardPanel(auditScrollPane, 0, 0, 0, 0), BorderLayout.CENTER);
+            JPanel auditFooter = new JPanel(new FlowLayout(FlowLayout.RIGHT, 16, 0));
+            auditFooter.setBorder(BorderFactory.createEmptyBorder(16, 0, 0, 0));
+            auditFooter.setOpaque(false);
+            JButton refreshAuditButton = new JButton("Refresh");
+            styleSecondaryButton(refreshAuditButton);
+            refreshAuditButton.addActionListener(e -> refreshAuditLog());
+            auditFooter.add(refreshAuditButton);
+            auditPanel.add(auditFooter, BorderLayout.SOUTH);
+
             contentPanel.add(workloadPanel, TAB_WORKLOAD);
             contentPanel.add(accountsPanel, TAB_ACCOUNTS);
             contentPanel.add(jobsPanel, TAB_JOBS);
+            contentPanel.add(applicationsPanel, TAB_APPLICATIONS);
+            contentPanel.add(auditPanel, TAB_AUDIT);
             add(contentPanel, BorderLayout.CENTER);
         }
 
+        // ========================= Notification bell =========================
+
+        private void addNotificationBellToTopBar(JPanel topBar) {
+            JPanel bellPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
+            bellPanel.setOpaque(false);
+            JButton bellButton = new JButton("\uD83D\uDD14");
+            bellButton.setFont(new Font("Segoe UI Emoji", Font.PLAIN, 18));
+            bellButton.setBorderPainted(false);
+            bellButton.setContentAreaFilled(false);
+            bellButton.setFocusPainted(false);
+            bellButton.setToolTipText("Admin Notifications");
+            bellButton.addActionListener(e -> showAdminNotifications());
+            notificationBadge = new JLabel("");
+            notificationBadge.setFont(new Font("Segoe UI", Font.BOLD, 10));
+            notificationBadge.setForeground(new Color(239, 68, 68));
+            bellPanel.add(bellButton);
+            bellPanel.add(notificationBadge);
+            topBar.add(bellPanel, BorderLayout.CENTER);
+        }
+
+        private void showAdminNotifications() {
+            if (user == null || notificationService == null) {
+                JOptionPane.showMessageDialog(frame, "No notifications available.");
+                return;
+            }
+            List<com.group52.tarecruitment.model.Notification> notifications =
+                    notificationService.getNotificationsForUser(user.getId());
+            if (notifications.isEmpty()) {
+                JOptionPane.showMessageDialog(frame, "No notifications.", "Admin Notifications", JOptionPane.INFORMATION_MESSAGE);
+                return;
+            }
+            StringBuilder sb = new StringBuilder();
+            int shown = 0;
+            for (com.group52.tarecruitment.model.Notification n : notifications) {
+                if (shown >= 20) { sb.append("\n... and more"); break; }
+                String read = n.isReadStatus() ? "" : " [NEW]";
+                sb.append(n.getCreatedAt() == null ? "" : n.getCreatedAt().substring(0, Math.min(19, n.getCreatedAt().length())))
+                        .append(read).append("  ").append(n.getMessage()).append("\n");
+                shown++;
+            }
+            JTextArea area = new JTextArea(sb.toString());
+            area.setFont(new Font("Segoe UI", Font.PLAIN, 12));
+            area.setEditable(false);
+            area.setRows(15);
+            area.setColumns(55);
+            JScrollPane sp = new JScrollPane(area);
+            int choice = JOptionPane.showOptionDialog(frame, sp, "Admin Notifications (" + notifications.size() + ")",
+                    JOptionPane.DEFAULT_OPTION, JOptionPane.PLAIN_MESSAGE, null,
+                    new String[] {"Mark All Read", "Close"}, "Close");
+            if (choice == 0) {
+                for (com.group52.tarecruitment.model.Notification n : notifications) {
+                    if (!n.isReadStatus()) {
+                        notificationService.setReadStatus(n.getId(), true);
+                    }
+                }
+                updateNotificationBadge();
+            }
+        }
+
+        private void updateNotificationBadge() {
+            if (notificationBadge == null || user == null || notificationService == null) return;
+            int unread = notificationService.countUnreadForUser(user.getId());
+            notificationBadge.setText(unread > 0 ? String.valueOf(unread) : "");
+        }
+
+        // ========================= Summary Bar =========================
+
         private JPanel buildSummaryBar() {
-            JPanel bar = new JPanel(new java.awt.GridLayout(1, 4, 12, 0));
+            JPanel bar = new JPanel(new java.awt.GridLayout(1, 5, 12, 0));
             bar.setBackground(new Color(245, 246, 250));
             bar.setBorder(BorderFactory.createCompoundBorder(
                     BorderFactory.createMatteBorder(0, 0, 1, 0, new Color(220, 223, 230)),
@@ -3418,6 +3715,7 @@ public class SwingApp {
             bar.add(buildSummaryCard("Filled Jobs", summaryFilledJobs, new Color(16, 185, 129)));
             bar.add(buildSummaryCard("Overloaded TAs", summaryOverloaded, new Color(239, 68, 68)));
             bar.add(buildSummaryCard("High-Risk TAs", summaryHighRisk, new Color(245, 158, 11)));
+            bar.add(buildSummaryCard("Applications", summaryApplications, new Color(59, 130, 246)));
             return bar;
         }
 
@@ -3443,21 +3741,27 @@ public class SwingApp {
             summaryFilledJobs.setText(String.valueOf(snap.filledJobs));
             summaryOverloaded.setText(String.valueOf(snap.overloadedTAs));
             summaryHighRisk.setText(String.valueOf(snap.atRiskTAs));
+            AdminService.ApplicationStats appStats = adminService.getApplicationStatistics();
+            summaryApplications.setText(String.valueOf(appStats.total));
         }
 
+        // ========================= Bind / Refresh =========================
+
         private void bindUser(User user) {
+            this.user = user;
             refreshWorkload();
             refreshAccounts();
             refreshJobs();
             updateTopBarAvatar(user == null ? "" : user.getAvatarFilePath());
+            updateNotificationBadge();
             contentLayout.show(contentPanel, TAB_WORKLOAD);
         }
 
         private void refreshWorkload() {
             filterWorkloadTable();
-            updateWorkloadRecommendations();
             adminService.publishOverloadAlerts();
             refreshSummaryBar();
+            updateNotificationBadge();
         }
 
         private void refreshAccounts() {
@@ -3475,14 +3779,51 @@ public class SwingApp {
 
         private void refreshJobs() {
             jobsModel.setRowCount(0);
-            for (AdminService.JobOverview overview : adminService.getJobsOverview()) {
+            cachedJobOverviews = adminService.getJobsOverview();
+            for (AdminService.JobOverview overview : cachedJobOverviews) {
                 jobsModel.addRow(new Object[] {
                     overview.moduleCode + " - " + overview.moduleName,
+                    overview.postedByMoName,
                     overview.filledRatio(),
                     overview.status.name()
                 });
             }
         }
+
+        private void refreshApplications() {
+            applicationsModel.setRowCount(0);
+            String selected = applicationStatusFilter == null ? "All"
+                    : (String) applicationStatusFilter.getSelectedItem();
+            ApplicationStatus filterStatus = null;
+            if (selected != null && !"All".equals(selected)) {
+                try { filterStatus = ApplicationStatus.valueOf(selected); } catch (Exception ignored) {}
+            }
+            List<AdminService.EnrichedApplication> apps = adminService.getApplicationsByStatus(filterStatus);
+            for (AdminService.EnrichedApplication app : apps) {
+                applicationsModel.addRow(new Object[] {
+                    app.applicationId,
+                    app.moduleCode + " - " + app.moduleName,
+                    app.taName,
+                    app.status.name(),
+                    app.appliedDate
+                });
+            }
+        }
+
+        private void refreshAuditLog() {
+            auditModel.setRowCount(0);
+            for (AdminService.AuditLogEntry entry : adminService.getAuditLog()) {
+                auditModel.addRow(new Object[] {
+                    entry.timestamp,
+                    entry.adminUserId,
+                    entry.action,
+                    entry.targetId,
+                    entry.details
+                });
+            }
+        }
+
+        // ========================= Renderers =========================
 
         private void applyRiskLevelRenderer(JTable table, int col) {
             table.getColumnModel().getColumn(col).setCellRenderer(new DefaultTableCellRenderer() {
@@ -3494,7 +3835,7 @@ public class SwingApp {
                     setText(text);
                     setHorizontalAlignment(CENTER);
                     setFont(new Font("Segoe UI", Font.BOLD, 12));
-                    setBorder(BorderFactory.createEmptyBorder(4, 10, 4, 10));
+                    setBorder(BorderFactory.createEmptyBorder(0, 10, 0, 10));
                     if (!isSelected) {
                         if (text.equals(AdminService.RiskLevel.OVERLOADED.label())) {
                             setForeground(Color.WHITE);
@@ -3522,14 +3863,14 @@ public class SwingApp {
                     setText(text);
                     setHorizontalAlignment(CENTER);
                     setFont(new Font("Segoe UI", Font.BOLD, 12));
-                    setBorder(BorderFactory.createEmptyBorder(4, 10, 4, 10));
+                    setBorder(BorderFactory.createEmptyBorder(0, 10, 0, 10));
                     if (!isSelected) {
                         boolean isFull = text.contains("/") && !text.startsWith("0/") &&
                                 text.split("/").length == 2 &&
                                 Integer.parseInt(text.split("/")[0]) >= Integer.parseInt(text.split("/")[1]);
                         if (isFull) {
                             setForeground(Color.WHITE);
-                            setBackground(new Color(239, 68, 68));
+                            setBackground(new Color(16, 185, 129));
                         } else {
                             setForeground(new Color(46, 52, 64));
                             setBackground(Color.WHITE);
@@ -3539,6 +3880,33 @@ public class SwingApp {
                 }
             });
         }
+
+        private void applyApplicationStatusRenderer(JTable table, int col) {
+            table.getColumnModel().getColumn(col).setCellRenderer(new DefaultTableCellRenderer() {
+                @Override
+                public java.awt.Component getTableCellRendererComponent(
+                        JTable t, Object value, boolean isSelected, boolean hasFocus, int row, int column) {
+                    super.getTableCellRendererComponent(t, value, isSelected, hasFocus, row, column);
+                    String text = value == null ? "" : String.valueOf(value);
+                    setText(text);
+                    setHorizontalAlignment(CENTER);
+                    setFont(new Font("Segoe UI", Font.BOLD, 12));
+                    setBorder(BorderFactory.createEmptyBorder(0, 10, 0, 10));
+                    if (!isSelected) {
+                        switch (text) {
+                            case "ACCEPTED" -> { setForeground(Color.WHITE); setBackground(new Color(16, 185, 129)); }
+                            case "REJECTED" -> { setForeground(Color.WHITE); setBackground(new Color(239, 68, 68)); }
+                            case "WITHDRAWN" -> { setForeground(Color.WHITE); setBackground(new Color(107, 114, 128)); }
+                            case "PENDING", "APPLIED", "REVIEWING" -> { setForeground(Color.WHITE); setBackground(new Color(245, 158, 11)); }
+                            default -> { setForeground(new Color(46, 52, 64)); setBackground(Color.WHITE); }
+                        }
+                    }
+                    return this;
+                }
+            });
+        }
+
+        // ========================= Workload actions =========================
 
         private void showOverloadedOnly() {
             workloadModel.setRowCount(0);
@@ -3552,7 +3920,6 @@ public class SwingApp {
                     s.getRiskLevel().label()
                 });
             }
-            updateWorkloadRecommendations();
             if (workloadModel.getRowCount() == 0) {
                 showToast("No Overloaded TAs", "All TAs are within their available hours.", JOptionPane.INFORMATION_MESSAGE);
             }
@@ -3569,7 +3936,6 @@ public class SwingApp {
             textArea.setColumns(66);
             JScrollPane scrollPane = new JScrollPane(textArea);
             JOptionPane.showMessageDialog(frame, scrollPane, "Workload Report", JOptionPane.PLAIN_MESSAGE);
-            updateWorkloadRecommendations();
         }
 
         private void filterWorkloadTable() {
@@ -3590,44 +3956,16 @@ public class SwingApp {
             }
         }
 
-        private JPanel buildRecommendationPanel() {
-            recommendationArea = new JTextArea();
-            recommendationArea.setEditable(false);
-            recommendationArea.setLineWrap(true);
-            recommendationArea.setWrapStyleWord(true);
-            recommendationArea.setFont(new Font("Segoe UI", Font.PLAIN, 13));
-            recommendationArea.setBackground(new Color(250, 246, 255));
-            recommendationArea.setForeground(new Color(58, 31, 107));
-            recommendationArea.setBorder(BorderFactory.createEmptyBorder(10, 12, 10, 12));
-
-            JPanel panel = new JPanel(new BorderLayout(0, 10));
-            panel.setOpaque(true);
-            panel.setBackground(new Color(248, 244, 255));
-            panel.setBorder(BorderFactory.createCompoundBorder(
-                    BorderFactory.createLineBorder(new Color(199, 177, 255), 1, true),
-                    BorderFactory.createEmptyBorder(14, 16, 14, 16)));
-
-            JLabel title = new JLabel("AI Workload Analysis");
-            title.setFont(new Font("Segoe UI", Font.BOLD, 16));
-            title.setForeground(QMUL_PURPLE_DARK);
-            panel.add(title, BorderLayout.NORTH);
-            panel.add(recommendationArea, BorderLayout.CENTER);
-            return panel;
-        }
-
-        private void updateWorkloadRecommendations() {
-            if (recommendationArea == null) {
-                return;
-            }
+        private void showAiAnalysisDialog() {
             String summary = adminService.getWorkloadBalancingSummary();
             List<WorkloadBalancerService.WorkloadRecommendation> recommendations = adminService.getWorkloadRecommendations();
             StringBuilder sb = new StringBuilder();
             sb.append(summary).append("\n\n");
             if (recommendations.isEmpty()) {
-                sb.append("• All TA workloads are balanced.");
+                sb.append("\u2022 All TA workloads are balanced.");
             } else {
                 for (WorkloadBalancerService.WorkloadRecommendation recommendation : recommendations) {
-                    sb.append("• ").append(recommendation.getOverloadedName())
+                    sb.append("\u2022 ").append(recommendation.getOverloadedName())
                             .append(" exceeds their weekly capacity by ")
                             .append(recommendation.getOverloadHours()).append("h/week.\n");
                     sb.append("  - ").append(recommendation.getTargetName())
@@ -3646,9 +3984,24 @@ public class SwingApp {
                             .append(".\n\n");
                 }
             }
-            recommendationArea.setText(sb.toString().trim());
-            recommendationArea.setCaretPosition(0);
+            
+            JTextArea textArea = new JTextArea(sb.toString().trim());
+            textArea.setEditable(false);
+            textArea.setLineWrap(true);
+            textArea.setWrapStyleWord(true);
+            textArea.setFont(new Font("Segoe UI", Font.PLAIN, 14));
+            textArea.setBackground(new Color(250, 246, 255));
+            textArea.setForeground(new Color(58, 31, 107));
+            textArea.setBorder(BorderFactory.createEmptyBorder(12, 16, 12, 16));
+            
+            JScrollPane scrollPane = new JScrollPane(textArea);
+            scrollPane.setPreferredSize(new Dimension(500, 300));
+            scrollPane.setBorder(BorderFactory.createLineBorder(new Color(199, 177, 255), 1, true));
+            
+            JOptionPane.showMessageDialog(frame, scrollPane, "AI Workload Analysis", JOptionPane.PLAIN_MESSAGE);
         }
+
+        // ========================= TA Detail =========================
 
         private void showTADetailDialog() {
             int row = workloadTable.getSelectedRow();
@@ -3676,7 +4029,7 @@ public class SwingApp {
                 sb.append("  (none)\n");
             } else {
                 for (String desc : s.getAcceptedJobDescriptions()) {
-                    sb.append("  • ").append(desc).append("\n");
+                    sb.append("  \u2022 ").append(desc).append("\n");
                 }
             }
             JTextArea area = new JTextArea(sb.toString());
@@ -3684,8 +4037,10 @@ public class SwingApp {
             area.setEditable(false);
             area.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
             JOptionPane.showMessageDialog(frame, new JScrollPane(area),
-                    "TA Detail — " + s.getTaName(), JOptionPane.PLAIN_MESSAGE);
+                    "TA Detail \u2014 " + s.getTaName(), JOptionPane.PLAIN_MESSAGE);
         }
+
+        // ========================= Account actions =========================
 
         private void createMoAccount() {
             JTextField nameField = new JTextField();
@@ -3704,11 +4059,19 @@ public class SwingApp {
                 return;
             }
             try {
-                authService.createMoAccount(
+                User newMo = authService.createMoAccount(
                         nameField.getText().trim(),
                         emailField.getText().trim(),
                         new String(passwordField.getPassword()));
+                adminService.addAuditEntry(user == null ? "ADMIN" : user.getId(),
+                        "CREATE_MO_ACCOUNT", newMo.getId(),
+                        "Created MO account: " + newMo.getName() + " (" + newMo.getEmail() + ")");
+                if (notificationService != null && user != null) {
+                    notificationService.publish(Role.ADMIN, com.group52.tarecruitment.model.NotificationType.ADMIN_ACCOUNT_CREATED,
+                            user.getId(), "Created MO account: " + newMo.getName(), newMo.getId());
+                }
                 refreshAccounts();
+                updateNotificationBadge();
                 showToast("MO Account Created", "New MO account created successfully.", JOptionPane.INFORMATION_MESSAGE);
             } catch (IllegalArgumentException ex) {
                 JOptionPane.showMessageDialog(frame, ex.getMessage());
@@ -3731,8 +4094,17 @@ public class SwingApp {
                 JOptionPane.showMessageDialog(frame, "Admin account cannot be deactivated here.");
                 return;
             }
-            authService.setUserActive(userId, !target.get().isActive());
+            boolean newStatus = !target.get().isActive();
+            authService.setUserActive(userId, newStatus);
+            adminService.addAuditEntry(user == null ? "ADMIN" : user.getId(),
+                    newStatus ? "ACTIVATE_ACCOUNT" : "DEACTIVATE_ACCOUNT", userId,
+                    (newStatus ? "Activated" : "Deactivated") + " user: " + target.get().getName());
+            if (notificationService != null && user != null) {
+                notificationService.publish(Role.ADMIN, com.group52.tarecruitment.model.NotificationType.ADMIN_ACCOUNT_STATUS_CHANGED,
+                        user.getId(), (newStatus ? "Activated" : "Deactivated") + " user: " + target.get().getName(), userId);
+            }
             refreshAccounts();
+            updateNotificationBadge();
             showToast("Account Updated", "Account status has been updated.", JOptionPane.INFORMATION_MESSAGE);
         }
 
@@ -3749,9 +4121,151 @@ public class SwingApp {
             }
             try {
                 authService.updatePassword(userId, newPassword.trim());
+                adminService.addAuditEntry(user == null ? "ADMIN" : user.getId(),
+                        "RESET_PASSWORD", userId, "Password reset for user: " + userId);
                 showToast("Password Reset", "Password reset completed.", JOptionPane.INFORMATION_MESSAGE);
             } catch (IllegalArgumentException ex) {
                 JOptionPane.showMessageDialog(frame, ex.getMessage());
+            }
+        }
+
+        private void showAccountDetailDialog() {
+            int row = accountTable.getSelectedRow();
+            if (row < 0) return;
+            String userId = String.valueOf(accountModel.getValueAt(row, 0));
+            String detail = adminService.getUserDetailSummary(userId);
+            JTextArea area = new JTextArea(detail);
+            area.setFont(new Font("Monospaced", Font.PLAIN, 13));
+            area.setEditable(false);
+            area.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
+            area.setRows(16);
+            area.setColumns(50);
+            JOptionPane.showMessageDialog(frame, new JScrollPane(area),
+                    "User Detail \u2014 " + accountModel.getValueAt(row, 1), JOptionPane.PLAIN_MESSAGE);
+        }
+
+        // ========================= Job actions =========================
+
+        private void showJobDetailDialog() {
+            int row = jobsTable.getSelectedRow();
+            if (row < 0) return;
+            if (row >= cachedJobOverviews.size()) {
+                JOptionPane.showMessageDialog(frame, "Please refresh the jobs list first.");
+                return;
+            }
+            AdminService.JobOverview ov = cachedJobOverviews.get(row);
+            StringBuilder sb = new StringBuilder();
+            sb.append("Job ID:          ").append(ov.jobId).append("\n");
+            sb.append("Module Code:     ").append(ov.moduleCode).append("\n");
+            sb.append("Module Name:     ").append(ov.moduleName).append("\n");
+            sb.append("Description:     ").append(ov.description == null ? "" : ov.description).append("\n");
+            sb.append("Required Skills: ").append(ov.requiredSkills == null ? "" : ov.requiredSkills).append("\n");
+            sb.append("Hours/Week:      ").append(ov.hoursPerWeek).append("\n");
+            sb.append("Positions:       ").append(ov.positions).append("\n");
+            sb.append("Filled:          ").append(ov.filled).append("\n");
+            sb.append("Deadline:        ").append(ov.deadline == null ? "" : ov.deadline).append("\n");
+            sb.append("Posted by MO:    ").append(ov.postedByMoName).append(" (").append(ov.postedByMoId).append(")\n");
+            sb.append("Status:          ").append(ov.status.name()).append("\n");
+            JTextArea area = new JTextArea(sb.toString());
+            area.setFont(new Font("Monospaced", Font.PLAIN, 13));
+            area.setEditable(false);
+            area.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
+            JOptionPane.showMessageDialog(frame, new JScrollPane(area),
+                    "Job Detail \u2014 " + ov.moduleCode + " " + ov.moduleName, JOptionPane.PLAIN_MESSAGE);
+        }
+
+        private void forceCloseSelectedJob() {
+            int row = jobsTable.getSelectedRow();
+            if (row < 0) {
+                JOptionPane.showMessageDialog(frame, "Please select a job first.");
+                return;
+            }
+            if (row >= cachedJobOverviews.size()) {
+                JOptionPane.showMessageDialog(frame, "Please refresh the jobs list first.");
+                return;
+            }
+            AdminService.JobOverview ov = cachedJobOverviews.get(row);
+            int confirm = JOptionPane.showConfirmDialog(frame,
+                    "Force-close job: " + ov.moduleCode + " - " + ov.moduleName + "?\nThis action cannot be undone by MO.",
+                    "Confirm Force Close", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
+            if (confirm != JOptionPane.YES_OPTION) return;
+            try {
+                adminService.forceCloseJob(ov.jobId, user == null ? "ADMIN" : user.getId());
+                refreshJobs();
+                refreshSummaryBar();
+                updateNotificationBadge();
+                showToast("Job Closed", "Job has been force-closed.", JOptionPane.INFORMATION_MESSAGE);
+            } catch (IllegalArgumentException ex) {
+                JOptionPane.showMessageDialog(frame, ex.getMessage());
+            }
+        }
+
+        private void forceReopenSelectedJob() {
+            int row = jobsTable.getSelectedRow();
+            if (row < 0) {
+                JOptionPane.showMessageDialog(frame, "Please select a job first.");
+                return;
+            }
+            if (row >= cachedJobOverviews.size()) {
+                JOptionPane.showMessageDialog(frame, "Please refresh the jobs list first.");
+                return;
+            }
+            AdminService.JobOverview ov = cachedJobOverviews.get(row);
+            try {
+                adminService.forceReopenJob(ov.jobId, user == null ? "ADMIN" : user.getId());
+                refreshJobs();
+                refreshSummaryBar();
+                showToast("Job Reopened", "Job has been force-reopened.", JOptionPane.INFORMATION_MESSAGE);
+            } catch (IllegalArgumentException ex) {
+                JOptionPane.showMessageDialog(frame, ex.getMessage());
+            }
+        }
+
+        private void autoCloseExpiredJobs() {
+            int confirm = JOptionPane.showConfirmDialog(frame,
+                    "Auto-close all OPEN jobs whose deadlines have passed?",
+                    "Confirm Auto-Close", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
+            if (confirm != JOptionPane.YES_OPTION) return;
+            int count = adminService.triggerAutoCloseExpiredJobs(user == null ? "ADMIN" : user.getId());
+            refreshJobs();
+            refreshSummaryBar();
+            updateNotificationBadge();
+            if (count == 0) {
+                showToast("No Expired Jobs", "All OPEN jobs are within their deadlines.", JOptionPane.INFORMATION_MESSAGE);
+            } else {
+                showToast("Jobs Closed", count + " expired job(s) have been closed.", JOptionPane.INFORMATION_MESSAGE);
+            }
+        }
+
+        // ========================= Export =========================
+
+        private void exportWorkloadCsv() {
+            JFileChooser chooser = new JFileChooser();
+            chooser.setDialogTitle("Export Workload CSV");
+            chooser.setSelectedFile(new File("workload_export.csv"));
+            if (chooser.showSaveDialog(frame) != JFileChooser.APPROVE_OPTION) return;
+            try {
+                adminService.exportWorkloadToCsv(chooser.getSelectedFile().toPath());
+                adminService.addAuditEntry(user == null ? "ADMIN" : user.getId(),
+                        "EXPORT_WORKLOAD_CSV", chooser.getSelectedFile().getName(), "Exported workload data to CSV.");
+                showToast("Export Complete", "Workload data exported to:\n" + chooser.getSelectedFile().getAbsolutePath(), JOptionPane.INFORMATION_MESSAGE);
+            } catch (IOException ex) {
+                JOptionPane.showMessageDialog(frame, "Export failed: " + ex.getMessage());
+            }
+        }
+
+        private void exportJobsCsv() {
+            JFileChooser chooser = new JFileChooser();
+            chooser.setDialogTitle("Export Jobs CSV");
+            chooser.setSelectedFile(new File("jobs_export.csv"));
+            if (chooser.showSaveDialog(frame) != JFileChooser.APPROVE_OPTION) return;
+            try {
+                adminService.exportJobsToCsv(chooser.getSelectedFile().toPath());
+                adminService.addAuditEntry(user == null ? "ADMIN" : user.getId(),
+                        "EXPORT_JOBS_CSV", chooser.getSelectedFile().getName(), "Exported jobs data to CSV.");
+                showToast("Export Complete", "Jobs data exported to:\n" + chooser.getSelectedFile().getAbsolutePath(), JOptionPane.INFORMATION_MESSAGE);
+            } catch (IOException ex) {
+                JOptionPane.showMessageDialog(frame, "Export failed: " + ex.getMessage());
             }
         }
     }

@@ -36,7 +36,7 @@ public class Main {
                 new ApplicationService(applicationRepository, jobRepository, workloadService, notificationService);
         UserProfileService userProfileService = new UserProfileService(userRepository);
         AdminService adminService =
-                new AdminService(userRepository, jobRepository, applicationRepository, notificationService);
+                new AdminService(userRepository, jobRepository, applicationRepository, notificationService, jobService);
 
         ConsoleApp app = new ConsoleApp(authService, jobService, applicationService, userProfileService, adminService);
         app.start();
