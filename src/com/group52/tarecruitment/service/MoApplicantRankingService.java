@@ -78,9 +78,7 @@ public class MoApplicantRankingService {
     }
 
     private boolean isNeedsDecisionStatus(ApplicationStatus status) {
-        return status == ApplicationStatus.APPLIED
-                || status == ApplicationStatus.REVIEWING
-                || status == ApplicationStatus.PENDING;
+        return status == ApplicationStatus.PENDING;
     }
 
     public String buildExplanation(Job job, RankedApplicant applicant, int minimumMatchScore) {

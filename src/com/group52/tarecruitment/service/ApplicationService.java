@@ -21,23 +21,33 @@ public class ApplicationService {
     private final JobRepository jobRepository;
     private final WorkloadService workloadService;
     private final NotificationService notificationService;
+    private final com.group52.tarecruitment.repository.UserRepository userRepository;
 
     public ApplicationService(ApplicationRepository applicationRepository, JobRepository jobRepository) {
-        this(applicationRepository, jobRepository, null, null);
+        this(applicationRepository, jobRepository, null, null, null);
     }
 
     public ApplicationService(ApplicationRepository applicationRepository, JobRepository jobRepository,
             WorkloadService workloadService) {
-        this(applicationRepository, jobRepository, workloadService, null);
+        this(applicationRepository, jobRepository, workloadService, null, null);
     }
 
     public ApplicationService(ApplicationRepository applicationRepository, JobRepository jobRepository,
             WorkloadService workloadService, NotificationService notificationService) {
+        this(applicationRepository, jobRepository, workloadService, notificationService, null);
+    }
+
+    public ApplicationService(ApplicationRepository applicationRepository, JobRepository jobRepository,
+            WorkloadService workloadService, NotificationService notificationService,
+            com.group52.tarecruitment.repository.UserRepository userRepository) {
         this.applicationRepository = applicationRepository;
         this.jobRepository = jobRepository;
         this.workloadService = workloadService;
         this.notificationService = notificationService;
+        this.userRepository = userRepository;
     }
+
+
 
     public Application applyForJob(String jobId, String taUserId) {
         String normalizedJobId = ValidationUtil.requireText(jobId, "Job ID");
@@ -53,8 +63,19 @@ public class ApplicationService {
         }
         validateJobHasCapacity(job);
 
-        if (applicationRepository.existsByJobIdAndTaUserId(normalizedJobId, normalizedTaUserId)) {
-            throw new IllegalArgumentException("This TA has already applied for the job.");
+        // Check for existing application and give status-specific feedback
+        Optional<Application> existingApp = applicationRepository.findByJobId(normalizedJobId).stream()
+                .filter(a -> a.getTaUserId().equalsIgnoreCase(normalizedTaUserId))
+                .findFirst();
+        if (existingApp.isPresent()) {
+            ApplicationStatus existingStatus = existingApp.get().getStatus();
+            switch (existingStatus) {
+                case PENDING -> throw new IllegalArgumentException("You already have a pending application for this job.");
+                case ACCEPTED -> throw new IllegalArgumentException("You are already accepted for this job.");
+                case REJECTED -> throw new IllegalArgumentException("Your previous application for this job was rejected.");
+                case WITHDRAWN -> throw new IllegalArgumentException("You have previously withdrawn your application for this job.");
+                default -> throw new IllegalArgumentException("You have already applied for this job.");
+            }
         }
 
         Application application = new Application(
@@ -70,6 +91,12 @@ public class ApplicationService {
                 application.getId(),
                 "Application submitted for "
                         + safeText(job.getModuleCode()) + " - " + safeText(job.getModuleName()) + ".");
+        
+        if (notificationService != null) {
+            notificationService.publish(Role.MO, NotificationType.APPLY, job.getPostedByMoId(),
+                    "New application received from TA " + normalizedTaUserId + " for " + safeText(job.getModuleCode()) + ".",
+                    application.getId());
+        }
         return application;
     }
 
@@ -130,8 +157,12 @@ public class ApplicationService {
         return totalHours;
     }
 
+    /**
+     * @deprecated Use {@link #updateStatus(String, String, ApplicationStatus)} instead.
+     */
+    @Deprecated
     public Application updateStatus(String applicationId, ApplicationStatus newStatus) {
-        throw new IllegalArgumentException("Use updateStatus(applicationId, operatorUserId, newStatus).");
+        throw new UnsupportedOperationException("Use updateStatus(applicationId, operatorUserId, newStatus) instead.");
     }
 
     public Application updateStatus(String applicationId, String operatorUserId, ApplicationStatus newStatus) {
@@ -151,12 +182,19 @@ public class ApplicationService {
         if (!application.getTaUserId().equalsIgnoreCase(normalizedOperatorUserId)) {
             throw new IllegalArgumentException("You can only withdraw your own application.");
         }
-        if (!isReviewableStatus(application.getStatus())) {
-            throw new IllegalArgumentException("Only pending applications can be withdrawn.");
+        if (!isReviewableStatus(application.getStatus()) && application.getStatus() != ApplicationStatus.ACCEPTED) {
+            throw new IllegalArgumentException("Only pending or accepted applications can be withdrawn.");
         }
 
+        ApplicationStatus oldStatus = application.getStatus();
         application.setStatus(newStatus);
         applicationRepository.save(application);
+
+        if (oldStatus == ApplicationStatus.ACCEPTED && workloadService != null) {
+            workloadService.unassignJob(application.getTaUserId(), application.getJobId());
+            refreshJobFilledStatus(job);
+        }
+
         publishTaNotification(
                 NotificationType.WITHDRAW,
                 application.getTaUserId(),
@@ -164,13 +202,12 @@ public class ApplicationService {
                 "Application withdrawn successfully for "
                         + safeText(job.getModuleCode()) + " - " + safeText(job.getModuleName()) + ".");
 
-        long acceptedCount = applicationRepository.countByJobIdAndStatus(job.getId(), ApplicationStatus.ACCEPTED);
-        if (acceptedCount >= job.getPositions()) {
-            job.setStatus(JobStatus.FILLED);
-        } else if (job.getStatus() == JobStatus.FILLED) {
-            job.setStatus(JobStatus.OPEN);
+        if (notificationService != null) {
+            notificationService.publish(Role.MO, NotificationType.WITHDRAW, job.getPostedByMoId(),
+                    "TA " + application.getTaUserId() + " withdrew their application for " + safeText(job.getModuleCode()) + ".",
+                    application.getId());
         }
-        jobRepository.save(job);
+
         return application;
     }
 
@@ -203,6 +240,18 @@ public class ApplicationService {
                 jobRepository.save(job);
                 throw new IllegalArgumentException("This job has already reached its positions limit.");
             }
+            
+            if (userRepository != null) {
+                com.group52.tarecruitment.model.User taUser = userRepository.findById(application.getTaUserId()).orElse(null);
+                if (taUser != null && taUser.getAvailableHours() > 0) {
+                    int currentWorkload = getAcceptedWorkloadHoursForTa(application.getTaUserId());
+                    if (currentWorkload + job.getHoursPerWeek() > taUser.getAvailableHours()) {
+                        throw new IllegalArgumentException("TA does not have enough available hours (" 
+                            + taUser.getAvailableHours() + "h total, " + currentWorkload + "h already assigned, " 
+                            + job.getHoursPerWeek() + "h needed).");
+                    }
+                }
+            }
         }
 
         application.setStatus(newStatus);
@@ -234,6 +283,14 @@ public class ApplicationService {
 
         if (newStatus == ApplicationStatus.ACCEPTED) {
             refreshJobFilledStatus(job);
+        }
+
+        if (notificationService != null) {
+            String msg = newStatus == ApplicationStatus.ACCEPTED 
+                ? "You accepted TA " + application.getTaUserId() + " for " + safeText(job.getModuleCode()) + "."
+                : "You rejected TA " + application.getTaUserId() + " for " + safeText(job.getModuleCode()) + ".";
+            notificationService.publish(Role.MO, newStatus == ApplicationStatus.ACCEPTED ? NotificationType.ACCEPT : NotificationType.REJECT, 
+                normalizedMoId, msg, application.getId());
         }
 
         return application;
@@ -298,9 +355,7 @@ public class ApplicationService {
     }
 
     private boolean isReviewableStatus(ApplicationStatus status) {
-        return status == ApplicationStatus.APPLIED
-                || status == ApplicationStatus.REVIEWING
-                || status == ApplicationStatus.PENDING;
+        return status == ApplicationStatus.PENDING;
     }
 
     private void maybePublishJobClosedApplyBlockedNotification(Job job, String taUserId) {

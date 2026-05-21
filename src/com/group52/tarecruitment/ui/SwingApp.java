@@ -5,6 +5,7 @@ import com.group52.tarecruitment.model.ApplicationStatus;
 import com.group52.tarecruitment.model.Job;
 import com.group52.tarecruitment.model.JobStatus;
 import com.group52.tarecruitment.model.Notification;
+import com.group52.tarecruitment.model.NotificationType;
 import com.group52.tarecruitment.model.Role;
 import com.group52.tarecruitment.model.User;
 import com.group52.tarecruitment.service.AdminService;
@@ -25,15 +26,19 @@ import com.group52.tarecruitment.util.ValidationUtil;
 import java.awt.BorderLayout;
 import java.awt.CardLayout;
 import java.awt.Color;
+import java.awt.Component;
+import java.awt.Cursor;
 import java.awt.Desktop;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Font;
+import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.GridLayout;
 import java.awt.Image;
+import java.awt.Insets;
 import java.awt.RenderingHints;
 import java.awt.Shape;
 import java.awt.geom.Ellipse2D;
@@ -45,6 +50,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -546,6 +552,35 @@ public class SwingApp {
             }
         }
         return count;
+    }
+
+    private void showNotificationDetails(JTable table) {
+        int selected = table.getSelectedRow();
+        if (selected == -1) {
+            JOptionPane.showMessageDialog(frame, "Please select a notification first.", "Select Notification", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+        int modelRow = table.convertRowIndexToModel(selected);
+        String message = "";
+        for (int i = 0; i < table.getModel().getColumnCount(); i++) {
+            if ("Message".equals(table.getModel().getColumnName(i))) {
+                Object val = table.getModel().getValueAt(modelRow, i);
+                if (val != null) message = val.toString();
+                break;
+            }
+        }
+        
+        JTextArea area = new JTextArea(message);
+        area.setLineWrap(true);
+        area.setWrapStyleWord(true);
+        area.setEditable(false);
+        area.setFont(new Font("Segoe UI", Font.PLAIN, 14));
+        area.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
+        
+        JScrollPane sp = new JScrollPane(area);
+        sp.setPreferredSize(new Dimension(400, 200));
+        
+        JOptionPane.showMessageDialog(frame, sp, "Notification Details", JOptionPane.INFORMATION_MESSAGE);
     }
 
     private int acceptedHoursForTa(String taUserId) {
@@ -1680,7 +1715,8 @@ public class SwingApp {
             profileHeader.setBackground(CARD_WHITE);
             JPanel profileHeaderCard = createCardPanel(profileHeader, 0, 0, 0, 0);
             profilePanel.add(profileHeaderCard, BorderLayout.NORTH);
-            JPanel form = new JPanel(new GridLayout(0, 2, 10, 10));
+            JPanel form = new JPanel(new GridBagLayout());
+            form.setOpaque(false);
             profileNameField = new JTextField();
             profileYearField = new JTextField();
             profileProgrammeField = new JTextField();
@@ -1688,28 +1724,20 @@ public class SwingApp {
             profileHoursField = new JTextField();
             cvLabel = new JLabel("No CV uploaded");
 
-            form.add(new JLabel("Name"));
-            form.add(profileNameField);
-            form.add(new JLabel("Year of Study"));
-            form.add(profileYearField);
-            form.add(new JLabel("Programme"));
-            form.add(profileProgrammeField);
-            form.add(new JLabel("Skills (comma-separated)"));
-            form.add(new JScrollPane(profileSkillsArea));
-            form.add(new JLabel("Available Hours/Week"));
-            form.add(profileHoursField);
-            form.add(new JLabel("Upload CV (.pdf/.txt)"));
-            JPanel cvPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+            JPanel cvPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+            cvPanel.setOpaque(false);
             JButton cvButton = new JButton("Choose File");
+            styleSecondaryButton(cvButton);
             cvButton.addActionListener(e -> chooseCvFile());
             JButton viewCvButton = new JButton("View CV");
+            styleSecondaryButton(viewCvButton);
             viewCvButton.addActionListener(e -> viewMyCv());
             cvPanel.add(cvButton);
+            cvPanel.add(Box.createHorizontalStrut(10));
             cvPanel.add(viewCvButton);
+            cvPanel.add(Box.createHorizontalStrut(10));
             cvPanel.add(cvLabel);
-            form.add(cvPanel);
 
-            form.add(new JLabel("Avatar Photo"));
             JPanel avatarPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
             avatarPanel.setOpaque(false);
             for (String fileName : presetAvatarFiles) {
@@ -1719,7 +1747,77 @@ public class SwingApp {
                     updateTopBarAvatar(selectedAvatarPath);
                 }));
             }
-            form.add(avatarPanel);
+            
+            GridBagConstraints gbc = new GridBagConstraints();
+            gbc.insets = new Insets(10, 0, 10, 20);
+            gbc.anchor = GridBagConstraints.WEST;
+            gbc.fill = GridBagConstraints.NONE;
+            
+            int row = 0;
+            // Name
+            gbc.gridx = 0; gbc.gridy = row; gbc.weightx = 0;
+            JLabel nameLabel = new JLabel("Name");
+            nameLabel.setFont(new Font("Segoe UI", Font.BOLD, 13));
+            form.add(nameLabel, gbc);
+            gbc.gridx = 1; gbc.weightx = 1; gbc.fill = GridBagConstraints.HORIZONTAL;
+            form.add(profileNameField, gbc);
+            row++;
+            
+            // Year of Study
+            gbc.gridx = 0; gbc.gridy = row; gbc.weightx = 0; gbc.fill = GridBagConstraints.NONE;
+            JLabel yearLabel = new JLabel("Year of Study");
+            yearLabel.setFont(new Font("Segoe UI", Font.BOLD, 13));
+            form.add(yearLabel, gbc);
+            gbc.gridx = 1; gbc.weightx = 1; gbc.fill = GridBagConstraints.HORIZONTAL;
+            form.add(profileYearField, gbc);
+            row++;
+            
+            // Programme
+            gbc.gridx = 0; gbc.gridy = row; gbc.weightx = 0; gbc.fill = GridBagConstraints.NONE;
+            JLabel progLabel = new JLabel("Programme");
+            progLabel.setFont(new Font("Segoe UI", Font.BOLD, 13));
+            form.add(progLabel, gbc);
+            gbc.gridx = 1; gbc.weightx = 1; gbc.fill = GridBagConstraints.HORIZONTAL;
+            form.add(profileProgrammeField, gbc);
+            row++;
+            
+            // Skills
+            gbc.gridx = 0; gbc.gridy = row; gbc.weightx = 0; gbc.fill = GridBagConstraints.NONE;
+            gbc.anchor = GridBagConstraints.NORTHWEST;
+            JLabel skillsLabel = new JLabel("Skills (comma-separated)");
+            skillsLabel.setFont(new Font("Segoe UI", Font.BOLD, 13));
+            form.add(skillsLabel, gbc);
+            gbc.gridx = 1; gbc.weightx = 1; gbc.fill = GridBagConstraints.HORIZONTAL;
+            form.add(new JScrollPane(profileSkillsArea), gbc);
+            row++;
+            
+            // Hours
+            gbc.gridx = 0; gbc.gridy = row; gbc.weightx = 0; gbc.fill = GridBagConstraints.NONE;
+            gbc.anchor = GridBagConstraints.WEST;
+            JLabel hoursLabel = new JLabel("Available Hours/Week");
+            hoursLabel.setFont(new Font("Segoe UI", Font.BOLD, 13));
+            form.add(hoursLabel, gbc);
+            gbc.gridx = 1; gbc.weightx = 1; gbc.fill = GridBagConstraints.HORIZONTAL;
+            form.add(profileHoursField, gbc);
+            row++;
+            
+            // CV
+            gbc.gridx = 0; gbc.gridy = row; gbc.weightx = 0; gbc.fill = GridBagConstraints.NONE;
+            JLabel cvTextLabel = new JLabel("Upload CV (.pdf/.txt)");
+            cvTextLabel.setFont(new Font("Segoe UI", Font.BOLD, 13));
+            form.add(cvTextLabel, gbc);
+            gbc.gridx = 1; gbc.weightx = 1; gbc.fill = GridBagConstraints.HORIZONTAL;
+            form.add(cvPanel, gbc);
+            row++;
+            
+            // Avatar
+            gbc.gridx = 0; gbc.gridy = row; gbc.weightx = 0; gbc.fill = GridBagConstraints.NONE;
+            JLabel avatarTextLabel = new JLabel("Avatar Photo");
+            avatarTextLabel.setFont(new Font("Segoe UI", Font.BOLD, 13));
+            form.add(avatarTextLabel, gbc);
+            gbc.gridx = 1; gbc.weightx = 1; gbc.fill = GridBagConstraints.HORIZONTAL;
+            form.add(avatarPanel, gbc);
+            row++;
 
             JTextField[] taFields = {profileNameField, profileYearField, profileProgrammeField, profileHoursField};
             for (JTextField f : taFields) {
@@ -1732,17 +1830,41 @@ public class SwingApp {
                 BorderFactory.createLineBorder(new Color(200, 200, 200)),
                 BorderFactory.createEmptyBorder(8, 10, 8, 10)
             ));
-            JPanel formWrapper = new JPanel(new BorderLayout());
+            
+            JPanel formContainer = new JPanel(new BorderLayout());
+            formContainer.setOpaque(false);
+            formContainer.setBorder(BorderFactory.createEmptyBorder(20, 20, 20, 20));
+            formContainer.add(form, BorderLayout.NORTH);
+            
+            JPanel cardForm = createCardPanel(formContainer, 0, 0, 0, 0);
+            cardForm.setAlignmentX(Component.LEFT_ALIGNMENT);
+            
+            JPanel formWrapper = new JPanel();
+            formWrapper.setLayout(new BoxLayout(formWrapper, BoxLayout.Y_AXIS));
             formWrapper.setOpaque(false);
-            formWrapper.add(form, BorderLayout.NORTH);
+            formWrapper.setBorder(BorderFactory.createEmptyBorder(0, 0, 20, 20)); // add right margin so it doesn't touch the scrollbar
+            formWrapper.add(cardForm);
+            
             JPanel profileActions = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 16));
             profileActions.setOpaque(false);
+            profileActions.setAlignmentX(Component.LEFT_ALIGNMENT);
             JButton saveButton = new JButton("Save Profile");
             stylePrimaryButton(saveButton);
             saveButton.addActionListener(e -> saveProfile());
             profileActions.add(saveButton);
-            formWrapper.add(profileActions, BorderLayout.SOUTH);
-            profilePanel.add(new JScrollPane(formWrapper), BorderLayout.CENTER);
+            formWrapper.add(profileActions);
+            
+            JPanel scrollWrapper = new JPanel(new BorderLayout());
+            scrollWrapper.setOpaque(false);
+            scrollWrapper.add(formWrapper, BorderLayout.NORTH);
+            
+            JScrollPane scrollPane = new JScrollPane(scrollWrapper);
+            scrollPane.setBorder(null);
+            scrollPane.getVerticalScrollBar().setUnitIncrement(16);
+            scrollPane.setOpaque(false);
+            scrollPane.getViewport().setOpaque(false);
+            
+            profilePanel.add(scrollPane, BorderLayout.CENTER);
 
             notificationModel = new DefaultTableModel(
                     new Object[] {"ID", "Read", "Type", "Message", "Date"}, 0) {
@@ -1830,10 +1952,16 @@ public class SwingApp {
             JButton markUnreadButton = new JButton("Mark Unread");
             styleSecondaryButton(markUnreadButton);
             markUnreadButton.addActionListener(e -> setSelectedNotificationRead(false));
+            
+            JButton viewDetailsButton = new JButton("View Details");
+            styleSecondaryButton(viewDetailsButton);
+            viewDetailsButton.addActionListener(e -> showNotificationDetails(notificationTable));
+
             notificationControls.add(unreadCountLabel);
             notificationControls.add(new JLabel("Show"));
             notificationControls.add(notificationFilterBox);
             notificationControls.add(refreshNotificationsButton);
+            notificationControls.add(viewDetailsButton);
             notificationControls.add(markReadButton);
             notificationControls.add(markUnreadButton);
             notificationTopPanel.add(notificationControls, BorderLayout.EAST);
@@ -2052,6 +2180,7 @@ public class SwingApp {
         }
 
         private void refreshJobs() {
+            jobService.autoCloseExpiredJobs();
             jobModel.setRowCount(0);
             String query = searchField.getText();
             String skillQuery = skillsFilterField.getText();
@@ -2374,6 +2503,7 @@ public class SwingApp {
         private static final String TAB_DASHBOARD = "dashboard";
         private static final String TAB_APPLICANTS = "applicants";
         private static final String TAB_PROFILE = "profile";
+        private static final String TAB_NOTIFICATIONS = "notifications";
 
         private final JLabel titleLabel;
         private final CardLayout contentLayout;
@@ -2383,8 +2513,8 @@ public class SwingApp {
         private final DefaultTableModel applicantsModel;
         private final JTable applicantsTable;
         private final JLabel applicantsTitle;
-        private final JLabel moNotificationSummaryLabel;
-        private final JTextArea moNotificationArea;
+        private final DefaultTableModel notificationsModel;
+        private final JTable notificationsTable;
         private JCheckBox pendingOnlyCheckBox;
         private JCheckBox needsDecisionCheckBox;
         private final JSpinner matchThresholdSpinner;
@@ -2407,7 +2537,7 @@ public class SwingApp {
             contentLayout = new CardLayout();
             contentPanel = new JPanel(contentLayout);
 
-            String[] navLabels = {"Dashboard", "Applicants List", "My Profile"};
+            String[] navLabels = {"Dashboard", "Applicants List", "My Profile", "Notifications"};
             Runnable[] navActions = {
                 () -> {
                     refreshJobs();
@@ -2420,6 +2550,10 @@ public class SwingApp {
                 () -> {
                     loadProfile();
                     contentLayout.show(contentPanel, TAB_PROFILE);
+                },
+                () -> {
+                    refreshMoNotificationsTab();
+                    contentLayout.show(contentPanel, TAB_NOTIFICATIONS);
                 }
             };
             add(buildNavigationPanel(navLabels, navActions), BorderLayout.WEST);
@@ -2449,39 +2583,57 @@ public class SwingApp {
             dashboardTopStack.setOpaque(false);
             dashboardTopStack.setLayout(new BoxLayout(dashboardTopStack, BoxLayout.Y_AXIS));
 
-            JPanel moNotificationPanel = new JPanel(new BorderLayout(0, 10));
-            moNotificationPanel.setOpaque(false);
-            JPanel moNotificationHeader = new JPanel(new BorderLayout());
-            moNotificationHeader.setOpaque(false);
-            moNotificationHeader.add(createSectionTitle(
-                    "MO Notifications",
-                    "New applications, pending decisions, and filled jobs for your posted jobs."), BorderLayout.WEST);
-            JPanel moNotificationActions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0));
-            moNotificationActions.setOpaque(false);
-            moNotificationSummaryLabel = new JLabel("Pending applications: 0 | Filled jobs: 0");
-            moNotificationSummaryLabel.setFont(new Font("Segoe UI", Font.BOLD, 13));
-            moNotificationSummaryLabel.setForeground(MUTED_TEXT_COLOR);
-            JButton refreshMoNotificationsButton = new JButton("Refresh");
-            styleSecondaryButton(refreshMoNotificationsButton);
-            refreshMoNotificationsButton.addActionListener(e -> refreshMoNotifications());
-            moNotificationActions.add(moNotificationSummaryLabel);
-            moNotificationActions.add(refreshMoNotificationsButton);
-            moNotificationHeader.add(moNotificationActions, BorderLayout.EAST);
-            moNotificationArea = new JTextArea(5, 60);
-            moNotificationArea.setEditable(false);
-            moNotificationArea.setLineWrap(true);
-            moNotificationArea.setWrapStyleWord(true);
-            moNotificationArea.setFont(new Font("Segoe UI", Font.PLAIN, 13));
-            moNotificationArea.setForeground(HEADER_TEXT);
-            moNotificationArea.setBackground(new Color(248, 249, 250));
-            moNotificationArea.setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 12));
-            JScrollPane moNotificationScrollPane = new JScrollPane(moNotificationArea);
-            moNotificationScrollPane.setBorder(BorderFactory.createLineBorder(new Color(230, 230, 235), 1, true));
-            moNotificationScrollPane.setPreferredSize(new Dimension(0, 126));
-            moNotificationPanel.add(moNotificationHeader, BorderLayout.NORTH);
-            moNotificationPanel.add(moNotificationScrollPane, BorderLayout.CENTER);
-            dashboardTopStack.add(createCardPanel(moNotificationPanel, 18, 18, 18, 18));
-            dashboardTopStack.add(Box.createVerticalStrut(12));
+            // ========================= Notifications Tab =========================
+            notificationsModel = new DefaultTableModel(
+                    new Object[] {"Type", "Related ID", "Message", "Time", "Read"}, 0) {
+                @Override
+                public boolean isCellEditable(int row, int column) { return false; }
+            };
+            notificationsTable = new JTable(notificationsModel);
+            styleDataTable(notificationsTable);
+            installTableRowHover(notificationsTable);
+            
+            JPanel notificationsPanel = new JPanel(new BorderLayout(0, 16));
+            notificationsPanel.setOpaque(false);
+            JPanel notifHeader = new JPanel(new BorderLayout());
+            notifHeader.setOpaque(false);
+            notifHeader.add(createSectionTitle("MO Notifications", "Updates on your posted jobs and applications."), BorderLayout.WEST);
+            notificationsPanel.add(createCardPanel(notifHeader, 18, 18, 18, 18), BorderLayout.NORTH);
+            
+            JScrollPane notifScrollPane = new JScrollPane(notificationsTable);
+            notifScrollPane.setBorder(BorderFactory.createEmptyBorder());
+            notifScrollPane.getViewport().setBackground(Color.WHITE);
+            notificationsPanel.add(createCardPanel(notifScrollPane, 0, 0, 0, 0), BorderLayout.CENTER);
+            
+            JPanel notifFooter = new JPanel(new FlowLayout(FlowLayout.RIGHT, 16, 0));
+            notifFooter.setBorder(BorderFactory.createEmptyBorder(16, 0, 0, 0));
+            notifFooter.setOpaque(false);
+            
+            JButton viewDetailsButton = new JButton("View Details");
+            styleSecondaryButton(viewDetailsButton);
+            viewDetailsButton.addActionListener(e -> showNotificationDetails(notificationsTable));
+            notifFooter.add(viewDetailsButton);
+            
+            JButton sendNotifButton = new JButton("Send Notification");
+            stylePrimaryButton(sendNotifButton);
+            sendNotifButton.addActionListener(e -> showMoSendNotificationDialog());
+            notifFooter.add(sendNotifButton);
+            
+            JButton markReadButton = new JButton("Mark All Read");
+            styleSecondaryButton(markReadButton);
+            markReadButton.addActionListener(e -> {
+                if (user != null && notificationService != null) {
+                    java.util.List<Notification> notifs = notificationService.getNotificationsForUser(user.getId());
+                    for (Notification n : notifs) {
+                        if (!n.isReadStatus()) {
+                            notificationService.setReadStatus(n.getId(), true);
+                        }
+                    }
+                    refreshMoNotificationsTab();
+                }
+            });
+            notifFooter.add(markReadButton);
+            notificationsPanel.add(notifFooter, BorderLayout.SOUTH);
 
             JPanel dashboardHeader = new JPanel(new BorderLayout());
             dashboardHeader.setOpaque(false);
@@ -2528,7 +2680,7 @@ public class SwingApp {
 
             applicantsModel = new DefaultTableModel(
                     new Object[] {
-                        "App ID", "Applicant", "Year", "Match Score", "Missing Skills",
+                        "App ID", "Job", "Applicant", "Year", "Match Score", "Missing Skills",
                         "Current Workload", "Recommendation", "Status"
                     }, 0) {
                 @Override
@@ -2539,9 +2691,9 @@ public class SwingApp {
                 @Override
                 public Class<?> getColumnClass(int columnIndex) {
                     switch (columnIndex) {
-                        case 2:
                         case 3:
-                        case 5:
+                        case 4:
+                        case 6:
                             return Integer.class;
                         default:
                             return String.class;
@@ -2550,10 +2702,10 @@ public class SwingApp {
             };
             applicantsTable = new JTable(applicantsModel);
             styleDataTable(applicantsTable);
-            applyIntegerSuffixRenderer(applicantsTable, 3, "%");
-            applyIntegerSuffixRenderer(applicantsTable, 5, "h/week");
-            applyRecommendationRenderer(applicantsTable, 6);
-            applyStatusRenderer(applicantsTable, 7);
+            applyIntegerSuffixRenderer(applicantsTable, 4, "%");
+            applyIntegerSuffixRenderer(applicantsTable, 6, "h/week");
+            applyRecommendationRenderer(applicantsTable, 7);
+            applyStatusRenderer(applicantsTable, 8);
             installTableRowHover(applicantsTable);
             JPanel applicantsPanel = new JPanel(new BorderLayout(0, 16));
             applicantsPanel.setOpaque(false);
@@ -2685,6 +2837,7 @@ public class SwingApp {
             contentPanel.add(dashboardPanel, TAB_DASHBOARD);
             contentPanel.add(applicantsPanel, TAB_APPLICANTS);
             contentPanel.add(profilePanel, TAB_PROFILE);
+            contentPanel.add(notificationsPanel, TAB_NOTIFICATIONS);
             add(contentPanel, BorderLayout.CENTER);
         }
 
@@ -2693,7 +2846,7 @@ public class SwingApp {
             this.selectedJobId = null;
             refreshJobs();
             refreshApplicants();
-            refreshMoNotifications();
+            refreshMoNotificationsTab();
             loadProfile();
             updateTopBarAvatar(user == null ? "" : user.getAvatarFilePath());
             contentLayout.show(contentPanel, TAB_DASHBOARD);
@@ -2722,130 +2875,21 @@ public class SwingApp {
                     job.getDeadline()
                 });
             }
-            refreshMoNotifications();
         }
 
-        private void refreshMoNotifications() {
-            if (user == null) {
-                moNotificationSummaryLabel.setText("Pending applications: 0 | Filled jobs: 0");
-                moNotificationArea.setText("Login as an MO to see notifications for your jobs.");
-                return;
+        private void refreshMoNotificationsTab() {
+            notificationsModel.setRowCount(0);
+            if (user == null || notificationService == null) return;
+            List<Notification> notifications = notificationService.getNotificationsForUser(user.getId());
+            for (Notification n : notifications) {
+                notificationsModel.addRow(new Object[] {
+                    n.getType().name(),
+                    safeText(n.getRelatedId()),
+                    safeText(n.getMessage()),
+                    safeText(n.getCreatedAt()),
+                    n.isReadStatus() ? "Yes" : "No"
+                });
             }
-
-            int pendingCount = applicationService.getPendingApplicationCountForMo(user.getId());
-            int filledJobCount = countFilledJobsForCurrentMo();
-            moNotificationSummaryLabel.setText(
-                    "Pending applications: " + pendingCount + " | Filled jobs: " + filledJobCount);
-
-            List<String> notificationLines = buildMoNotificationLines(pendingCount);
-            if (notificationLines.isEmpty()) {
-                moNotificationArea.setText(
-                        "No MO notifications right now. New applications, pending decisions, and filled jobs will appear here.");
-            } else {
-                moNotificationArea.setText(String.join("\n\n", notificationLines));
-            }
-            moNotificationArea.setCaretPosition(0);
-        }
-
-        private List<String> buildMoNotificationLines(int pendingCount) {
-            List<String> lines = new ArrayList<>();
-            List<Job> jobs = jobService.getJobsByMoId(user.getId());
-            Map<String, Job> jobsById = new LinkedHashMap<>();
-            for (Job job : jobs) {
-                jobsById.put(job.getId(), job);
-            }
-
-            // Pending count gives the MO an immediate workload summary before they inspect individual rows.
-            if (pendingCount > 0) {
-                int jobsWithPendingApplications = countJobsWithPendingApplications(jobs);
-                lines.add("Pending review: " + pendingCount + " application(s) across "
-                        + jobsWithPendingApplications + " job(s) need your decision.");
-            }
-
-            // Pending applications are treated as new reminders because the MO still needs to review them.
-            int remindersAdded = 0;
-            for (Application application : applicationService.getApplicationsForMo(user.getId())) {
-                if (application.getStatus() != ApplicationStatus.PENDING) {
-                    continue;
-                }
-                Job job = jobsById.get(application.getJobId());
-                User applicant = findUserById(application.getTaUserId()).orElse(null);
-                lines.add(buildPendingApplicationReminder(application, job, applicant));
-                remindersAdded++;
-                if (remindersAdded >= 8) {
-                    int remaining = pendingCount - remindersAdded;
-                    if (remaining > 0) {
-                        lines.add("More pending applications: " + remaining
-                                + " additional application(s) are waiting in the Applicants list.");
-                    }
-                    break;
-                }
-            }
-
-            // Filled-job reminders are regenerated from live accepted counts so they refresh after every decision.
-            for (Job job : jobs) {
-                int acceptedCount = acceptedApplicantsForJob(job.getId());
-                if (job.getStatus() == JobStatus.FILLED || acceptedCount >= job.getPositions()) {
-                    lines.add("Job filled: " + jobLabel(job) + " has " + acceptedCount + "/"
-                            + job.getPositions() + " accepted applicant(s). Status: FILLED.");
-                }
-            }
-            return lines;
-        }
-
-        private String buildPendingApplicationReminder(Application application, Job job, User applicant) {
-            String applicantName = applicant == null ? "Unknown applicant" : safeText(applicant.getName());
-            String jobText = job == null ? "an unknown job" : jobLabel(job);
-            String appliedDate = safeText(application.getAppliedDate()).isBlank()
-                    ? "an unknown date"
-                    : application.getAppliedDate();
-            String matchScoreText = "not available";
-            if (job != null && applicant != null) {
-                AiMatchingService.MatchResult matchResult =
-                        aiMatchingService.analyzeSkills(applicant.getSkills(), job.getRequiredSkills());
-                matchScoreText = matchResult.getScore() + "%";
-            }
-            return "New application: " + applicantName + " applied for " + jobText + " on " + appliedDate
-                    + ". Status: " + application.getStatus().name()
-                    + ". Match score: " + matchScoreText + ".";
-        }
-
-        private int countJobsWithPendingApplications(List<Job> jobs) {
-            int count = 0;
-            for (Job job : jobs) {
-                boolean hasPendingApplication = false;
-                for (Application application : applicationService.getApplicationsByJobId(job.getId())) {
-                    if (application.getStatus() == ApplicationStatus.PENDING) {
-                        hasPendingApplication = true;
-                        break;
-                    }
-                }
-                if (hasPendingApplication) {
-                    count++;
-                }
-            }
-            return count;
-        }
-
-        private int countFilledJobsForCurrentMo() {
-            if (user == null) {
-                return 0;
-            }
-            int count = 0;
-            for (Job job : jobService.getJobsByMoId(user.getId())) {
-                int acceptedCount = acceptedApplicantsForJob(job.getId());
-                if (job.getStatus() == JobStatus.FILLED || acceptedCount >= job.getPositions()) {
-                    count++;
-                }
-            }
-            return count;
-        }
-
-        private String jobLabel(Job job) {
-            if (job == null) {
-                return "Unknown job";
-            }
-            return safeText(job.getModuleCode()) + " - " + safeText(job.getModuleName());
         }
 
         private void createJob() {
@@ -2864,7 +2908,7 @@ public class SwingApp {
                         input.deadline,
                         user.getId());
                 refreshJobs();
-                refreshMoNotifications();
+                refreshMoNotificationsTab();
             } catch (IllegalArgumentException ex) {
                 JOptionPane.showMessageDialog(frame, ex.getMessage());
             }
@@ -2900,7 +2944,7 @@ public class SwingApp {
                         input.deadline);
                 refreshJobs();
                 refreshApplicants();
-                refreshMoNotifications();
+                refreshMoNotificationsTab();
             } catch (IllegalArgumentException ex) {
                 JOptionPane.showMessageDialog(frame, ex.getMessage());
             }
@@ -2937,7 +2981,7 @@ public class SwingApp {
                 showToast("Job Closed", label + " is now closed.", JOptionPane.INFORMATION_MESSAGE);
                 refreshJobs();
                 refreshApplicants();
-                refreshMoNotifications();
+                refreshMoNotificationsTab();
             } catch (IllegalArgumentException ex) {
                 JOptionPane.showMessageDialog(frame, ex.getMessage());
             }
@@ -2978,7 +3022,7 @@ public class SwingApp {
                         JOptionPane.INFORMATION_MESSAGE);
                 refreshJobs();
                 refreshApplicants();
-                refreshMoNotifications();
+                refreshMoNotificationsTab();
             } catch (IllegalArgumentException ex) {
                 JOptionPane.showMessageDialog(frame, ex.getMessage());
             }
@@ -3003,7 +3047,7 @@ public class SwingApp {
             }
             refreshJobs();
             refreshApplicants();
-            refreshMoNotifications();
+            refreshMoNotificationsTab();
         }
 
         private void openApplicantsForSelectedJob() {
@@ -3022,32 +3066,48 @@ public class SwingApp {
             String selectedApplicationId = selectedApplicantApplicationId();
             applicantsModel.setRowCount(0);
             rankedApplicantsByApplicationId.clear();
-            if (selectedJobId == null || selectedJobId.isBlank()) {
-                applicantsTitle.setText("Applicants List (Select a job in Dashboard first)");
-                return;
-            }
-            Job selectedJob = findJobById(selectedJobId).orElse(null);
-            if (selectedJob == null) {
+            
+            if (user == null) {
                 applicantsTitle.setText("Applicants List");
                 return;
             }
-            applicantsTitle.setText("Applicants for " + selectedJob.getModuleCode() + " - " + selectedJob.getModuleName());
-            List<Application> applications = applicationService.getApplicationsByJobId(selectedJobId);
-            Map<String, User> applicantsById = new LinkedHashMap<>();
-            for (Application application : applications) {
-                findUserById(application.getTaUserId())
-                        .ifPresent(user -> applicantsById.put(user.getId(), user));
-            }
+            
+            applicantsTitle.setText("All Applicants for Your Posted Jobs");
+            
+            List<Job> allJobs = jobService.getJobsByMoId(user.getId());
             MoApplicantRankingService.RankingOptions options = new MoApplicantRankingService.RankingOptions(
                     pendingOnlyCheckBox.isSelected(),
                     needsDecisionCheckBox.isSelected(),
                     (Integer) matchThresholdSpinner.getValue(),
                     applicantSortMode);
-            for (MoApplicantRankingService.RankedApplicant applicant : moApplicantRankingService.rankApplicants(
-                    selectedJob, applications, applicantsById, options)) {
+                    
+            List<MoApplicantRankingService.RankedApplicant> allRanked = new ArrayList<>();
+            Map<String, Job> rankedAppToJob = new HashMap<>();
+
+            for (Job job : allJobs) {
+                List<Application> applications = applicationService.getApplicationsByJobId(job.getId());
+                Map<String, User> applicantsById = new LinkedHashMap<>();
+                for (Application application : applications) {
+                    findUserById(application.getTaUserId())
+                            .ifPresent(u -> applicantsById.put(u.getId(), u));
+                }
+                List<MoApplicantRankingService.RankedApplicant> ranked = moApplicantRankingService.rankApplicants(
+                        job, applications, applicantsById, options);
+                allRanked.addAll(ranked);
+                for (MoApplicantRankingService.RankedApplicant ra : ranked) {
+                    rankedAppToJob.put(ra.getApplicationId(), job);
+                }
+            }
+            
+            // Re-sort the combined list across all jobs
+            allRanked.sort(options.getSortMode().getComparator());
+
+            for (MoApplicantRankingService.RankedApplicant applicant : allRanked) {
                 rankedApplicantsByApplicationId.put(applicant.getApplicationId(), applicant);
+                Job job = rankedAppToJob.get(applicant.getApplicationId());
                 applicantsModel.addRow(new Object[] {
                     applicant.getApplicationId(),
+                    job != null ? job.getModuleCode() : "Unknown",
                     applicant.getApplicantName(),
                     applicant.getYearOfStudy(),
                     applicant.getMatchScore(),
@@ -3074,7 +3134,69 @@ public class SwingApp {
 
         private void clearApplicantsTableSortKeys() {
             if (applicantsTable.getRowSorter() != null) {
-                applicantsTable.getRowSorter().setSortKeys(List.of());
+                applicantsTable.getRowSorter().setSortKeys(null);
+            }
+        }
+
+        private void showMoSendNotificationDialog() {
+            JComboBox<String> roleCombo = new JComboBox<>(new String[]{"ALL", "TA", "ADMIN"});
+            JTextField userIdField = new JTextField();
+            JTextArea messageArea = new JTextArea(4, 20);
+            messageArea.setLineWrap(true);
+            messageArea.setWrapStyleWord(true);
+            
+            JPanel panel = new JPanel(new GridLayout(0, 1, 5, 5));
+            panel.add(new JLabel("Target Role:"));
+            panel.add(roleCombo);
+            panel.add(new JLabel("Target User ID (Optional):"));
+            panel.add(userIdField);
+            panel.add(new JLabel("Message:"));
+            panel.add(new JScrollPane(messageArea));
+            
+            int result = JOptionPane.showConfirmDialog(frame, panel, "Send Notification", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+            if (result == JOptionPane.OK_OPTION) {
+                String roleStr = (String) roleCombo.getSelectedItem();
+                Role targetRole = "ALL".equals(roleStr) ? null : Role.valueOf(roleStr);
+                String userId = userIdField.getText().trim();
+                String message = messageArea.getText().trim();
+                
+                if (message.isEmpty()) {
+                    JOptionPane.showMessageDialog(frame, "Message cannot be empty.");
+                    return;
+                }
+                
+                int count = 0;
+                java.util.List<User> targets = new ArrayList<>();
+                if (!userId.isEmpty()) {
+                    findUserById(userId).ifPresent(u -> {
+                        if (u.getRole() == Role.TA || u.getRole() == Role.ADMIN) {
+                            targets.add(u);
+                        } else {
+                            JOptionPane.showMessageDialog(frame, "MO can only send notifications to TA or Admin users.");
+                        }
+                    });
+                    if (targets.isEmpty() && findUserById(userId).isEmpty()) {
+                        JOptionPane.showMessageDialog(frame, "User not found: " + userId);
+                        return;
+                    }
+                } else {
+                    for (User u : authService.getAllUsers()) {
+                        if (u.getRole() == Role.TA || u.getRole() == Role.ADMIN) {
+                            if (targetRole == null || u.getRole() == targetRole) {
+                                targets.add(u);
+                            }
+                        }
+                    }
+                }
+                
+                String broadcastId = "MO_BROADCAST:" + System.currentTimeMillis();
+                for (User u : targets) {
+                    notificationService.publish(u.getRole(), NotificationType.SYSTEM_ALERT, u.getId(), 
+                            "From " + user.getName() + ": " + message, broadcastId);
+                    count++;
+                }
+                
+                JOptionPane.showMessageDialog(frame, "Sent notification to " + count + " users.");
             }
         }
 
@@ -3110,11 +3232,19 @@ public class SwingApp {
                 JOptionPane.showMessageDialog(frame, "Please select an applicant first.");
                 return;
             }
+            String actionLabel = status == ApplicationStatus.ACCEPTED ? "accept" : "reject";
+            int confirm = JOptionPane.showConfirmDialog(frame,
+                    "Are you sure you want to " + actionLabel + " this applicant?",
+                    "Confirm " + actionLabel.substring(0, 1).toUpperCase() + actionLabel.substring(1),
+                    JOptionPane.YES_NO_OPTION, JOptionPane.QUESTION_MESSAGE);
+            if (confirm != JOptionPane.YES_OPTION) {
+                return;
+            }
             try {
                 applicationService.updateApplicationStatus(appId, user.getId(), status);
                 refreshApplicants();
                 refreshJobs();
-                refreshMoNotifications();
+                refreshMoNotificationsTab();
                 showToast(
                         "Application Reviewed",
                         "Application has been marked as " + status.name() + ".",
@@ -3280,6 +3410,7 @@ public class SwingApp {
         private static final String TAB_JOBS = "jobs";
         private static final String TAB_APPLICATIONS = "applications";
         private static final String TAB_AUDIT = "audit";
+        private static final String TAB_NOTIFICATIONS = "notifications";
 
         private final JLabel titleLabel;
         private final CardLayout contentLayout;
@@ -3294,6 +3425,8 @@ public class SwingApp {
         private final JTable applicationsTable;
         private final DefaultTableModel auditModel;
         private final JTable auditTable;
+        private final DefaultTableModel notificationsModel;
+        private final JTable notificationsTable;
         private JComboBox<String> applicationStatusFilter;
 
         // Summary bar labels
@@ -3328,7 +3461,7 @@ public class SwingApp {
             contentLayout = new CardLayout();
             contentPanel = new JPanel(contentLayout);
 
-            String[] navLabels = {"Workload Overview", "Manage Accounts", "Jobs Overview", "Applications", "Audit Log"};
+            String[] navLabels = {"Workload Overview", "Manage Accounts", "Jobs Overview", "Applications", "Audit Log", "Notifications"};
             Runnable[] navActions = {
                 () -> {
                     refreshWorkload();
@@ -3349,6 +3482,10 @@ public class SwingApp {
                 () -> {
                     refreshAuditLog();
                     contentLayout.show(contentPanel, TAB_AUDIT);
+                },
+                () -> {
+                    refreshAdminNotifications();
+                    contentLayout.show(contentPanel, TAB_NOTIFICATIONS);
                 }
             };
             add(buildNavigationPanel(navLabels, navActions), BorderLayout.WEST);
@@ -3630,11 +3767,69 @@ public class SwingApp {
             auditFooter.add(refreshAuditButton);
             auditPanel.add(auditFooter, BorderLayout.SOUTH);
 
+            // ========================= Notifications Tab =========================
+            notificationsModel = new DefaultTableModel(
+                    new Object[] {"Type", "Related ID", "Message", "Time", "Read"}, 0) {
+                @Override
+                public boolean isCellEditable(int row, int column) { return false; }
+            };
+            notificationsTable = new JTable(notificationsModel);
+            styleDataTable(notificationsTable);
+            installTableRowHover(notificationsTable);
+            
+            JPanel notificationsPanel = new JPanel(new BorderLayout(0, 16));
+            notificationsPanel.setOpaque(false);
+            JPanel notifHeader = new JPanel(new BorderLayout());
+            notifHeader.setOpaque(false);
+            notifHeader.add(createSectionTitle("System Notifications", "Admin alerts and broadcasts."), BorderLayout.WEST);
+            notificationsPanel.add(createCardPanel(notifHeader, 18, 18, 18, 18), BorderLayout.NORTH);
+            
+            JScrollPane notifScrollPane = new JScrollPane(notificationsTable);
+            notifScrollPane.setBorder(BorderFactory.createEmptyBorder());
+            notifScrollPane.getViewport().setBackground(Color.WHITE);
+            notificationsPanel.add(createCardPanel(notifScrollPane, 0, 0, 0, 0), BorderLayout.CENTER);
+            
+            JPanel notifFooter = new JPanel(new FlowLayout(FlowLayout.RIGHT, 16, 0));
+            notifFooter.setBorder(BorderFactory.createEmptyBorder(16, 0, 0, 0));
+            notifFooter.setOpaque(false);
+            
+            JButton markReadButton = new JButton("Mark All Read");
+            styleSecondaryButton(markReadButton);
+            markReadButton.addActionListener(e -> {
+                java.util.List<com.group52.tarecruitment.model.Notification> notifs = notificationService.getNotificationsForUser(user.getId());
+                for (com.group52.tarecruitment.model.Notification n : notifs) {
+                    if (!n.isReadStatus()) {
+                        notificationService.setReadStatus(n.getId(), true);
+                    }
+                }
+                refreshAdminNotifications();
+                updateNotificationBadge();
+            });
+            
+            JButton sendNotifButton = new JButton("Send Notification");
+            stylePrimaryButton(sendNotifButton);
+            sendNotifButton.addActionListener(e -> showSendNotificationDialog());
+            
+            JButton broadcastAnomaliesButton = new JButton("Broadcast Anomalies");
+            styleDangerButton(broadcastAnomaliesButton);
+            broadcastAnomaliesButton.addActionListener(e -> handleBroadcastAnomalies());
+            
+            JButton viewDetailsButton = new JButton("View Details");
+            styleSecondaryButton(viewDetailsButton);
+            viewDetailsButton.addActionListener(e -> showNotificationDetails(notificationsTable));
+            
+            notifFooter.add(viewDetailsButton);
+            notifFooter.add(markReadButton);
+            notifFooter.add(sendNotifButton);
+            notifFooter.add(broadcastAnomaliesButton);
+            notificationsPanel.add(notifFooter, BorderLayout.SOUTH);
+
             contentPanel.add(workloadPanel, TAB_WORKLOAD);
             contentPanel.add(accountsPanel, TAB_ACCOUNTS);
             contentPanel.add(jobsPanel, TAB_JOBS);
             contentPanel.add(applicationsPanel, TAB_APPLICATIONS);
             contentPanel.add(auditPanel, TAB_AUDIT);
+            contentPanel.add(notificationsPanel, TAB_NOTIFICATIONS);
             add(contentPanel, BorderLayout.CENTER);
         }
 
@@ -4266,6 +4461,68 @@ public class SwingApp {
                 showToast("Export Complete", "Jobs data exported to:\n" + chooser.getSelectedFile().getAbsolutePath(), JOptionPane.INFORMATION_MESSAGE);
             } catch (IOException ex) {
                 JOptionPane.showMessageDialog(frame, "Export failed: " + ex.getMessage());
+            }
+        }
+
+        // ========================= Notifications & Anomalies =========================
+        
+        private void refreshAdminNotifications() {
+            notificationsModel.setRowCount(0);
+            if (user == null || notificationService == null) return;
+            List<com.group52.tarecruitment.model.Notification> notifs = notificationService.getNotificationsForUser(user.getId());
+            for (com.group52.tarecruitment.model.Notification n : notifs) {
+                notificationsModel.addRow(new Object[] {
+                    n.getType().name(),
+                    n.getRelatedId(),
+                    n.getMessage(),
+                    n.getCreatedAt(),
+                    n.isReadStatus() ? "Yes" : "No"
+                });
+            }
+        }
+
+        private void handleBroadcastAnomalies() {
+            int count = adminService.broadcastAnomalies(user == null ? "ADMIN" : user.getId());
+            refreshAdminNotifications();
+            updateNotificationBadge();
+            if (count > 0) {
+                showToast("Anomalies Broadcasted", count + " anomaly alert(s) sent successfully.", JOptionPane.INFORMATION_MESSAGE);
+            } else {
+                showToast("No Anomalies", "System is healthy. No anomalies found.", JOptionPane.INFORMATION_MESSAGE);
+            }
+        }
+
+        private void showSendNotificationDialog() {
+            JComboBox<String> roleCombo = new JComboBox<>(new String[]{"ALL", "TA", "MO"});
+            JTextField userIdField = new JTextField();
+            JTextArea messageArea = new JTextArea(4, 20);
+            messageArea.setLineWrap(true);
+            messageArea.setWrapStyleWord(true);
+            
+            JPanel panel = new JPanel(new GridLayout(0, 1, 5, 5));
+            panel.add(new JLabel("Target Role:"));
+            panel.add(roleCombo);
+            panel.add(new JLabel("Target User ID (Optional):"));
+            panel.add(userIdField);
+            panel.add(new JLabel("Message:"));
+            panel.add(new JScrollPane(messageArea));
+            
+            int result = JOptionPane.showConfirmDialog(frame, panel, "Send Notification", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+            if (result == JOptionPane.OK_OPTION) {
+                String roleStr = (String) roleCombo.getSelectedItem();
+                Role role = "ALL".equals(roleStr) ? null : Role.valueOf(roleStr);
+                String userId = userIdField.getText().trim();
+                String message = messageArea.getText().trim();
+                
+                if (message.isEmpty()) {
+                    JOptionPane.showMessageDialog(frame, "Message cannot be empty.");
+                    return;
+                }
+                
+                int count = adminService.sendCustomNotification(user == null ? "ADMIN" : user.getId(), role, userId, message);
+                refreshAdminNotifications();
+                updateNotificationBadge();
+                showToast("Notification Sent", "Sent to " + count + " user(s).", JOptionPane.INFORMATION_MESSAGE);
             }
         }
     }

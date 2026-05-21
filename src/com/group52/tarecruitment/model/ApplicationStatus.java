@@ -1,8 +1,6 @@
 package com.group52.tarecruitment.model;
 
 public enum ApplicationStatus {
-    APPLIED,
-    REVIEWING,
     PENDING,
     ACCEPTED,
     REJECTED,

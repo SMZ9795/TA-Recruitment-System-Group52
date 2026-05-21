@@ -32,7 +32,7 @@ public class SwingMain {
         JobService jobService = new JobService(jobRepository, applicationRepository, notificationService);
         WorkloadService workloadService = new WorkloadService(workloadRepository);
         ApplicationService applicationService =
-                new ApplicationService(applicationRepository, jobRepository, workloadService, notificationService);
+                new ApplicationService(applicationRepository, jobRepository, workloadService, notificationService, userRepository);
         AdminService adminService =
                 new AdminService(userRepository, jobRepository, applicationRepository, notificationService, jobService);
 

@@ -688,7 +688,7 @@ public class AdminService {
         int pending = 0, accepted = 0, rejected = 0, withdrawn = 0;
         for (Application app : all) {
             switch (app.getStatus()) {
-                case PENDING, APPLIED, REVIEWING -> pending++;
+                case PENDING -> pending++;
                 case ACCEPTED -> accepted++;
                 case REJECTED -> rejected++;
                 case WITHDRAWN -> withdrawn++;
@@ -725,10 +725,7 @@ public class AdminService {
             // Application stats for this TA
             List<Application> taApps = applicationRepository.findByTaUserId(userId.trim());
             long acceptedCount = taApps.stream().filter(a -> a.getStatus() == ApplicationStatus.ACCEPTED).count();
-            long pendingCount = taApps.stream()
-                    .filter(a -> a.getStatus() == ApplicationStatus.PENDING
-                            || a.getStatus() == ApplicationStatus.APPLIED
-                            || a.getStatus() == ApplicationStatus.REVIEWING).count();
+            long pendingCount = taApps.stream().filter(a -> a.getStatus() == ApplicationStatus.PENDING).count();
             sb.append("\nApplication Summary:\n");
             sb.append("  Total applied:   ").append(taApps.size()).append("\n");
             sb.append("  Accepted:        ").append(acceptedCount).append("\n");
@@ -757,6 +754,73 @@ public class AdminService {
             }
         }
         return sb.toString();
+    }
+
+    // ========================= Notifications & Alerts =========================
+
+    public int sendCustomNotification(String adminUserId, Role targetRole, String userId, String message) {
+        if (notificationService == null) return 0;
+        int count = 0;
+        
+        List<User> targets = new ArrayList<>();
+        if (userId != null && !userId.isBlank()) {
+            Optional<User> u = userRepository.findById(userId);
+            u.ifPresent(targets::add);
+        } else {
+            for (User u : userRepository.findAll()) {
+                if (targetRole == null || u.getRole() == targetRole) {
+                    targets.add(u);
+                }
+            }
+        }
+        
+        String broadcastId = "ADMIN_BROADCAST:" + System.currentTimeMillis();
+        for (User u : targets) {
+            notificationService.publish(u.getRole(), NotificationType.SYSTEM_ALERT, u.getId(), message, broadcastId);
+            count++;
+        }
+        
+        addAuditEntry(adminUserId, "SEND_NOTIFICATION", targetRole == null ? "ALL" : targetRole.name(), "Sent to " + count + " users. Message: " + message);
+        
+        publishAdminNotification(adminUserId, NotificationType.SYSTEM_ALERT, 
+                "You sent a notification to " + count + " users: " + message, broadcastId);
+                
+        return count;
+    }
+
+    public int broadcastAnomalies(String adminUserId) {
+        if (notificationService == null) return 0;
+        int count = publishOverloadAlerts(); 
+
+        List<Application> allApps = applicationRepository.findAll();
+        for (Job job : jobRepository.findAll()) {
+            boolean isClosedOrExpired = job.getStatus() == JobStatus.CLOSED;
+            if (!isClosedOrExpired && job.getDeadline() != null && !job.getDeadline().isBlank()) {
+                try {
+                    isClosedOrExpired = LocalDate.now().isAfter(LocalDate.parse(job.getDeadline()));
+                } catch (DateTimeParseException ignored) {
+                }
+            }
+            
+            if (isClosedOrExpired) {
+                long filled = allApps.stream()
+                        .filter(a -> a.getJobId().equals(job.getId()) && a.getStatus() == ApplicationStatus.ACCEPTED)
+                        .count();
+                if (filled < job.getPositions()) {
+                    String msg = "Anomaly Alert: Job '" + job.getModuleCode() + "' is closed/expired but not fully staffed (" + filled + "/" + job.getPositions() + ").";
+                    notificationService.publishIfNotExists(
+                            Role.MO, 
+                            NotificationType.SYSTEM_ALERT, 
+                            job.getPostedByMoId(), 
+                            msg, 
+                            "ANOMALY_UNFILLED:" + job.getId());
+                    count++;
+                }
+            }
+        }
+        
+        addAuditEntry(adminUserId, "BROADCAST_ANOMALIES", "SYSTEM", "Sent " + count + " anomaly alerts.");
+        return count;
     }
 
     // ========================= Audit log =========================
