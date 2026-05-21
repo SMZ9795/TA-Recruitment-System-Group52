@@ -140,6 +140,13 @@ public class JobService {
                 NotificationType.JOB_CLOSE,
                 "Job " + safeText(job.getModuleCode()) + " - " + safeText(job.getModuleName())
                         + " has been closed and no longer accepts applications.");
+
+        if (notificationService != null) {
+            notificationService.publish(Role.MO, NotificationType.JOB_CLOSE, job.getPostedByMoId(),
+                    "You successfully closed job " + safeText(job.getModuleCode()) + ".",
+                    job.getId());
+        }
+
         return job;
     }
 
