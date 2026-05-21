@@ -4,18 +4,18 @@ import com.group52.tarecruitment.model.Application;
 import com.group52.tarecruitment.model.ApplicationStatus;
 import com.group52.tarecruitment.model.Job;
 import com.group52.tarecruitment.model.JobStatus;
-import com.group52.tarecruitment.model.Notification;
 import com.group52.tarecruitment.model.Role;
 import com.group52.tarecruitment.model.User;
 import com.group52.tarecruitment.service.AdminService;
 import com.group52.tarecruitment.service.ApplicationService;
-import com.group52.tarecruitment.service.WorkloadBalancerService;
 import com.group52.tarecruitment.service.AiMatchingService;
 import com.group52.tarecruitment.service.AiMatchingServiceAdapter;
 import com.group52.tarecruitment.service.AuthService;
+import com.group52.tarecruitment.service.ExportService;
 import com.group52.tarecruitment.service.JobService;
 import com.group52.tarecruitment.service.MoApplicantRankingService;
 import com.group52.tarecruitment.service.NotificationService;
+import com.group52.tarecruitment.service.WorkloadBalancerService;
 import com.group52.tarecruitment.util.CvValidationUtil;
 import com.group52.tarecruitment.util.JobFilterUtil;
 import com.group52.tarecruitment.util.TaNotificationUtil;
@@ -136,7 +136,7 @@ public class SwingApp {
     private final AiMatchingService aiMatchingService;
     private final MoApplicantRankingService moApplicantRankingService;
     private final AdminService adminService;
-    private final NotificationService notificationService;
+    private final ExportService exportService;
     private final Path dataDirectory;
 
     private JFrame frame;
@@ -149,23 +149,31 @@ public class SwingApp {
     private TaPanel taPanel;
     private MoPanel moPanel;
     private AdminPanel adminPanel;
-    private JTextArea recommendationArea;
+    private User currentUser;
+    private JLabel demoCaptionLabel;
+    private AutoDemoController autoDemoController;
 
     public SwingApp(AuthService authService, JobService jobService, ApplicationService applicationService) {
-        this(authService, jobService, applicationService, null, null, null);
+        this(authService, jobService, applicationService, null, null);
     }
 
     public SwingApp(AuthService authService, JobService jobService, ApplicationService applicationService, Path dataDirectory) {
-        this(authService, jobService, applicationService, dataDirectory, null, null);
+        this(authService, jobService, applicationService, dataDirectory, null);
     }
 
     public SwingApp(AuthService authService, JobService jobService, ApplicationService applicationService,
                     Path dataDirectory, AdminService adminService) {
-        this(authService, jobService, applicationService, dataDirectory, adminService, null);
+        this(authService, jobService, applicationService, dataDirectory, adminService, null, null);
     }
 
     public SwingApp(AuthService authService, JobService jobService, ApplicationService applicationService,
                     Path dataDirectory, AdminService adminService, NotificationService notificationService) {
+        this(authService, jobService, applicationService, dataDirectory, adminService, notificationService, null);
+    }
+
+    public SwingApp(AuthService authService, JobService jobService, ApplicationService applicationService,
+                    Path dataDirectory, AdminService adminService, NotificationService notificationService,
+                    ExportService exportService) {
         this.authService = authService;
         this.jobService = jobService;
         this.applicationService = applicationService;
@@ -174,7 +182,7 @@ public class SwingApp {
                 applicationService, new AiMatchingServiceAdapter(this.aiMatchingService));
         this.dataDirectory = dataDirectory;
         this.adminService = adminService;
-        this.notificationService = notificationService;
+        this.exportService = exportService;
     }
 
     public void start() {
@@ -212,6 +220,10 @@ public class SwingApp {
         rootPanel.add(moPanel, PAGE_MO);
         rootPanel.add(adminPanel, PAGE_ADMIN);
 
+        autoDemoController = new AutoDemoController(
+                this, authService, applicationService, adminService, exportService, dataDirectory);
+        loginPanel.installDemoButton(autoDemoController);
+
         frame.setContentPane(rootPanel);
         showLoginPage();
         frame.setVisible(true);
@@ -223,6 +235,7 @@ public class SwingApp {
     }
 
     private void onLoginSuccess(User user) {
+        currentUser = user;
         updateTopBarAvatar(user.getAvatarFilePath());
         if (user.getRole() == Role.TA) {
             taPanel.bindUser(user);
@@ -236,6 +249,131 @@ public class SwingApp {
         }
         adminPanel.bindUser(user);
         showPage(PAGE_ADMIN);
+    }
+
+    // ------------------------------------------------------------------
+    // Auto demo hooks. Package-private so AutoDemoController can drive
+    // the GUI without simulating mouse clicks.
+    // ------------------------------------------------------------------
+
+    JFrame getMainFrame() {
+        return frame;
+    }
+
+    void demoEnterAs(User user) {
+        SwingUtilities.invokeLater(() -> onLoginSuccess(user));
+    }
+
+    void demoRefreshCurrentPanel() {
+        if (currentUser == null) {
+            return;
+        }
+        SwingUtilities.invokeLater(() -> {
+            if (currentUser.getRole() == Role.TA) {
+                taPanel.bindUser(currentUser);
+            } else if (currentUser.getRole() == Role.MO) {
+                moPanel.bindUser(currentUser);
+            } else {
+                adminPanel.bindUser(currentUser);
+            }
+        });
+    }
+
+    void demoReturnToLogin() {
+        currentUser = null;
+        SwingUtilities.invokeLater(this::showLoginPage);
+    }
+
+    void demoShowCaption(String captionEn, String captionCn) {
+        SwingUtilities.invokeLater(() -> showDemoCaption(captionEn, captionCn, false));
+    }
+
+    void demoAppendCaption(String captionEn, String captionCn) {
+        SwingUtilities.invokeLater(() -> showDemoCaption(captionEn, captionCn, true));
+    }
+
+    void demoHideCaption() {
+        SwingUtilities.invokeLater(() -> {
+            if (demoCaptionLabel != null) {
+                demoCaptionLabel.setVisible(false);
+            }
+        });
+    }
+
+    private void showDemoCaption(String captionEn, String captionCn, boolean append) {
+        if (frame == null) {
+            return;
+        }
+        ensureDemoCaption();
+        String existing = "";
+        if (append && demoCaptionLabel.isVisible() && demoCaptionLabel.getText() != null) {
+            existing = demoCaptionLabel.getText()
+                    .replace("<html>", "")
+                    .replace("</html>", "");
+        }
+        String html = "<html><div style='text-align:center;line-height:1.55'>"
+                + (existing.isEmpty() ? "" : existing + "<br>")
+                + "<span style='color:#FFFFFF;font-size:14px'><b>" + escapeHtml(captionEn) + "</b></span><br>"
+                + "<span style='color:#E6DBFF;font-size:13px'>" + escapeHtml(captionCn) + "</span>"
+                + "</div></html>";
+        demoCaptionLabel.setText(html);
+        demoCaptionLabel.setVisible(true);
+        repositionDemoCaption();
+    }
+
+    private void ensureDemoCaption() {
+        if (demoCaptionLabel != null) {
+            return;
+        }
+        demoCaptionLabel = new JLabel("", javax.swing.SwingConstants.CENTER) {
+            @Override
+            protected void paintComponent(java.awt.Graphics g) {
+                java.awt.Graphics2D g2 = (java.awt.Graphics2D) g.create();
+                g2.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING,
+                        java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+                g2.setColor(new Color(40, 19, 78, 235));
+                g2.fillRoundRect(0, 0, getWidth(), getHeight(), 18, 18);
+                g2.setColor(new Color(123, 92, 240, 180));
+                g2.setStroke(new java.awt.BasicStroke(1.4f));
+                g2.drawRoundRect(0, 0, getWidth() - 1, getHeight() - 1, 18, 18);
+                g2.dispose();
+                super.paintComponent(g);
+            }
+        };
+        demoCaptionLabel.setOpaque(false);
+        demoCaptionLabel.setBorder(BorderFactory.createEmptyBorder(12, 24, 12, 24));
+        demoCaptionLabel.setVisible(false);
+
+        javax.swing.JLayeredPane layeredPane = frame.getLayeredPane();
+        layeredPane.add(demoCaptionLabel, javax.swing.JLayeredPane.POPUP_LAYER);
+
+        frame.addComponentListener(new java.awt.event.ComponentAdapter() {
+            @Override
+            public void componentResized(java.awt.event.ComponentEvent e) {
+                repositionDemoCaption();
+            }
+        });
+    }
+
+    private void repositionDemoCaption() {
+        if (demoCaptionLabel == null || frame == null) {
+            return;
+        }
+        int frameWidth = frame.getContentPane().getWidth();
+        int frameHeight = frame.getContentPane().getHeight();
+        Dimension pref = demoCaptionLabel.getPreferredSize();
+        int width = Math.min(Math.max(pref.width, 540), frameWidth - 80);
+        int height = pref.height;
+        int x = (frameWidth - width) / 2;
+        int y = frameHeight - height - 28;
+        demoCaptionLabel.setBounds(x, y, width, height);
+        demoCaptionLabel.revalidate();
+        demoCaptionLabel.repaint();
+    }
+
+    private static String escapeHtml(String s) {
+        if (s == null) return "";
+        return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
     }
 
     private void showPage(String pageName) {
@@ -566,58 +704,148 @@ public class SwingApp {
         return value == null ? "" : value;
     }
 
+    // ------------------------------------------------------------------
+    // Button styling. Buttons paint themselves as 999px-rounded pills with
+    // a darker hover state. Primary = filled purple, Secondary = outlined
+    // purple, Danger = filled red. Antialiased so the corners look smooth
+    // on hi-DPI displays.
+    // ------------------------------------------------------------------
+
+    private static final int BUTTON_CORNER_RADIUS = 16;
+
     private void stylePrimaryButton(JButton button) {
-        styleUnifiedButton(button, true, false);
+        applyRoundedButtonStyle(button, QMUL_PURPLE, new Color(107, 63, 160),
+                new Color(50, 24, 93), Color.WHITE, true, false);
     }
 
     private void styleSecondaryButton(JButton button) {
-        styleUnifiedButton(button, false, false);
+        applyRoundedButtonStyle(button, CARD_WHITE, new Color(244, 240, 254),
+                new Color(232, 224, 250), QMUL_PURPLE, false, true);
     }
 
     private void styleDangerButton(JButton button) {
-        styleUnifiedButton(button, true, true);
+        applyRoundedButtonStyle(button, DANGER_BUTTON_COLOR, new Color(225, 88, 96),
+                new Color(174, 53, 62), Color.WHITE, true, false);
     }
 
-    private void styleUnifiedButton(JButton button, boolean bold, boolean danger) {
-        Color normalBg = danger ? new Color(220, 53, 69) : QMUL_PURPLE;
-        Color hoverBg = danger ? new Color(200, 35, 51) : new Color(107, 63, 160);
-        button.setOpaque(true);
-        button.setContentAreaFilled(true);
+    private void applyRoundedButtonStyle(JButton button,
+                                         Color baseBg,
+                                         Color hoverBg,
+                                         Color pressedBg,
+                                         Color fg,
+                                         boolean bold,
+                                         boolean outlined) {
+        button.setContentAreaFilled(false);
         button.setBorderPainted(false);
+        button.setOpaque(false);
         button.setFocusPainted(false);
-        button.setBackground(normalBg);
-        button.setForeground(Color.WHITE);
+        button.setForeground(fg);
         button.setFont(new Font("Segoe UI", bold ? Font.BOLD : Font.PLAIN, 14));
-        button.setBorder(BorderFactory.createEmptyBorder(10, 18, 10, 18));
+        button.setBorder(BorderFactory.createEmptyBorder(10, 22, 10, 22));
+        button.setCursor(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR));
+        button.putClientProperty("button.baseBg", baseBg);
+        button.putClientProperty("button.hoverBg", hoverBg);
+        button.putClientProperty("button.pressedBg", pressedBg);
+        button.putClientProperty("button.fg", fg);
+        button.putClientProperty("button.outlined", outlined);
         button.putClientProperty("button.hover", Boolean.FALSE);
-        button.putClientProperty("button.disabledBg", new Color(120, 105, 145));
-        button.putClientProperty("button.disabledFg", Color.WHITE);
+        button.putClientProperty("button.pressed", Boolean.FALSE);
         button.addMouseListener(new java.awt.event.MouseAdapter() {
             @Override
             public void mouseEntered(java.awt.event.MouseEvent e) {
-                if (button.isEnabled()) {
-                    button.setBackground(hoverBg);
-                }
+                button.putClientProperty("button.hover", Boolean.TRUE);
+                button.repaint();
             }
 
             @Override
             public void mouseExited(java.awt.event.MouseEvent e) {
-                if (button.isEnabled()) {
-                    button.setBackground(normalBg);
+                button.putClientProperty("button.hover", Boolean.FALSE);
+                button.putClientProperty("button.pressed", Boolean.FALSE);
+                button.repaint();
+            }
+
+            @Override
+            public void mousePressed(java.awt.event.MouseEvent e) {
+                button.putClientProperty("button.pressed", Boolean.TRUE);
+                button.repaint();
+            }
+
+            @Override
+            public void mouseReleased(java.awt.event.MouseEvent e) {
+                button.putClientProperty("button.pressed", Boolean.FALSE);
+                button.repaint();
+            }
+        });
+        button.setUI(new javax.swing.plaf.basic.BasicButtonUI() {
+            @Override
+            public void paint(java.awt.Graphics g, javax.swing.JComponent c) {
+                javax.swing.AbstractButton b = (javax.swing.AbstractButton) c;
+                java.awt.Graphics2D g2 = (java.awt.Graphics2D) g.create();
+                g2.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING,
+                        java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+                java.awt.Color fillColor;
+                if (!b.isEnabled()) {
+                    fillColor = new Color(199, 191, 215);
+                } else if (Boolean.TRUE.equals(b.getClientProperty("button.pressed"))) {
+                    fillColor = (Color) b.getClientProperty("button.pressedBg");
+                } else if (Boolean.TRUE.equals(b.getClientProperty("button.hover"))) {
+                    fillColor = (Color) b.getClientProperty("button.hoverBg");
+                } else {
+                    fillColor = (Color) b.getClientProperty("button.baseBg");
                 }
+                int w = b.getWidth();
+                int h = b.getHeight();
+                g2.setColor(fillColor);
+                g2.fillRoundRect(0, 0, w, h, BUTTON_CORNER_RADIUS * 2, BUTTON_CORNER_RADIUS * 2);
+                if (Boolean.TRUE.equals(b.getClientProperty("button.outlined"))) {
+                    g2.setStroke(new java.awt.BasicStroke(1.4f));
+                    g2.setColor(QMUL_PURPLE);
+                    g2.drawRoundRect(0, 0, w - 1, h - 1,
+                            BUTTON_CORNER_RADIUS * 2, BUTTON_CORNER_RADIUS * 2);
+                }
+                g2.dispose();
+                super.paint(g, c);
             }
         });
-        button.addPropertyChangeListener("enabled", evt -> {
-            if (button.isEnabled()) {
-                button.setBackground(QMUL_PURPLE);
-                button.setForeground(Color.WHITE);
-            } else {
-                button.setBackground((Color) button.getClientProperty("button.disabledBg"));
-                button.setForeground((Color) button.getClientProperty("button.disabledFg"));
-            }
-        });
-        if (danger) {
-            button.putClientProperty("button.variant", "danger");
+        button.addPropertyChangeListener("enabled", evt -> button.repaint());
+    }
+
+    /** Wrap a Swing input so it looks like a modern rounded text field. */
+    private void styleRoundedField(javax.swing.JComponent field) {
+        field.setBorder(BorderFactory.createCompoundBorder(
+                new RoundedLineBorder(new Color(214, 219, 229), 1, 14),
+                BorderFactory.createEmptyBorder(8, 12, 8, 12)));
+        field.setFont(new Font("Segoe UI", Font.PLAIN, 14));
+        field.setBackground(CARD_WHITE);
+    }
+
+    /** Antialiased rounded line border used by the modern form fields. */
+    private static final class RoundedLineBorder extends javax.swing.border.AbstractBorder {
+        private final Color color;
+        private final int thickness;
+        private final int radius;
+
+        private RoundedLineBorder(Color color, int thickness, int radius) {
+            this.color = color;
+            this.thickness = thickness;
+            this.radius = radius;
+        }
+
+        @Override
+        public void paintBorder(java.awt.Component c, java.awt.Graphics g, int x, int y, int w, int h) {
+            java.awt.Graphics2D g2 = (java.awt.Graphics2D) g.create();
+            g2.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING,
+                    java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+            g2.setColor(color);
+            g2.setStroke(new java.awt.BasicStroke(thickness));
+            g2.drawRoundRect(x + thickness / 2, y + thickness / 2,
+                    w - thickness - 1, h - thickness - 1, radius, radius);
+            g2.dispose();
+        }
+
+        @Override
+        public java.awt.Insets getBorderInsets(java.awt.Component c) {
+            return new java.awt.Insets(thickness, thickness, thickness, thickness);
         }
     }
 
@@ -645,6 +873,32 @@ public class SwingApp {
 
     private void showToast(String title, String message, int messageType) {
         JOptionPane.showMessageDialog(frame, message, title, messageType);
+    }
+
+    /**
+     * Runs a CSV export action and shows a friendly dialog reporting the resulting
+     * file path. Empty datasets are still written as header-only files; any I/O or
+     * validation problem is surfaced through a clear error dialog instead of a stack trace.
+     */
+    private void exportCsv(String reportLabel, java.util.function.Supplier<Path> exportAction) {
+        if (exportService == null) {
+            JOptionPane.showMessageDialog(frame,
+                    "Export service is not available in this build.",
+                    "Export Unavailable", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+        try {
+            Path exportedPath = exportAction.get();
+            String message = reportLabel + " exported to:\n" + exportedPath.toAbsolutePath();
+            JOptionPane.showMessageDialog(frame, message, "Export Complete",
+                    JOptionPane.INFORMATION_MESSAGE);
+        } catch (IllegalArgumentException ex) {
+            JOptionPane.showMessageDialog(frame, ex.getMessage(),
+                    "Export Failed", JOptionPane.WARNING_MESSAGE);
+        } catch (IllegalStateException ex) {
+            JOptionPane.showMessageDialog(frame, ex.getMessage(),
+                    "Export Failed", JOptionPane.ERROR_MESSAGE);
+        }
     }
 
     private String scoreProgressBar(int score) {
@@ -996,90 +1250,234 @@ public class SwingApp {
         private final JButton loginButton;
         private final JButton registerButton;
         private final JLabel statusLabel;
+        private JButton demoButton;
+        private AutoDemoController demoController;
 
         private LoginPanel() {
             setLayout(new BorderLayout());
+            setBackground(SURFACE_BG);
+
             JPanel centerWrapper = new JPanel(new GridBagLayout());
             centerWrapper.setOpaque(false);
 
-            JPanel card = new JPanel(new BorderLayout(24, 0));
-            card.setBackground(Color.WHITE);
-            card.setBorder(BorderFactory.createCompoundBorder(
-                    BorderFactory.createLineBorder(new Color(226, 229, 236), 1, true),
-                    BorderFactory.createEmptyBorder(24, 24, 24, 24)));
-            card.setPreferredSize(new Dimension(940, 520));
+            JPanel card = new JPanel(new BorderLayout(0, 0));
+            card.setOpaque(false);
+            card.setBorder(new RoundedLineBorder(new Color(226, 229, 236), 1, 24));
+            card.setPreferredSize(new Dimension(940, 540));
 
-            JPanel left = new JPanel();
-            left.setOpaque(false);
-            left.setPreferredSize(new Dimension(340, 0));
-            left.setLayout(new BoxLayout(left, BoxLayout.Y_AXIS));
-            left.add(createAuthBrandPanel(true));
-            left.add(Box.createVerticalStrut(20));
-            JLabel loginHint = new JLabel("Sign in to manage jobs, applications, and notifications.");
-            loginHint.setForeground(MUTED_TEXT_COLOR);
-            loginHint.setFont(new Font("Segoe UI", Font.PLAIN, 14));
-            left.add(loginHint);
-            left.add(Box.createVerticalStrut(18));
-            JLabel loginCardBadge = new JLabel("Fast access to TA, MO, and Admin portals");
-            loginCardBadge.setFont(new Font("Segoe UI", Font.BOLD, 13));
-            loginCardBadge.setForeground(QMUL_PURPLE);
-            left.add(loginCardBadge);
+            JPanel hero = createLoginHeroPanel();
+            JPanel formPanel = buildFormPanel();
 
-            JPanel form = new JPanel(new GridLayout(0, 2, 15, 14));
-            form.setPreferredSize(new Dimension(450, 250));
-            form.setBorder(BorderFactory.createCompoundBorder(
-                    BorderFactory.createLineBorder(new Color(220, 225, 233), 1, true),
-                    BorderFactory.createEmptyBorder(28, 28, 28, 28)));
-            form.setBackground(Color.WHITE);
-            form.setOpaque(true);
+            card.add(hero, BorderLayout.WEST);
+            card.add(formPanel, BorderLayout.CENTER);
 
-            JLabel roleLabel = new JLabel("Role");
-            roleLabel.setFont(new Font("Segoe UI", Font.BOLD, 14));
-            form.add(roleLabel);
+            // White rounded background behind the card for a soft, modern look.
+            JPanel cardBackground = new JPanel(new BorderLayout()) {
+                @Override
+                protected void paintComponent(java.awt.Graphics g) {
+                    java.awt.Graphics2D g2 = (java.awt.Graphics2D) g.create();
+                    g2.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING,
+                            java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+                    g2.setColor(CARD_WHITE);
+                    g2.fillRoundRect(0, 0, getWidth(), getHeight(), 24, 24);
+                    g2.dispose();
+                }
+            };
+            cardBackground.setOpaque(false);
+            cardBackground.setBorder(BorderFactory.createEmptyBorder());
+            cardBackground.setPreferredSize(new Dimension(940, 540));
+            cardBackground.add(card, BorderLayout.CENTER);
+
+            centerWrapper.add(cardBackground);
+
             roleCombo = new JComboBox<>(new Role[] {Role.TA, Role.MO, Role.ADMIN});
             roleCombo.setFont(new Font("Segoe UI", Font.PLAIN, 14));
-            form.add(roleCombo);
-
-            JLabel emailLabel = new JLabel("Email");
-            emailLabel.setFont(new Font("Segoe UI", Font.BOLD, 14));
-            form.add(emailLabel);
+            styleRoundedField(roleCombo);
             emailField = new JTextField();
-            emailField.setFont(new Font("Segoe UI", Font.PLAIN, 14));
-            form.add(emailField);
-
-            JLabel pwdLabel = new JLabel("Password");
-            pwdLabel.setFont(new Font("Segoe UI", Font.BOLD, 14));
-            form.add(pwdLabel);
+            styleRoundedField(emailField);
             passwordField = new JPasswordField();
-            passwordField.setFont(new Font("Segoe UI", Font.PLAIN, 14));
-            form.add(passwordField);
+            styleRoundedField(passwordField);
 
-            loginButton = new JButton("Login");
+            loginButton = new JButton("Sign in");
             stylePrimaryButton(loginButton);
             loginButton.addActionListener(e -> login());
-            form.add(loginButton);
 
-            registerButton = new JButton("Register as TA");
+            registerButton = new JButton("Create a TA account");
             styleSecondaryButton(registerButton);
             registerButton.addActionListener(e -> showRegisterPage());
-            form.add(registerButton);
 
             statusLabel = new JLabel(" ");
             statusLabel.setFont(new Font("Segoe UI", Font.PLAIN, 12));
-            statusLabel.setForeground(new Color(100, 100, 100));
+            statusLabel.setForeground(MUTED_TEXT_COLOR);
 
-            JPanel centerContainer = new JPanel(new BorderLayout());
-            centerContainer.setOpaque(false);
-            centerContainer.add(form, BorderLayout.CENTER);
-            centerContainer.add(statusLabel, BorderLayout.SOUTH);
+            // Hidden until SwingApp wires in the AutoDemoController via
+            // installDemoButton(...). Stays as part of the form layout so
+            // that toggling visibility cleanly grows/shrinks the column.
+            demoButton = new JButton("\u25B6  Play auto demo  /  \u4e00\u952e\u6f14\u793a");
+            styleSecondaryButton(demoButton);
+            demoButton.setToolTipText("Plays a fully scripted TA \u2192 MO \u2192 Admin demo "
+                    + "(data is backed up and restored automatically).");
+            demoButton.setVisible(false);
+            demoButton.addActionListener(e -> {
+                if (demoController == null || !demoController.isAvailable()) {
+                    return;
+                }
+                demoButton.setEnabled(false);
+                statusLabel.setText("Auto demo running... \u4e00\u952e\u6f14\u793a\u4e2d (~2 min)");
+                demoController.start();
+            });
 
-            card.add(left, BorderLayout.WEST);
-            card.add(centerContainer, BorderLayout.CENTER);
-            centerWrapper.add(card);
+            // Now that the fields exist, populate the right-hand form column.
+            mountFormFields(formPanel);
 
             add(buildTopBar("BUPT International School TA Recruitment System", null), BorderLayout.NORTH);
             add(centerWrapper, BorderLayout.CENTER);
             frameSetDefaultButton();
+        }
+
+        private JPanel createLoginHeroPanel() {
+            JPanel hero = new JPanel() {
+                @Override
+                protected void paintComponent(java.awt.Graphics g) {
+                    java.awt.Graphics2D g2 = (java.awt.Graphics2D) g.create();
+                    g2.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING,
+                            java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+                    int w = getWidth();
+                    int h = getHeight();
+                    java.awt.GradientPaint paint = new java.awt.GradientPaint(
+                            0, 0, QMUL_PURPLE_DARK, w, h, QMUL_PURPLE_LIGHT);
+                    g2.setPaint(paint);
+                    g2.fillRoundRect(0, 0, w + 24, h, 24, 24);
+                    // Soft decorative circles.
+                    g2.setColor(new Color(255, 255, 255, 28));
+                    g2.fillOval(-60, h - 220, 240, 240);
+                    g2.fillOval(w - 140, -90, 200, 200);
+                    g2.dispose();
+                }
+            };
+            hero.setOpaque(false);
+            hero.setPreferredSize(new Dimension(380, 0));
+            hero.setLayout(new BoxLayout(hero, BoxLayout.Y_AXIS));
+            hero.setBorder(BorderFactory.createEmptyBorder(48, 40, 40, 32));
+
+            JLabel brand = new JLabel("BUPT × QMUL");
+            brand.setFont(new Font("Segoe UI", Font.BOLD, 26));
+            brand.setForeground(Color.WHITE);
+            brand.setAlignmentX(LEFT_ALIGNMENT);
+
+            JLabel system = new JLabel("TA Recruitment");
+            system.setFont(new Font("Segoe UI", Font.BOLD, 34));
+            system.setForeground(Color.WHITE);
+            system.setAlignmentX(LEFT_ALIGNMENT);
+
+            JLabel system2 = new JLabel("System");
+            system2.setFont(new Font("Segoe UI", Font.BOLD, 34));
+            system2.setForeground(Color.WHITE);
+            system2.setAlignmentX(LEFT_ALIGNMENT);
+
+            JLabel tagline = new JLabel("<html><div style='width:280px;color:#E6DBFF'>"
+                    + "One portal for Teaching Assistants, Module Organisers "
+                    + "and the Admin team — explainable matching, workload "
+                    + "balancing and audit-ready reports.</div></html>");
+            tagline.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+            tagline.setForeground(new Color(230, 219, 255));
+            tagline.setAlignmentX(LEFT_ALIGNMENT);
+
+            hero.add(brand);
+            hero.add(Box.createVerticalStrut(6));
+            hero.add(system);
+            hero.add(system2);
+            hero.add(Box.createVerticalStrut(22));
+            hero.add(tagline);
+            hero.add(Box.createVerticalGlue());
+
+            JLabel highlights = new JLabel("<html><div style='color:#FFFFFF'>"
+                    + "<b>· Explainable AI matching</b><br>"
+                    + "<b>· Workload-balanced ranking</b><br>"
+                    + "<b>· Audit log & CSV exports</b></div></html>");
+            highlights.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+            highlights.setAlignmentX(LEFT_ALIGNMENT);
+            hero.add(highlights);
+
+            return hero;
+        }
+
+        private JPanel buildFormPanel() {
+            JPanel form = new JPanel();
+            form.setOpaque(false);
+            form.setBorder(BorderFactory.createEmptyBorder(48, 48, 40, 48));
+            form.setLayout(new BoxLayout(form, BoxLayout.Y_AXIS));
+            return form;
+        }
+
+        private void mountFormFields(JPanel form) {
+            JLabel heading = new JLabel("Welcome back");
+            heading.setFont(new Font("Segoe UI", Font.BOLD, 24));
+            heading.setForeground(HEADER_TEXT);
+            heading.setAlignmentX(LEFT_ALIGNMENT);
+
+            JLabel sub = new JLabel("Sign in to continue to your dashboard.");
+            sub.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+            sub.setForeground(MUTED_TEXT_COLOR);
+            sub.setAlignmentX(LEFT_ALIGNMENT);
+
+            form.add(heading);
+            form.add(Box.createVerticalStrut(6));
+            form.add(sub);
+            form.add(Box.createVerticalStrut(26));
+
+            form.add(buildLabeledRow("Role", roleCombo));
+            form.add(Box.createVerticalStrut(14));
+            form.add(buildLabeledRow("Email", emailField));
+            form.add(Box.createVerticalStrut(14));
+            form.add(buildLabeledRow("Password", passwordField));
+            form.add(Box.createVerticalStrut(22));
+
+            loginButton.setAlignmentX(LEFT_ALIGNMENT);
+            loginButton.setMaximumSize(new Dimension(Integer.MAX_VALUE, 44));
+            registerButton.setAlignmentX(LEFT_ALIGNMENT);
+            registerButton.setMaximumSize(new Dimension(Integer.MAX_VALUE, 44));
+
+            form.add(loginButton);
+            form.add(Box.createVerticalStrut(10));
+            form.add(registerButton);
+
+            if (demoButton != null) {
+                demoButton.setAlignmentX(LEFT_ALIGNMENT);
+                demoButton.setMaximumSize(new Dimension(Integer.MAX_VALUE, 44));
+                form.add(Box.createVerticalStrut(10));
+                form.add(demoButton);
+            }
+
+            form.add(Box.createVerticalStrut(14));
+
+            statusLabel.setAlignmentX(LEFT_ALIGNMENT);
+            form.add(statusLabel);
+        }
+
+        private JPanel buildLabeledRow(String labelText, JComponent input) {
+            JPanel row = new JPanel();
+            row.setOpaque(false);
+            row.setLayout(new BoxLayout(row, BoxLayout.Y_AXIS));
+            row.setAlignmentX(LEFT_ALIGNMENT);
+            JLabel label = new JLabel(labelText);
+            label.setFont(new Font("Segoe UI", Font.BOLD, 12));
+            label.setForeground(MUTED_TEXT_COLOR);
+            label.setAlignmentX(LEFT_ALIGNMENT);
+            input.setAlignmentX(LEFT_ALIGNMENT);
+            input.setMaximumSize(new Dimension(Integer.MAX_VALUE, 42));
+            row.add(label);
+            row.add(Box.createVerticalStrut(6));
+            row.add(input);
+            return row;
+        }
+
+        void installDemoButton(AutoDemoController controller) {
+            this.demoController = controller;
+            if (demoButton != null) {
+                demoButton.setVisible(controller != null && controller.isAvailable());
+                demoButton.setEnabled(true);
+            }
         }
 
         private void reset() {
@@ -1088,6 +1486,9 @@ public class SwingApp {
             roleCombo.setSelectedItem(Role.TA);
             loginButton.setEnabled(true);
             registerButton.setEnabled(true);
+            if (demoButton != null) {
+                demoButton.setEnabled(true);
+            }
             statusLabel.setText(" ");
             frameSetDefaultButton();
         }
@@ -1117,15 +1518,13 @@ public class SwingApp {
                 roleCombo.setSelectedItem(loginUser.getRole());
                 statusLabel.setText("Login success.");
                 onLoginSuccess(loginUser);
-            } catch (IllegalArgumentException ex) {
-                String msg = (ex.getMessage() != null && !ex.getMessage().isBlank())
-                        ? ex.getMessage() : "Invalid credentials. Please try again.";
-                JOptionPane.showMessageDialog(frame, msg, "Login Failed", JOptionPane.WARNING_MESSAGE);
-                statusLabel.setText("Login failed.");
             } catch (RuntimeException ex) {
                 ex.printStackTrace();
-                JOptionPane.showMessageDialog(frame, "An unexpected error occurred. Please try again.",
-                        "Login Error", JOptionPane.ERROR_MESSAGE);
+                String detail = ex.getClass().getSimpleName();
+                if (ex.getMessage() != null && !ex.getMessage().isBlank()) {
+                    detail += ": " + ex.getMessage();
+                }
+                JOptionPane.showMessageDialog(frame, "Login error: " + detail);
                 statusLabel.setText("Login error.");
             }
         }
@@ -1175,6 +1574,7 @@ public class SwingApp {
         private final JTextField nameField;
         private final JTextField emailField;
         private final JPasswordField passwordField;
+        private final JLabel passwordHintLabel = new JLabel(" ");
         private final JTextField programmeField;
         private final JTextField yearField;
         private final JTextArea skillsArea;
@@ -1265,6 +1665,25 @@ public class SwingApp {
             right.add(emailField);
             right.add(createFieldLabel("Password"));
             right.add(passwordField);
+            passwordHintLabel.setFont(new Font("Segoe UI", Font.PLAIN, 11));
+            passwordHintLabel.setForeground(BADGE_ORANGE);
+            right.add(passwordHintLabel);
+            passwordField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+                private void update() {
+                    String hint = com.group52.tarecruitment.util.ValidationUtil
+                            .passwordStrengthHint(new String(passwordField.getPassword()));
+                    if (hint.isBlank()) {
+                        passwordHintLabel.setText("✓ Strong password");
+                        passwordHintLabel.setForeground(BADGE_GREEN);
+                    } else {
+                        passwordHintLabel.setText(hint);
+                        passwordHintLabel.setForeground(BADGE_ORANGE);
+                    }
+                }
+                public void insertUpdate(javax.swing.event.DocumentEvent e) { update(); }
+                public void removeUpdate(javax.swing.event.DocumentEvent e) { update(); }
+                public void changedUpdate(javax.swing.event.DocumentEvent e) { update(); }
+            });
             right.add(createFieldLabel("Programme"));
             right.add(programmeField);
             right.add(createFieldLabel("Year of Study"));
@@ -1388,6 +1807,7 @@ public class SwingApp {
         private static final String TAB_JOB_BOARD = "jobBoard";
         private static final String TAB_PROFILE = "profile";
         private static final String TAB_NOTIFICATIONS = "notifications";
+        private static final String TAB_SECURITY = "security";
 
         private final JLabel titleLabel;
         private final JLabel profileAvatarLabel;
@@ -1416,12 +1836,17 @@ public class SwingApp {
         private final JLabel dashboardAppliedCountLabel;
         private final JLabel dashboardPendingCountLabel;
         private final JLabel dashboardAcceptedCountLabel;
+        private final JLabel dashboardAcceptRateLabel;
         private final JTextField profileNameField;
         private final JTextField profileYearField;
         private final JTextField profileProgrammeField;
         private final JTextArea profileSkillsArea;
         private final JTextField profileHoursField;
         private final JLabel cvLabel;
+        private final JPasswordField secOldPassField = new JPasswordField();
+        private final JPasswordField secNewPassField = new JPasswordField();
+        private final JPasswordField secConfirmPassField = new JPasswordField();
+        private final JLabel secHintLabel = new JLabel(" ");
 
         private User user;
         private String selectedCvPath = "";
@@ -1441,7 +1866,7 @@ public class SwingApp {
             contentLayout = new CardLayout();
             contentPanel = new JPanel(contentLayout);
 
-            String[] navLabels = {"Dashboard", "Job Board", "Notifications", "My Profile"};
+            String[] navLabels = {"Dashboard", "Job Board", "Notifications", "My Profile", "Account Security"};
             Runnable[] navActions = {
                 () -> {
                     refreshApplications();
@@ -1459,6 +1884,10 @@ public class SwingApp {
                 () -> {
                     loadProfile();
                     contentLayout.show(contentPanel, TAB_PROFILE);
+                },
+                () -> {
+                    clearSecurityFields();
+                    contentLayout.show(contentPanel, TAB_SECURITY);
                 }
             };
             add(buildNavigationPanel(navLabels, navActions), BorderLayout.WEST);
@@ -1491,11 +1920,13 @@ public class SwingApp {
             dashboardAppliedCountLabel = new JLabel("0");
             dashboardPendingCountLabel = new JLabel("0");
             dashboardAcceptedCountLabel = new JLabel("0");
-            JPanel statCards = new JPanel(new GridLayout(1, 3, 14, 0));
+            dashboardAcceptRateLabel = new JLabel("0%");
+            JPanel statCards = new JPanel(new GridLayout(1, 4, 14, 0));
             statCards.setOpaque(false);
             statCards.add(createGradientStatCard(dashboardAppliedCountLabel, "Applications", "Total submitted", "⌘", QMUL_PURPLE, QMUL_PURPLE_LIGHT));
             statCards.add(createGradientStatCard(dashboardPendingCountLabel, "Pending", "Waiting review", "⏳", BADGE_ORANGE, new Color(255, 196, 105)));
             statCards.add(createGradientStatCard(dashboardAcceptedCountLabel, "Accepted", "Confirmed roles", "✓", BADGE_GREEN, new Color(120, 210, 162)));
+            statCards.add(createGradientStatCard(dashboardAcceptRateLabel, "Accept Rate", "Of decided apps", "%", new Color(0, 150, 199), new Color(0, 190, 240)));
 
             applicationSummaryLabel = new JLabel("Applications: 0 pending, 0 accepted, 0 rejected, 0 withdrawn.");
             applicationSummaryLabel.setFont(new Font("Segoe UI", Font.PLAIN, 13));
@@ -1875,6 +2306,7 @@ public class SwingApp {
             contentPanel.add(jobBoardPanel, TAB_JOB_BOARD);
             contentPanel.add(notificationsPanel, TAB_NOTIFICATIONS);
             contentPanel.add(profilePanel, TAB_PROFILE);
+            contentPanel.add(buildSecurityPanel(), TAB_SECURITY);
             add(contentPanel, BorderLayout.CENTER);
         }
 
@@ -1949,14 +2381,14 @@ public class SwingApp {
             dashboardAppliedCountLabel.setText(String.valueOf(applications == null ? 0 : applications.size()));
             dashboardPendingCountLabel.setText(String.valueOf(summary.getPending()));
             dashboardAcceptedCountLabel.setText(String.valueOf(summary.getAccepted()));
+            ApplicationService.ApplicationStats stats = applicationService.getApplicationStats(user.getId());
+            dashboardAcceptRateLabel.setText(String.format("%.0f%%", stats.acceptRate));
         }
 
         private void refreshNotifications() {
             notificationModel.setRowCount(0);
             List<NotificationEntry> notifications = buildTaNotifications();
-            int unreadCount = notificationService == null
-                    ? TaNotificationUtil.countUnread(notifications, readNotificationIds)
-                    : notificationService.countUnreadForUser(user.getId());
+            int unreadCount = TaNotificationUtil.countUnread(notifications, readNotificationIds);
             unreadCountLabel.setText("Unread: " + unreadCount);
             updateDashboardNotificationSummary(notifications, unreadCount);
 
@@ -1976,22 +2408,6 @@ public class SwingApp {
         }
 
         private List<NotificationEntry> buildTaNotifications() {
-            if (notificationService != null) {
-                List<Notification> persisted = notificationService.getNotificationsForUser(user.getId());
-                readNotificationIds.clear();
-                List<NotificationEntry> entries = new ArrayList<>();
-                for (Notification notification : persisted) {
-                    if (notification.isReadStatus()) {
-                        readNotificationIds.add(notification.getId());
-                    }
-                    entries.add(new NotificationEntry(
-                            notification.getId(),
-                            notificationTypeLabel(notification),
-                            safeText(notification.getMessage()),
-                            safeText(notification.getCreatedAt())));
-                }
-                return entries;
-            }
             return TaNotificationUtil.buildNotifications(
                     applicationService.getApplicationsByTaUserId(user.getId()),
                     jobService.getAllJobs());
@@ -2014,41 +2430,12 @@ public class SwingApp {
                 return;
             }
             String notificationId = String.valueOf(notificationModel.getValueAt(selected, 0));
-            if (notificationService != null) {
-                try {
-                    notificationService.setReadStatus(notificationId, read);
-                } catch (IllegalArgumentException ex) {
-                    JOptionPane.showMessageDialog(frame, ex.getMessage());
-                    return;
-                }
+            if (read) {
+                readNotificationIds.add(notificationId);
             } else {
-                if (read) {
-                    readNotificationIds.add(notificationId);
-                } else {
-                    readNotificationIds.remove(notificationId);
-                }
+                readNotificationIds.remove(notificationId);
             }
             refreshNotifications();
-        }
-
-        private String notificationTypeLabel(Notification notification) {
-            if (notification == null || notification.getType() == null) {
-                return "Notification";
-            }
-            return switch (notification.getType()) {
-                case APPLY -> "Application Submitted";
-                case WITHDRAW -> "Application Withdrawn";
-                case ACCEPT -> "Application Accepted";
-                case REJECT -> "Application Rejected";
-                case JOB_CLOSE -> "Job Closed";
-                case JOB_REOPEN -> "Job Reopened";
-                case OVERLOAD_ALERT -> "Overload Alert";
-                case ADMIN_ACCOUNT_CREATED -> "Account Created";
-                case ADMIN_ACCOUNT_STATUS_CHANGED -> "Account Status Changed";
-                case ADMIN_JOB_FORCE_CLOSED -> "Job Force-Closed";
-                case ADMIN_JOBS_AUTO_CLOSED -> "Jobs Auto-Closed";
-                case SYSTEM_ALERT -> "System Alert";
-            };
         }
 
         private void refreshJobs() {
@@ -2340,7 +2727,97 @@ public class SwingApp {
             }
         }
 
+        private JPanel buildSecurityPanel() {
+            JPanel outer = new JPanel(new BorderLayout());
+            outer.setOpaque(false);
+            outer.setBorder(BorderFactory.createEmptyBorder(24, 24, 24, 24));
 
+            JPanel card = new JPanel(new BorderLayout(0, 16));
+            card.setBackground(CARD_WHITE);
+            card.setBorder(BorderFactory.createCompoundBorder(
+                    BorderFactory.createLineBorder(CARD_BORDER, 1, true),
+                    BorderFactory.createEmptyBorder(24, 28, 24, 28)));
+
+            JLabel heading = new JLabel("Change Password");
+            heading.setFont(new Font("Segoe UI", Font.BOLD, 18));
+            heading.setForeground(QMUL_PURPLE);
+            card.add(heading, BorderLayout.NORTH);
+
+            JPanel form = new JPanel(new GridLayout(0, 2, 10, 12));
+            form.setOpaque(false);
+
+            form.add(createFieldLabel("Current Password"));
+            form.add(secOldPassField);
+            form.add(createFieldLabel("New Password"));
+            JPanel newPassWrapper = new JPanel(new BorderLayout(0, 4));
+            newPassWrapper.setOpaque(false);
+            newPassWrapper.add(secNewPassField, BorderLayout.NORTH);
+            secHintLabel.setFont(new Font("Segoe UI", Font.PLAIN, 11));
+            secHintLabel.setForeground(new Color(180, 100, 0));
+            newPassWrapper.add(secHintLabel, BorderLayout.SOUTH);
+            form.add(newPassWrapper);
+            form.add(createFieldLabel("Confirm New Password"));
+            form.add(secConfirmPassField);
+
+            secNewPassField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+                private void update() {
+                    String hint = ValidationUtil.passwordStrengthHint(new String(secNewPassField.getPassword()));
+                    if (hint.isEmpty()) {
+                        secHintLabel.setText("✓ Strong password");
+                        secHintLabel.setForeground(new Color(22, 163, 74));
+                    } else {
+                        secHintLabel.setText(hint);
+                        secHintLabel.setForeground(new Color(180, 100, 0));
+                    }
+                }
+                public void insertUpdate(javax.swing.event.DocumentEvent e) { update(); }
+                public void removeUpdate(javax.swing.event.DocumentEvent e) { update(); }
+                public void changedUpdate(javax.swing.event.DocumentEvent e) { update(); }
+            });
+
+            card.add(form, BorderLayout.CENTER);
+
+            JPanel actions = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+            actions.setOpaque(false);
+            JButton changeBtn = new JButton("Update Password");
+            stylePrimaryButton(changeBtn);
+            changeBtn.addActionListener(e -> doChangePassword());
+            actions.add(changeBtn);
+            card.add(actions, BorderLayout.SOUTH);
+
+            JPanel cardWrapper = new JPanel(new FlowLayout(FlowLayout.LEFT));
+            cardWrapper.setOpaque(false);
+            cardWrapper.add(card);
+            outer.add(cardWrapper, BorderLayout.NORTH);
+            return outer;
+        }
+
+        private void clearSecurityFields() {
+            secOldPassField.setText("");
+            secNewPassField.setText("");
+            secConfirmPassField.setText("");
+            secHintLabel.setText(" ");
+        }
+
+        private void doChangePassword() {
+            try {
+                authService.changePassword(
+                        user.getId(),
+                        new String(secOldPassField.getPassword()),
+                        new String(secNewPassField.getPassword()),
+                        new String(secConfirmPassField.getPassword()));
+                clearSecurityFields();
+                showToast("Password Updated", "Your password has been changed successfully.", JOptionPane.INFORMATION_MESSAGE);
+            } catch (IllegalArgumentException ex) {
+                JOptionPane.showMessageDialog(frame, ex.getMessage(), "Password Change Failed", JOptionPane.WARNING_MESSAGE);
+            }
+        }
+
+        private JLabel createFieldLabel(String text) {
+            JLabel lbl = new JLabel(text);
+            lbl.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+            return lbl;
+        }
 
         private String saveCvFile(File sourceFile, String userId) {
             try {
@@ -2374,6 +2851,7 @@ public class SwingApp {
         private static final String TAB_DASHBOARD = "dashboard";
         private static final String TAB_APPLICANTS = "applicants";
         private static final String TAB_PROFILE = "profile";
+        private static final String TAB_SECURITY = "security";
 
         private final JLabel titleLabel;
         private final CardLayout contentLayout;
@@ -2383,16 +2861,17 @@ public class SwingApp {
         private final DefaultTableModel applicantsModel;
         private final JTable applicantsTable;
         private final JLabel applicantsTitle;
-        private final JLabel moNotificationSummaryLabel;
-        private final JTextArea moNotificationArea;
-        private JCheckBox pendingOnlyCheckBox;
-        private JCheckBox needsDecisionCheckBox;
+        private final JCheckBox pendingOnlyCheckBox;
         private final JSpinner matchThresholdSpinner;
         private final Map<String, MoApplicantRankingService.RankedApplicant> rankedApplicantsByApplicationId;
         private final JTextField profileNameField;
         private final JTextField profileProgrammeField;
         private final JTextField profileEmailField;
         private final JTextField profileHoursField;
+        private final JPasswordField moSecOldPassField = new JPasswordField();
+        private final JPasswordField moSecNewPassField = new JPasswordField();
+        private final JPasswordField moSecConfirmPassField = new JPasswordField();
+        private final JLabel moSecHintLabel = new JLabel(" ");
         private User user;
         private String selectedJobId;
         private MoApplicantRankingService.SortMode applicantSortMode;
@@ -2407,7 +2886,7 @@ public class SwingApp {
             contentLayout = new CardLayout();
             contentPanel = new JPanel(contentLayout);
 
-            String[] navLabels = {"Dashboard", "Applicants List", "My Profile"};
+            String[] navLabels = {"Dashboard", "Applicants List", "My Profile", "Account Security"};
             Runnable[] navActions = {
                 () -> {
                     refreshJobs();
@@ -2420,6 +2899,10 @@ public class SwingApp {
                 () -> {
                     loadProfile();
                     contentLayout.show(contentPanel, TAB_PROFILE);
+                },
+                () -> {
+                    clearMoSecurityFields();
+                    contentLayout.show(contentPanel, TAB_SECURITY);
                 }
             };
             add(buildNavigationPanel(navLabels, navActions), BorderLayout.WEST);
@@ -2445,50 +2928,11 @@ public class SwingApp {
             installTableRowHover(jobsTable);
             JPanel dashboardPanel = new JPanel(new BorderLayout(0, 16));
             dashboardPanel.setOpaque(false);
-            JPanel dashboardTopStack = new JPanel();
-            dashboardTopStack.setOpaque(false);
-            dashboardTopStack.setLayout(new BoxLayout(dashboardTopStack, BoxLayout.Y_AXIS));
-
-            JPanel moNotificationPanel = new JPanel(new BorderLayout(0, 10));
-            moNotificationPanel.setOpaque(false);
-            JPanel moNotificationHeader = new JPanel(new BorderLayout());
-            moNotificationHeader.setOpaque(false);
-            moNotificationHeader.add(createSectionTitle(
-                    "MO Notifications",
-                    "New applications, pending decisions, and filled jobs for your posted jobs."), BorderLayout.WEST);
-            JPanel moNotificationActions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0));
-            moNotificationActions.setOpaque(false);
-            moNotificationSummaryLabel = new JLabel("Pending applications: 0 | Filled jobs: 0");
-            moNotificationSummaryLabel.setFont(new Font("Segoe UI", Font.BOLD, 13));
-            moNotificationSummaryLabel.setForeground(MUTED_TEXT_COLOR);
-            JButton refreshMoNotificationsButton = new JButton("Refresh");
-            styleSecondaryButton(refreshMoNotificationsButton);
-            refreshMoNotificationsButton.addActionListener(e -> refreshMoNotifications());
-            moNotificationActions.add(moNotificationSummaryLabel);
-            moNotificationActions.add(refreshMoNotificationsButton);
-            moNotificationHeader.add(moNotificationActions, BorderLayout.EAST);
-            moNotificationArea = new JTextArea(5, 60);
-            moNotificationArea.setEditable(false);
-            moNotificationArea.setLineWrap(true);
-            moNotificationArea.setWrapStyleWord(true);
-            moNotificationArea.setFont(new Font("Segoe UI", Font.PLAIN, 13));
-            moNotificationArea.setForeground(HEADER_TEXT);
-            moNotificationArea.setBackground(new Color(248, 249, 250));
-            moNotificationArea.setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 12));
-            JScrollPane moNotificationScrollPane = new JScrollPane(moNotificationArea);
-            moNotificationScrollPane.setBorder(BorderFactory.createLineBorder(new Color(230, 230, 235), 1, true));
-            moNotificationScrollPane.setPreferredSize(new Dimension(0, 126));
-            moNotificationPanel.add(moNotificationHeader, BorderLayout.NORTH);
-            moNotificationPanel.add(moNotificationScrollPane, BorderLayout.CENTER);
-            dashboardTopStack.add(createCardPanel(moNotificationPanel, 18, 18, 18, 18));
-            dashboardTopStack.add(Box.createVerticalStrut(12));
-
             JPanel dashboardHeader = new JPanel(new BorderLayout());
             dashboardHeader.setOpaque(false);
             JPanel dashboardHeaderText = createSectionTitle("My Posted Jobs", "Overview of jobs, applicants, and statuses.");
             dashboardHeader.add(dashboardHeaderText, BorderLayout.WEST);
-            dashboardTopStack.add(createCardPanel(dashboardHeader, 18, 18, 18, 18));
-            dashboardPanel.add(dashboardTopStack, BorderLayout.NORTH);
+            dashboardPanel.add(createCardPanel(dashboardHeader, 18, 18, 18, 18), BorderLayout.NORTH);
             JScrollPane jobsScrollPane = new JScrollPane(jobsTable);
             jobsScrollPane.setBorder(BorderFactory.createEmptyBorder());
             jobsScrollPane.getViewport().setBackground(Color.WHITE);
@@ -2502,12 +2946,6 @@ public class SwingApp {
             JButton editButton = new JButton("Edit");
             styleSecondaryButton(editButton);
             editButton.addActionListener(e -> editSelectedJob());
-            JButton closeButton = new JButton("Close Job");
-            styleDangerButton(closeButton);
-            closeButton.addActionListener(e -> closeSelectedJob());
-            JButton reopenButton = new JButton("Reopen Job");
-            styleSecondaryButton(reopenButton);
-            reopenButton.addActionListener(e -> reopenSelectedJob());
             JButton deleteButton = new JButton("Delete");
             styleDangerButton(deleteButton);
             deleteButton.addActionListener(e -> deleteSelectedJob());
@@ -2519,8 +2957,6 @@ public class SwingApp {
             refreshButton.addActionListener(e -> refreshJobs());
             jobActions.add(postButton);
             jobActions.add(editButton);
-            jobActions.add(closeButton);
-            jobActions.add(reopenButton);
             jobActions.add(deleteButton);
             jobActions.add(applicantsButton);
             jobActions.add(refreshButton);
@@ -2575,23 +3011,8 @@ public class SwingApp {
             pendingOnlyCheckBox = new JCheckBox("Pending only", true);
             pendingOnlyCheckBox.setOpaque(false);
             pendingOnlyCheckBox.setFont(new Font("Segoe UI", Font.PLAIN, 13));
-            pendingOnlyCheckBox.addActionListener(e -> {
-                if (pendingOnlyCheckBox.isSelected()) {
-                    needsDecisionCheckBox.setSelected(false);
-                }
-                refreshApplicants();
-            });
+            pendingOnlyCheckBox.addActionListener(e -> refreshApplicants());
             applicantsControls.add(pendingOnlyCheckBox);
-            needsDecisionCheckBox = new JCheckBox("Needs decision", false);
-            needsDecisionCheckBox.setOpaque(false);
-            needsDecisionCheckBox.setFont(new Font("Segoe UI", Font.PLAIN, 13));
-            needsDecisionCheckBox.addActionListener(e -> {
-                if (needsDecisionCheckBox.isSelected()) {
-                    pendingOnlyCheckBox.setSelected(false);
-                }
-                refreshApplicants();
-            });
-            applicantsControls.add(needsDecisionCheckBox);
             applicantsControls.add(new JLabel("Min match score"));
             matchThresholdSpinner = new JSpinner(new SpinnerNumberModel(DEFAULT_MO_MATCH_THRESHOLD, 0, 100, 5));
             matchThresholdSpinner.setPreferredSize(new Dimension(70, 32));
@@ -2623,12 +3044,15 @@ public class SwingApp {
             JButton refreshApplicantsButton = new JButton("Refresh");
             styleSecondaryButton(refreshApplicantsButton);
             refreshApplicantsButton.addActionListener(e -> refreshApplicants());
-            JButton sortMatchButton = new JButton("High match first");
+            JButton sortMatchButton = new JButton("Sort by Match Score");
             stylePrimaryButton(sortMatchButton);
             sortMatchButton.addActionListener(e -> sortApplicantsByMatchScore());
             JButton sortWorkloadButton = new JButton("Sort by Workload");
             styleSecondaryButton(sortWorkloadButton);
             sortWorkloadButton.addActionListener(e -> sortApplicantsByWorkload());
+            JButton exportApplicantsButton = new JButton("Export Applicants CSV");
+            stylePrimaryButton(exportApplicantsButton);
+            exportApplicantsButton.addActionListener(e -> exportApplicantsForSelectedJob());
             applicantActions.add(acceptButton);
             applicantActions.add(rejectButton);
             applicantActions.add(viewProfileButton);
@@ -2636,6 +3060,7 @@ public class SwingApp {
             applicantActions.add(explanationButton);
             applicantActions.add(sortMatchButton);
             applicantActions.add(sortWorkloadButton);
+            applicantActions.add(exportApplicantsButton);
             applicantActions.add(refreshApplicantsButton);
             applicantsPanel.add(applicantActions, BorderLayout.SOUTH);
 
@@ -2685,6 +3110,7 @@ public class SwingApp {
             contentPanel.add(dashboardPanel, TAB_DASHBOARD);
             contentPanel.add(applicantsPanel, TAB_APPLICANTS);
             contentPanel.add(profilePanel, TAB_PROFILE);
+            contentPanel.add(buildMoSecurityPanel(), TAB_SECURITY);
             add(contentPanel, BorderLayout.CENTER);
         }
 
@@ -2693,24 +3119,12 @@ public class SwingApp {
             this.selectedJobId = null;
             refreshJobs();
             refreshApplicants();
-            refreshMoNotifications();
             loadProfile();
             updateTopBarAvatar(user == null ? "" : user.getAvatarFilePath());
             contentLayout.show(contentPanel, TAB_DASHBOARD);
         }
 
         private void refreshJobs() {
-            try {
-                List<Job> closed = jobService.autoCloseExpiredJobs();
-                if (!closed.isEmpty()) {
-                    showToast(
-                            "Jobs Auto-Closed",
-                            closed.size() + " job(s) past their deadline were closed automatically.",
-                            JOptionPane.INFORMATION_MESSAGE);
-                }
-            } catch (RuntimeException ignored) {
-                // Don't block dashboard rendering if the sweep fails; the latest data still loads below.
-            }
             jobsModel.setRowCount(0);
             for (Job job : jobService.getJobsByMoId(user.getId())) {
                 jobsModel.addRow(new Object[] {
@@ -2722,130 +3136,6 @@ public class SwingApp {
                     job.getDeadline()
                 });
             }
-            refreshMoNotifications();
-        }
-
-        private void refreshMoNotifications() {
-            if (user == null) {
-                moNotificationSummaryLabel.setText("Pending applications: 0 | Filled jobs: 0");
-                moNotificationArea.setText("Login as an MO to see notifications for your jobs.");
-                return;
-            }
-
-            int pendingCount = applicationService.getPendingApplicationCountForMo(user.getId());
-            int filledJobCount = countFilledJobsForCurrentMo();
-            moNotificationSummaryLabel.setText(
-                    "Pending applications: " + pendingCount + " | Filled jobs: " + filledJobCount);
-
-            List<String> notificationLines = buildMoNotificationLines(pendingCount);
-            if (notificationLines.isEmpty()) {
-                moNotificationArea.setText(
-                        "No MO notifications right now. New applications, pending decisions, and filled jobs will appear here.");
-            } else {
-                moNotificationArea.setText(String.join("\n\n", notificationLines));
-            }
-            moNotificationArea.setCaretPosition(0);
-        }
-
-        private List<String> buildMoNotificationLines(int pendingCount) {
-            List<String> lines = new ArrayList<>();
-            List<Job> jobs = jobService.getJobsByMoId(user.getId());
-            Map<String, Job> jobsById = new LinkedHashMap<>();
-            for (Job job : jobs) {
-                jobsById.put(job.getId(), job);
-            }
-
-            // Pending count gives the MO an immediate workload summary before they inspect individual rows.
-            if (pendingCount > 0) {
-                int jobsWithPendingApplications = countJobsWithPendingApplications(jobs);
-                lines.add("Pending review: " + pendingCount + " application(s) across "
-                        + jobsWithPendingApplications + " job(s) need your decision.");
-            }
-
-            // Pending applications are treated as new reminders because the MO still needs to review them.
-            int remindersAdded = 0;
-            for (Application application : applicationService.getApplicationsForMo(user.getId())) {
-                if (application.getStatus() != ApplicationStatus.PENDING) {
-                    continue;
-                }
-                Job job = jobsById.get(application.getJobId());
-                User applicant = findUserById(application.getTaUserId()).orElse(null);
-                lines.add(buildPendingApplicationReminder(application, job, applicant));
-                remindersAdded++;
-                if (remindersAdded >= 8) {
-                    int remaining = pendingCount - remindersAdded;
-                    if (remaining > 0) {
-                        lines.add("More pending applications: " + remaining
-                                + " additional application(s) are waiting in the Applicants list.");
-                    }
-                    break;
-                }
-            }
-
-            // Filled-job reminders are regenerated from live accepted counts so they refresh after every decision.
-            for (Job job : jobs) {
-                int acceptedCount = acceptedApplicantsForJob(job.getId());
-                if (job.getStatus() == JobStatus.FILLED || acceptedCount >= job.getPositions()) {
-                    lines.add("Job filled: " + jobLabel(job) + " has " + acceptedCount + "/"
-                            + job.getPositions() + " accepted applicant(s). Status: FILLED.");
-                }
-            }
-            return lines;
-        }
-
-        private String buildPendingApplicationReminder(Application application, Job job, User applicant) {
-            String applicantName = applicant == null ? "Unknown applicant" : safeText(applicant.getName());
-            String jobText = job == null ? "an unknown job" : jobLabel(job);
-            String appliedDate = safeText(application.getAppliedDate()).isBlank()
-                    ? "an unknown date"
-                    : application.getAppliedDate();
-            String matchScoreText = "not available";
-            if (job != null && applicant != null) {
-                AiMatchingService.MatchResult matchResult =
-                        aiMatchingService.analyzeSkills(applicant.getSkills(), job.getRequiredSkills());
-                matchScoreText = matchResult.getScore() + "%";
-            }
-            return "New application: " + applicantName + " applied for " + jobText + " on " + appliedDate
-                    + ". Status: " + application.getStatus().name()
-                    + ". Match score: " + matchScoreText + ".";
-        }
-
-        private int countJobsWithPendingApplications(List<Job> jobs) {
-            int count = 0;
-            for (Job job : jobs) {
-                boolean hasPendingApplication = false;
-                for (Application application : applicationService.getApplicationsByJobId(job.getId())) {
-                    if (application.getStatus() == ApplicationStatus.PENDING) {
-                        hasPendingApplication = true;
-                        break;
-                    }
-                }
-                if (hasPendingApplication) {
-                    count++;
-                }
-            }
-            return count;
-        }
-
-        private int countFilledJobsForCurrentMo() {
-            if (user == null) {
-                return 0;
-            }
-            int count = 0;
-            for (Job job : jobService.getJobsByMoId(user.getId())) {
-                int acceptedCount = acceptedApplicantsForJob(job.getId());
-                if (job.getStatus() == JobStatus.FILLED || acceptedCount >= job.getPositions()) {
-                    count++;
-                }
-            }
-            return count;
-        }
-
-        private String jobLabel(Job job) {
-            if (job == null) {
-                return "Unknown job";
-            }
-            return safeText(job.getModuleCode()) + " - " + safeText(job.getModuleName());
         }
 
         private void createJob() {
@@ -2854,7 +3144,7 @@ public class SwingApp {
                 return;
             }
             try {
-                jobService.createJob(
+                Job job = jobService.createJob(
                         input.moduleCode,
                         input.moduleName,
                         input.description,
@@ -2863,8 +3153,9 @@ public class SwingApp {
                         input.positions,
                         input.deadline,
                         user.getId());
+                job.setStatus(input.status);
+                jobService.updateJob(job);
                 refreshJobs();
-                refreshMoNotifications();
             } catch (IllegalArgumentException ex) {
                 JOptionPane.showMessageDialog(frame, ex.getMessage());
             }
@@ -2887,101 +3178,17 @@ public class SwingApp {
             if (input == null) {
                 return;
             }
-            try {
-                jobService.updateJob(
-                        job.getId(),
-                        user.getId(),
-                        input.moduleCode,
-                        input.moduleName,
-                        input.description,
-                        input.requiredSkills,
-                        String.valueOf(input.hoursPerWeek),
-                        String.valueOf(input.positions),
-                        input.deadline);
-                refreshJobs();
-                refreshApplicants();
-                refreshMoNotifications();
-            } catch (IllegalArgumentException ex) {
-                JOptionPane.showMessageDialog(frame, ex.getMessage());
-            }
-        }
-
-        private void closeSelectedJob() {
-            int row = jobsTable.getSelectedRow();
-            if (row < 0) {
-                JOptionPane.showMessageDialog(frame, "Please select a job first.");
-                return;
-            }
-            int modelRow = jobsTable.convertRowIndexToModel(row);
-            String jobId = String.valueOf(jobsModel.getValueAt(modelRow, 0));
-            Job job = findJobById(jobId).orElse(null);
-            if (job == null) {
-                JOptionPane.showMessageDialog(frame, "Job not found.");
-                return;
-            }
-            if (job.getStatus() == JobStatus.CLOSED) {
-                JOptionPane.showMessageDialog(frame, "This job is already closed.");
-                return;
-            }
-            String label = job.getModuleCode() + " - " + job.getModuleName();
-            String prompt = "Close " + label + "?\n"
-                    + "New TAs will not be able to apply.\n"
-                    + "Pending applications keep their current status.";
-            int confirm = JOptionPane.showConfirmDialog(
-                    frame, prompt, "Confirm Close Job", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
-            if (confirm != JOptionPane.YES_OPTION) {
-                return;
-            }
-            try {
-                jobService.closeJob(job.getId(), user.getId());
-                showToast("Job Closed", label + " is now closed.", JOptionPane.INFORMATION_MESSAGE);
-                refreshJobs();
-                refreshApplicants();
-                refreshMoNotifications();
-            } catch (IllegalArgumentException ex) {
-                JOptionPane.showMessageDialog(frame, ex.getMessage());
-            }
-        }
-
-        private void reopenSelectedJob() {
-            int row = jobsTable.getSelectedRow();
-            if (row < 0) {
-                JOptionPane.showMessageDialog(frame, "Please select a job first.");
-                return;
-            }
-            int modelRow = jobsTable.convertRowIndexToModel(row);
-            String jobId = String.valueOf(jobsModel.getValueAt(modelRow, 0));
-            Job job = findJobById(jobId).orElse(null);
-            if (job == null) {
-                JOptionPane.showMessageDialog(frame, "Job not found.");
-                return;
-            }
-            if (job.getStatus() == JobStatus.OPEN) {
-                JOptionPane.showMessageDialog(frame, "This job is already open.");
-                return;
-            }
-            String label = job.getModuleCode() + " - " + job.getModuleName();
-            int confirm = JOptionPane.showConfirmDialog(
-                    frame,
-                    "Reopen " + label + "?\nTAs will be able to apply again until the deadline.",
-                    "Confirm Reopen Job",
-                    JOptionPane.YES_NO_OPTION,
-                    JOptionPane.QUESTION_MESSAGE);
-            if (confirm != JOptionPane.YES_OPTION) {
-                return;
-            }
-            try {
-                Job reopened = jobService.reopenJob(job.getId(), user.getId());
-                showToast(
-                        "Job Reopened",
-                        label + " is now " + reopened.getStatus().name() + ".",
-                        JOptionPane.INFORMATION_MESSAGE);
-                refreshJobs();
-                refreshApplicants();
-                refreshMoNotifications();
-            } catch (IllegalArgumentException ex) {
-                JOptionPane.showMessageDialog(frame, ex.getMessage());
-            }
+            job.setModuleCode(input.moduleCode);
+            job.setModuleName(input.moduleName);
+            job.setDescription(input.description);
+            job.setRequiredSkills(input.requiredSkills);
+            job.setHoursPerWeek(input.hoursPerWeek);
+            job.setPositions(input.positions);
+            job.setDeadline(input.deadline);
+            job.setStatus(input.status);
+            jobService.updateJob(job);
+            refreshJobs();
+            refreshApplicants();
         }
 
         private void deleteSelectedJob() {
@@ -3003,7 +3210,6 @@ public class SwingApp {
             }
             refreshJobs();
             refreshApplicants();
-            refreshMoNotifications();
         }
 
         private void openApplicantsForSelectedJob() {
@@ -3016,6 +3222,16 @@ public class SwingApp {
             selectedJobId = String.valueOf(jobsModel.getValueAt(modelRow, 0));
             refreshApplicants();
             contentLayout.show(contentPanel, TAB_APPLICANTS);
+        }
+
+        private void exportApplicantsForSelectedJob() {
+            if (selectedJobId == null || selectedJobId.isBlank()) {
+                JOptionPane.showMessageDialog(frame,
+                        "Please open a job's applicants from Dashboard before exporting.");
+                return;
+            }
+            final String jobId = selectedJobId;
+            exportCsv("Applicants for " + jobId, () -> exportService.exportApplicantsForJob(jobId));
         }
 
         private void refreshApplicants() {
@@ -3040,7 +3256,6 @@ public class SwingApp {
             }
             MoApplicantRankingService.RankingOptions options = new MoApplicantRankingService.RankingOptions(
                     pendingOnlyCheckBox.isSelected(),
-                    needsDecisionCheckBox.isSelected(),
                     (Integer) matchThresholdSpinner.getValue(),
                     applicantSortMode);
             for (MoApplicantRankingService.RankedApplicant applicant : moApplicantRankingService.rankApplicants(
@@ -3114,7 +3329,6 @@ public class SwingApp {
                 applicationService.updateApplicationStatus(appId, user.getId(), status);
                 refreshApplicants();
                 refreshJobs();
-                refreshMoNotifications();
                 showToast(
                         "Application Reviewed",
                         "Application has been marked as " + status.name() + ".",
@@ -3218,6 +3432,91 @@ public class SwingApp {
             }
         }
 
+        private JPanel buildMoSecurityPanel() {
+            JPanel outer = new JPanel(new BorderLayout());
+            outer.setOpaque(false);
+            outer.setBorder(BorderFactory.createEmptyBorder(24, 24, 24, 24));
+
+            JPanel card = new JPanel(new BorderLayout(0, 16));
+            card.setBackground(CARD_WHITE);
+            card.setBorder(BorderFactory.createCompoundBorder(
+                    BorderFactory.createLineBorder(CARD_BORDER, 1, true),
+                    BorderFactory.createEmptyBorder(24, 28, 24, 28)));
+
+            JLabel heading = new JLabel("Change Password");
+            heading.setFont(new Font("Segoe UI", Font.BOLD, 18));
+            heading.setForeground(QMUL_PURPLE);
+            card.add(heading, BorderLayout.NORTH);
+
+            JPanel form = new JPanel(new GridLayout(0, 2, 10, 12));
+            form.setOpaque(false);
+            form.add(new JLabel("Current Password"));
+            form.add(moSecOldPassField);
+            form.add(new JLabel("New Password"));
+            JPanel newPassWrapper = new JPanel(new BorderLayout(0, 4));
+            newPassWrapper.setOpaque(false);
+            newPassWrapper.add(moSecNewPassField, BorderLayout.NORTH);
+            moSecHintLabel.setFont(new Font("Segoe UI", Font.PLAIN, 11));
+            moSecHintLabel.setForeground(new Color(180, 100, 0));
+            newPassWrapper.add(moSecHintLabel, BorderLayout.SOUTH);
+            form.add(newPassWrapper);
+            form.add(new JLabel("Confirm New Password"));
+            form.add(moSecConfirmPassField);
+
+            moSecNewPassField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+                private void update() {
+                    String hint = ValidationUtil.passwordStrengthHint(new String(moSecNewPassField.getPassword()));
+                    if (hint.isEmpty()) {
+                        moSecHintLabel.setText("✓ Strong password");
+                        moSecHintLabel.setForeground(new Color(22, 163, 74));
+                    } else {
+                        moSecHintLabel.setText(hint);
+                        moSecHintLabel.setForeground(new Color(180, 100, 0));
+                    }
+                }
+                public void insertUpdate(javax.swing.event.DocumentEvent e) { update(); }
+                public void removeUpdate(javax.swing.event.DocumentEvent e) { update(); }
+                public void changedUpdate(javax.swing.event.DocumentEvent e) { update(); }
+            });
+
+            card.add(form, BorderLayout.CENTER);
+
+            JPanel actions = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+            actions.setOpaque(false);
+            JButton changeBtn = new JButton("Update Password");
+            stylePrimaryButton(changeBtn);
+            changeBtn.addActionListener(e -> doMoChangePassword());
+            actions.add(changeBtn);
+            card.add(actions, BorderLayout.SOUTH);
+
+            JPanel cardWrapper = new JPanel(new FlowLayout(FlowLayout.LEFT));
+            cardWrapper.setOpaque(false);
+            cardWrapper.add(card);
+            outer.add(cardWrapper, BorderLayout.NORTH);
+            return outer;
+        }
+
+        private void clearMoSecurityFields() {
+            moSecOldPassField.setText("");
+            moSecNewPassField.setText("");
+            moSecConfirmPassField.setText("");
+            moSecHintLabel.setText(" ");
+        }
+
+        private void doMoChangePassword() {
+            try {
+                authService.changePassword(
+                        user.getId(),
+                        new String(moSecOldPassField.getPassword()),
+                        new String(moSecNewPassField.getPassword()),
+                        new String(moSecConfirmPassField.getPassword()));
+                clearMoSecurityFields();
+                showToast("Password Updated", "Your password has been changed successfully.", JOptionPane.INFORMATION_MESSAGE);
+            } catch (IllegalArgumentException ex) {
+                JOptionPane.showMessageDialog(frame, ex.getMessage(), "Password Change Failed", JOptionPane.WARNING_MESSAGE);
+            }
+        }
+
         private JobInput promptForJobInput(Job existing) {
             JTextField moduleCodeField = new JTextField(existing == null ? "" : existing.getModuleCode());
             JTextField moduleNameField = new JTextField(existing == null ? "" : existing.getModuleName());
@@ -3226,6 +3525,11 @@ public class SwingApp {
             JTextField hoursField = new JTextField(existing == null ? "" : String.valueOf(existing.getHoursPerWeek()));
             JTextField positionsField = new JTextField(existing == null ? "" : String.valueOf(existing.getPositions()));
             JTextField deadlineField = new JTextField(existing == null ? "" : existing.getDeadline());
+            JComboBox<JobStatus> statusBox =
+                    new JComboBox<>(new JobStatus[] {JobStatus.OPEN, JobStatus.CLOSED, JobStatus.FILLED});
+            if (existing != null) {
+                statusBox.setSelectedItem(existing.getStatus());
+            }
 
             JPanel panel = new JPanel(new GridLayout(0, 1, 6, 6));
             panel.add(new JLabel("Module Code"));
@@ -3242,12 +3546,8 @@ public class SwingApp {
             panel.add(positionsField);
             panel.add(new JLabel("Deadline (YYYY-MM-DD)"));
             panel.add(deadlineField);
-            if (existing != null) {
-                JLabel statusHint = new JLabel(
-                        "Status: " + existing.getStatus().name() + "  (use Close / Reopen to change)");
-                statusHint.setForeground(MUTED_TEXT_COLOR);
-                panel.add(statusHint);
-            }
+            panel.add(new JLabel("Status"));
+            panel.add(statusBox);
 
             int option = JOptionPane.showConfirmDialog(
                     frame,
@@ -3266,7 +3566,8 @@ public class SwingApp {
                         requiredSkillsField.getText().trim(),
                         Integer.parseInt(hoursField.getText().trim()),
                         Integer.parseInt(positionsField.getText().trim()),
-                        deadlineField.getText().trim());
+                        deadlineField.getText().trim(),
+                        (JobStatus) statusBox.getSelectedItem());
             } catch (NumberFormatException ex) {
                 JOptionPane.showMessageDialog(frame, "Hours and positions must be numbers.");
                 return null;
@@ -3278,8 +3579,9 @@ public class SwingApp {
         private static final String TAB_WORKLOAD = "workload";
         private static final String TAB_ACCOUNTS = "accounts";
         private static final String TAB_JOBS = "jobs";
-        private static final String TAB_APPLICATIONS = "applications";
+        private static final String TAB_ALERTS = "alerts";
         private static final String TAB_AUDIT = "audit";
+        private static final String TAB_SECURITY = "security";
 
         private final JLabel titleLabel;
         private final CardLayout contentLayout;
@@ -3290,19 +3592,25 @@ public class SwingApp {
         private final JTable accountTable;
         private final DefaultTableModel jobsModel;
         private final JTable jobsTable;
-        private final DefaultTableModel applicationsModel;
-        private final JTable applicationsTable;
+        private final DefaultTableModel alertsModel;
+        private final JTable alertsTable;
+        private final JLabel alertsSummaryLabel = new JLabel(" ");
         private final DefaultTableModel auditModel;
         private final JTable auditTable;
-        private JComboBox<String> applicationStatusFilter;
+        private final JTextField auditSearchField = new JTextField();
 
         // Summary bar labels
         private final JLabel summaryTotalJobs = new JLabel("--");
         private final JLabel summaryFilledJobs = new JLabel("--");
         private final JLabel summaryOverloaded = new JLabel("--");
         private final JLabel summaryHighRisk = new JLabel("--");
-        private final JLabel summaryApplications = new JLabel("--");
+        private JTextArea recommendationArea;
         private final JTextField workloadSearchField = new JTextField();
+        private final JPasswordField adminSecOldPassField = new JPasswordField();
+        private final JPasswordField adminSecNewPassField = new JPasswordField();
+        private final JPasswordField adminSecConfirmPassField = new JPasswordField();
+        private final JLabel adminSecHintLabel = new JLabel(" ");
+        private User adminUser;
 
         // Notification bell
         private JLabel notificationBadge;
@@ -3328,7 +3636,7 @@ public class SwingApp {
             contentLayout = new CardLayout();
             contentPanel = new JPanel(contentLayout);
 
-            String[] navLabels = {"Workload Overview", "Manage Accounts", "Jobs Overview", "Applications", "Audit Log"};
+            String[] navLabels = {"Workload Overview", "Manage Accounts", "Jobs Overview", "Alerts", "Audit Log", "Account Security"};
             Runnable[] navActions = {
                 () -> {
                     refreshWorkload();
@@ -3343,12 +3651,16 @@ public class SwingApp {
                     contentLayout.show(contentPanel, TAB_JOBS);
                 },
                 () -> {
-                    refreshApplications();
-                    contentLayout.show(contentPanel, TAB_APPLICATIONS);
+                    refreshAlerts();
+                    contentLayout.show(contentPanel, TAB_ALERTS);
                 },
                 () -> {
                     refreshAuditLog();
                     contentLayout.show(contentPanel, TAB_AUDIT);
+                },
+                () -> {
+                    clearAdminSecurityFields();
+                    contentLayout.show(contentPanel, TAB_SECURITY);
                 }
             };
             add(buildNavigationPanel(navLabels, navActions), BorderLayout.WEST);
@@ -3397,12 +3709,7 @@ public class SwingApp {
             JScrollPane workloadScrollPane = new JScrollPane(workloadTable);
             workloadScrollPane.setBorder(BorderFactory.createEmptyBorder());
             workloadScrollPane.getViewport().setBackground(Color.WHITE);
-
-            JPanel workloadCenter = new JPanel(new BorderLayout(0, 14));
-            workloadCenter.setOpaque(false);
-            workloadCenter.add(createCardPanel(workloadScrollPane, 0, 0, 0, 0), BorderLayout.CENTER);
-            workloadPanel.add(workloadCenter, BorderLayout.CENTER);
-
+            workloadPanel.add(createCardPanel(workloadScrollPane, 0, 0, 0, 0), BorderLayout.CENTER);
             JButton refreshWorkloadButton = new JButton("Refresh");
             styleSecondaryButton(refreshWorkloadButton);
             refreshWorkloadButton.addActionListener(e -> refreshWorkload());
@@ -3412,14 +3719,11 @@ public class SwingApp {
             JButton exportReportButton = new JButton("View Report");
             styleSecondaryButton(exportReportButton);
             exportReportButton.addActionListener(e -> showWorkloadReport());
-            JButton exportWorkloadCsvButton = new JButton("Export CSV");
-            styleSecondaryButton(exportWorkloadCsvButton);
-            exportWorkloadCsvButton.addActionListener(e -> exportWorkloadCsv());
-            JButton aiAnalysisButton = new JButton("AI Analysis");
-            stylePrimaryButton(aiAnalysisButton);
-            aiAnalysisButton.addActionListener(e -> showAiAnalysisDialog());
-            JPanel workloadActions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 16, 0));
-            workloadActions.setBorder(BorderFactory.createEmptyBorder(16, 0, 0, 0));
+            JButton exportWorkloadCsvButton = new JButton("Export Workload CSV");
+            stylePrimaryButton(exportWorkloadCsvButton);
+            exportWorkloadCsvButton.addActionListener(e -> exportCsv(
+                    "TA Workload Summary", () -> exportService.exportTaWorkloadSummary()));
+            JPanel workloadActions = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
             workloadActions.setOpaque(false);
             workloadActions.add(refreshWorkloadButton);
             workloadActions.add(showOverloadedButton);
@@ -3517,22 +3821,11 @@ public class SwingApp {
             JButton refreshJobsButton = new JButton("Refresh");
             styleSecondaryButton(refreshJobsButton);
             refreshJobsButton.addActionListener(e -> refreshJobs());
-            JButton forceCloseButton = new JButton("Force Close");
-            styleDangerButton(forceCloseButton);
-            forceCloseButton.addActionListener(e -> forceCloseSelectedJob());
-            JButton forceReopenButton = new JButton("Force Reopen");
-            styleSecondaryButton(forceReopenButton);
-            forceReopenButton.addActionListener(e -> forceReopenSelectedJob());
-            JButton autoCloseButton = new JButton("Auto-Close Expired");
-            styleDangerButton(autoCloseButton);
-            autoCloseButton.addActionListener(e -> autoCloseExpiredJobs());
-            JButton exportJobsCsvButton = new JButton("Export CSV");
-            styleSecondaryButton(exportJobsCsvButton);
-            exportJobsCsvButton.addActionListener(e -> exportJobsCsv());
+            JButton exportJobsCsvButton = new JButton("Export Job Filling CSV");
+            stylePrimaryButton(exportJobsCsvButton);
+            exportJobsCsvButton.addActionListener(e -> exportCsv(
+                    "Job Filling Status", () -> exportService.exportJobFillingStatus()));
             jobsButtonRow.add(refreshJobsButton);
-            jobsButtonRow.add(forceCloseButton);
-            jobsButtonRow.add(forceReopenButton);
-            jobsButtonRow.add(autoCloseButton);
             jobsButtonRow.add(exportJobsCsvButton);
             jobsActions.add(jobsButtonRow, BorderLayout.WEST);
             JLabel jobsStatsLabel = new JLabel(" ");
@@ -3633,8 +3926,107 @@ public class SwingApp {
             contentPanel.add(workloadPanel, TAB_WORKLOAD);
             contentPanel.add(accountsPanel, TAB_ACCOUNTS);
             contentPanel.add(jobsPanel, TAB_JOBS);
-            contentPanel.add(applicationsPanel, TAB_APPLICATIONS);
+
+            // ---- Alerts panel ----
+            alertsModel = new DefaultTableModel(
+                    new Object[]{"Severity", "TA ID", "TA Name", "Message", "Suggested Action"}, 0) {
+                @Override public boolean isCellEditable(int r, int c) { return false; }
+            };
+            alertsTable = new JTable(alertsModel);
+            styleDataTable(alertsTable);
+            installTableRowHover(alertsTable);
+            alertsTable.getColumnModel().getColumn(0).setPreferredWidth(80);
+            alertsTable.getColumnModel().getColumn(1).setPreferredWidth(90);
+            alertsTable.getColumnModel().getColumn(2).setPreferredWidth(120);
+            alertsTable.getColumnModel().getColumn(3).setPreferredWidth(300);
+            alertsTable.getColumnModel().getColumn(4).setPreferredWidth(260);
+            // Colour-code severity column
+            alertsTable.getColumnModel().getColumn(0).setCellRenderer(new DefaultTableCellRenderer() {
+                @Override
+                public java.awt.Component getTableCellRendererComponent(
+                        JTable t, Object v, boolean sel, boolean foc, int row, int col) {
+                    super.getTableCellRendererComponent(t, v, sel, foc, row, col);
+                    String val = v == null ? "" : v.toString();
+                    if (!sel) {
+                        switch (val) {
+                            case "Critical" -> { setBackground(new Color(254, 226, 226)); setForeground(new Color(185, 28, 28)); }
+                            case "Warning"  -> { setBackground(new Color(254, 243, 199)); setForeground(new Color(146, 64, 14)); }
+                            default         -> { setBackground(new Color(219, 234, 254)); setForeground(new Color(30, 64, 175)); }
+                        }
+                    }
+                    setFont(getFont().deriveFont(Font.BOLD));
+                    return this;
+                }
+            });
+            JPanel alertsPanel = new JPanel(new BorderLayout(0, 16));
+            alertsPanel.setOpaque(false);
+            JPanel alertsHeader = new JPanel(new BorderLayout());
+            alertsHeader.setOpaque(false);
+            alertsHeader.add(createSectionTitle("Workload Alerts",
+                    "Critical: overloaded  |  Warning: ≥80% utilisation  |  Info: idle capacity"), BorderLayout.WEST);
+            alertsSummaryLabel.setFont(new Font("Segoe UI", Font.PLAIN, 12));
+            alertsSummaryLabel.setForeground(MUTED_TEXT_COLOR);
+            alertsHeader.add(alertsSummaryLabel, BorderLayout.EAST);
+            alertsPanel.add(createCardPanel(alertsHeader, 18, 18, 18, 18), BorderLayout.NORTH);
+            JScrollPane alertsScroll = new JScrollPane(alertsTable);
+            alertsScroll.setBorder(BorderFactory.createEmptyBorder());
+            alertsScroll.getViewport().setBackground(Color.WHITE);
+            alertsPanel.add(createCardPanel(alertsScroll, 0, 0, 0, 0), BorderLayout.CENTER);
+            JPanel alertsActions = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
+            alertsActions.setOpaque(false);
+            JButton refreshAlertsButton = new JButton("Refresh");
+            styleSecondaryButton(refreshAlertsButton);
+            refreshAlertsButton.addActionListener(e -> refreshAlerts());
+            JButton exportAlertsButton = new JButton("Export Report");
+            styleSecondaryButton(exportAlertsButton);
+            exportAlertsButton.addActionListener(e -> exportWorkloadReport());
+            alertsActions.add(refreshAlertsButton);
+            alertsActions.add(exportAlertsButton);
+            alertsPanel.add(alertsActions, BorderLayout.SOUTH);
+            contentPanel.add(alertsPanel, TAB_ALERTS);
+
+            // Audit Log tab
+            auditModel = new DefaultTableModel(
+                    new Object[]{"Log ID", "Application ID", "TA ID", "Job ID", "Operator", "From", "To", "Date"}, 0) {
+                @Override public boolean isCellEditable(int row, int column) { return false; }
+            };
+            auditTable = new JTable(auditModel);
+            styleDataTable(auditTable);
+
+            JLabel auditTitle = new JLabel("Application Status Change Audit Log");
+            auditTitle.setFont(new Font("Segoe UI", Font.BOLD, 16));
+            auditTitle.setForeground(HEADER_TEXT);
+            JLabel auditSearchLabel = new JLabel("Filter by TA ID or Job ID:");
+            auditSearchLabel.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+            auditSearchField.setPreferredSize(new Dimension(200, 30));
+            JButton auditSearchBtn = new JButton("Search");
+            stylePrimaryButton(auditSearchBtn);
+            auditSearchBtn.addActionListener(e -> refreshAuditLog());
+            JButton auditClearBtn = new JButton("Clear");
+            styleSecondaryButton(auditClearBtn);
+            auditClearBtn.addActionListener(e -> { auditSearchField.setText(""); refreshAuditLog(); });
+            JButton exportApplicationsCsvBtn = new JButton("Export All Applications CSV");
+            stylePrimaryButton(exportApplicationsCsvBtn);
+            exportApplicationsCsvBtn.addActionListener(e -> exportCsv(
+                    "All Applications", () -> exportService.exportAllApplications()));
+            JPanel auditSearchBar = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+            auditSearchBar.setOpaque(false);
+            auditSearchBar.add(auditSearchLabel);
+            auditSearchBar.add(auditSearchField);
+            auditSearchBar.add(auditSearchBtn);
+            auditSearchBar.add(auditClearBtn);
+            auditSearchBar.add(exportApplicationsCsvBtn);
+            JPanel auditHeader = new JPanel(new BorderLayout(0, 8));
+            auditHeader.setOpaque(false);
+            auditHeader.add(auditTitle, BorderLayout.NORTH);
+            auditHeader.add(auditSearchBar, BorderLayout.SOUTH);
+            JPanel auditPanel = new JPanel(new BorderLayout(0, 16));
+            auditPanel.setOpaque(false);
+            auditPanel.add(createCardPanel(auditHeader, 18, 18, 18, 18), BorderLayout.NORTH);
+            auditPanel.add(createCardPanel(new JScrollPane(auditTable), 0, 0, 0, 0), BorderLayout.CENTER);
             contentPanel.add(auditPanel, TAB_AUDIT);
+            contentPanel.add(buildAdminSecurityPanel(), TAB_SECURITY);
+
             add(contentPanel, BorderLayout.CENTER);
         }
 
@@ -3748,18 +4140,28 @@ public class SwingApp {
         // ========================= Bind / Refresh =========================
 
         private void bindUser(User user) {
-            this.user = user;
+            this.adminUser = user;
             refreshWorkload();
             refreshAccounts();
             refreshJobs();
+            refreshAlerts();
             updateTopBarAvatar(user == null ? "" : user.getAvatarFilePath());
             updateNotificationBadge();
             contentLayout.show(contentPanel, TAB_WORKLOAD);
         }
 
         private void refreshWorkload() {
-            filterWorkloadTable();
-            adminService.publishOverloadAlerts();
+            workloadModel.setRowCount(0);
+            for (AdminService.TAWorkloadSummary s : adminService.getAllTAWorkloads()) {
+                workloadModel.addRow(new Object[] {
+                    s.getTaUserId(),
+                    s.getTaName(),
+                    s.getAvailableHours(),
+                    s.getTotalAssignedHours(),
+                    s.getRemainingHours(),
+                    s.getRiskLevel().label()
+                });
+            }
             refreshSummaryBar();
             updateNotificationBadge();
         }
@@ -3790,40 +4192,53 @@ public class SwingApp {
             }
         }
 
-        private void refreshApplications() {
-            applicationsModel.setRowCount(0);
-            String selected = applicationStatusFilter == null ? "All"
-                    : (String) applicationStatusFilter.getSelectedItem();
-            ApplicationStatus filterStatus = null;
-            if (selected != null && !"All".equals(selected)) {
-                try { filterStatus = ApplicationStatus.valueOf(selected); } catch (Exception ignored) {}
-            }
-            List<AdminService.EnrichedApplication> apps = adminService.getApplicationsByStatus(filterStatus);
-            for (AdminService.EnrichedApplication app : apps) {
-                applicationsModel.addRow(new Object[] {
-                    app.applicationId,
-                    app.moduleCode + " - " + app.moduleName,
-                    app.taName,
-                    app.status.name(),
-                    app.appliedDate
+        private void refreshAlerts() {
+            alertsModel.setRowCount(0);
+            List<AdminService.WorkloadAlert> alerts = adminService.getWorkloadAlerts();
+            for (AdminService.WorkloadAlert a : alerts) {
+                alertsModel.addRow(new Object[]{
+                    a.getSeverity().label(),
+                    a.getTaUserId(),
+                    a.getTaName(),
+                    a.getMessage(),
+                    a.getSuggestedAction()
                 });
             }
+            long critical = alerts.stream().filter(a -> a.getSeverity() == AdminService.AlertSeverity.CRITICAL).count();
+            long warning  = alerts.stream().filter(a -> a.getSeverity() == AdminService.AlertSeverity.WARNING).count();
+            long info     = alerts.stream().filter(a -> a.getSeverity() == AdminService.AlertSeverity.INFO).count();
+            alertsSummaryLabel.setText(String.format(
+                    "Critical: %d  |  Warning: %d  |  Info: %d  |  System utilisation: %.0f%%",
+                    critical, warning, info, adminService.getSystemUtilisation()));
         }
 
         private void refreshAuditLog() {
             auditModel.setRowCount(0);
-            for (AdminService.AuditLogEntry entry : adminService.getAuditLog()) {
-                auditModel.addRow(new Object[] {
-                    entry.timestamp,
-                    entry.adminUserId,
-                    entry.action,
-                    entry.targetId,
-                    entry.details
+            String filter = auditSearchField.getText().trim().toLowerCase();
+            for (com.group52.tarecruitment.model.ApplicationAuditLog log : applicationService.getAuditLogs()) {
+                if (!filter.isBlank()
+                        && !log.getTaUserId().toLowerCase().contains(filter)
+                        && !log.getJobId().toLowerCase().contains(filter)) {
+                    continue;
+                }
+                auditModel.addRow(new Object[]{
+                    log.getId(), log.getApplicationId(), log.getTaUserId(), log.getJobId(),
+                    log.getOperatorUserId(),
+                    log.getFromStatus() == null ? "-" : log.getFromStatus().name(),
+                    log.getToStatus() == null ? "-" : log.getToStatus().name(),
+                    log.getChangedAt()
                 });
             }
         }
 
-        // ========================= Renderers =========================
+        private void exportWorkloadReport() {
+            String report = adminService.getWorkloadReport();
+            JTextArea area = new JTextArea(report, 20, 60);
+            area.setEditable(false);
+            area.setFont(new Font("Monospaced", Font.PLAIN, 12));
+            JOptionPane.showMessageDialog(frame, new JScrollPane(area),
+                    "Workload Report", JOptionPane.INFORMATION_MESSAGE);
+        }
 
         private void applyRiskLevelRenderer(JTable table, int col) {
             table.getColumnModel().getColumn(col).setCellRenderer(new DefaultTableCellRenderer() {
@@ -3923,17 +4338,16 @@ public class SwingApp {
             if (workloadModel.getRowCount() == 0) {
                 showToast("No Overloaded TAs", "All TAs are within their available hours.", JOptionPane.INFORMATION_MESSAGE);
             }
-            refreshSummaryBar();
         }
 
 
         private void showWorkloadReport() {
-            String report = adminService.getWorkloadBalancingReport();
+            String report = adminService.getWorkloadReport();
             JTextArea textArea = new JTextArea(report);
             textArea.setFont(new Font("Monospaced", Font.PLAIN, 12));
             textArea.setEditable(false);
-            textArea.setRows(22);
-            textArea.setColumns(66);
+            textArea.setRows(20);
+            textArea.setColumns(60);
             JScrollPane scrollPane = new JScrollPane(textArea);
             JOptionPane.showMessageDialog(frame, scrollPane, "Workload Report", JOptionPane.PLAIN_MESSAGE);
         }
@@ -4129,143 +4543,99 @@ public class SwingApp {
             }
         }
 
-        private void showAccountDetailDialog() {
-            int row = accountTable.getSelectedRow();
-            if (row < 0) return;
-            String userId = String.valueOf(accountModel.getValueAt(row, 0));
-            String detail = adminService.getUserDetailSummary(userId);
-            JTextArea area = new JTextArea(detail);
-            area.setFont(new Font("Monospaced", Font.PLAIN, 13));
-            area.setEditable(false);
-            area.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
-            area.setRows(16);
-            area.setColumns(50);
-            JOptionPane.showMessageDialog(frame, new JScrollPane(area),
-                    "User Detail \u2014 " + accountModel.getValueAt(row, 1), JOptionPane.PLAIN_MESSAGE);
+        private JPanel buildAdminSecurityPanel() {
+            JPanel outer = new JPanel(new BorderLayout());
+            outer.setOpaque(false);
+            outer.setBorder(BorderFactory.createEmptyBorder(24, 24, 24, 24));
+
+            JPanel card = new JPanel(new BorderLayout(0, 16));
+            card.setBackground(CARD_WHITE);
+            card.setBorder(BorderFactory.createCompoundBorder(
+                    BorderFactory.createLineBorder(CARD_BORDER, 1, true),
+                    BorderFactory.createEmptyBorder(24, 28, 24, 28)));
+
+            JLabel heading = new JLabel("Change My Password");
+            heading.setFont(new Font("Segoe UI", Font.BOLD, 18));
+            heading.setForeground(QMUL_PURPLE);
+            JLabel subheading = new JLabel("Use this to change your own admin account password. To reset another user's password, use Manage Accounts.");
+            subheading.setFont(new Font("Segoe UI", Font.PLAIN, 12));
+            subheading.setForeground(new Color(107, 114, 128));
+            JPanel headingPanel = new JPanel(new BorderLayout(0, 4));
+            headingPanel.setOpaque(false);
+            headingPanel.add(heading, BorderLayout.NORTH);
+            headingPanel.add(subheading, BorderLayout.SOUTH);
+            card.add(headingPanel, BorderLayout.NORTH);
+
+            JPanel form = new JPanel(new GridLayout(0, 2, 10, 12));
+            form.setOpaque(false);
+            form.add(new JLabel("Current Password"));
+            form.add(adminSecOldPassField);
+            form.add(new JLabel("New Password"));
+            JPanel newPassWrapper = new JPanel(new BorderLayout(0, 4));
+            newPassWrapper.setOpaque(false);
+            newPassWrapper.add(adminSecNewPassField, BorderLayout.NORTH);
+            adminSecHintLabel.setFont(new Font("Segoe UI", Font.PLAIN, 11));
+            adminSecHintLabel.setForeground(new Color(180, 100, 0));
+            newPassWrapper.add(adminSecHintLabel, BorderLayout.SOUTH);
+            form.add(newPassWrapper);
+            form.add(new JLabel("Confirm New Password"));
+            form.add(adminSecConfirmPassField);
+
+            adminSecNewPassField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+                private void update() {
+                    String hint = ValidationUtil.passwordStrengthHint(new String(adminSecNewPassField.getPassword()));
+                    if (hint.isEmpty()) {
+                        adminSecHintLabel.setText("✓ Strong password");
+                        adminSecHintLabel.setForeground(new Color(22, 163, 74));
+                    } else {
+                        adminSecHintLabel.setText(hint);
+                        adminSecHintLabel.setForeground(new Color(180, 100, 0));
+                    }
+                }
+                public void insertUpdate(javax.swing.event.DocumentEvent e) { update(); }
+                public void removeUpdate(javax.swing.event.DocumentEvent e) { update(); }
+                public void changedUpdate(javax.swing.event.DocumentEvent e) { update(); }
+            });
+
+            card.add(form, BorderLayout.CENTER);
+
+            JPanel actions = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+            actions.setOpaque(false);
+            JButton changeBtn = new JButton("Update Password");
+            stylePrimaryButton(changeBtn);
+            changeBtn.addActionListener(e -> doAdminChangePassword());
+            actions.add(changeBtn);
+            card.add(actions, BorderLayout.SOUTH);
+
+            JPanel cardWrapper = new JPanel(new FlowLayout(FlowLayout.LEFT));
+            cardWrapper.setOpaque(false);
+            cardWrapper.add(card);
+            outer.add(cardWrapper, BorderLayout.NORTH);
+            return outer;
         }
 
-        // ========================= Job actions =========================
-
-        private void showJobDetailDialog() {
-            int row = jobsTable.getSelectedRow();
-            if (row < 0) return;
-            if (row >= cachedJobOverviews.size()) {
-                JOptionPane.showMessageDialog(frame, "Please refresh the jobs list first.");
-                return;
-            }
-            AdminService.JobOverview ov = cachedJobOverviews.get(row);
-            StringBuilder sb = new StringBuilder();
-            sb.append("Job ID:          ").append(ov.jobId).append("\n");
-            sb.append("Module Code:     ").append(ov.moduleCode).append("\n");
-            sb.append("Module Name:     ").append(ov.moduleName).append("\n");
-            sb.append("Description:     ").append(ov.description == null ? "" : ov.description).append("\n");
-            sb.append("Required Skills: ").append(ov.requiredSkills == null ? "" : ov.requiredSkills).append("\n");
-            sb.append("Hours/Week:      ").append(ov.hoursPerWeek).append("\n");
-            sb.append("Positions:       ").append(ov.positions).append("\n");
-            sb.append("Filled:          ").append(ov.filled).append("\n");
-            sb.append("Deadline:        ").append(ov.deadline == null ? "" : ov.deadline).append("\n");
-            sb.append("Posted by MO:    ").append(ov.postedByMoName).append(" (").append(ov.postedByMoId).append(")\n");
-            sb.append("Status:          ").append(ov.status.name()).append("\n");
-            JTextArea area = new JTextArea(sb.toString());
-            area.setFont(new Font("Monospaced", Font.PLAIN, 13));
-            area.setEditable(false);
-            area.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
-            JOptionPane.showMessageDialog(frame, new JScrollPane(area),
-                    "Job Detail \u2014 " + ov.moduleCode + " " + ov.moduleName, JOptionPane.PLAIN_MESSAGE);
+        private void clearAdminSecurityFields() {
+            adminSecOldPassField.setText("");
+            adminSecNewPassField.setText("");
+            adminSecConfirmPassField.setText("");
+            adminSecHintLabel.setText(" ");
         }
 
-        private void forceCloseSelectedJob() {
-            int row = jobsTable.getSelectedRow();
-            if (row < 0) {
-                JOptionPane.showMessageDialog(frame, "Please select a job first.");
+        private void doAdminChangePassword() {
+            if (adminUser == null) {
+                JOptionPane.showMessageDialog(frame, "Admin user not loaded.");
                 return;
             }
-            if (row >= cachedJobOverviews.size()) {
-                JOptionPane.showMessageDialog(frame, "Please refresh the jobs list first.");
-                return;
-            }
-            AdminService.JobOverview ov = cachedJobOverviews.get(row);
-            int confirm = JOptionPane.showConfirmDialog(frame,
-                    "Force-close job: " + ov.moduleCode + " - " + ov.moduleName + "?\nThis action cannot be undone by MO.",
-                    "Confirm Force Close", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
-            if (confirm != JOptionPane.YES_OPTION) return;
             try {
-                adminService.forceCloseJob(ov.jobId, user == null ? "ADMIN" : user.getId());
-                refreshJobs();
-                refreshSummaryBar();
-                updateNotificationBadge();
-                showToast("Job Closed", "Job has been force-closed.", JOptionPane.INFORMATION_MESSAGE);
+                authService.changePassword(
+                        adminUser.getId(),
+                        new String(adminSecOldPassField.getPassword()),
+                        new String(adminSecNewPassField.getPassword()),
+                        new String(adminSecConfirmPassField.getPassword()));
+                clearAdminSecurityFields();
+                showToast("Password Updated", "Your admin password has been changed successfully.", JOptionPane.INFORMATION_MESSAGE);
             } catch (IllegalArgumentException ex) {
-                JOptionPane.showMessageDialog(frame, ex.getMessage());
-            }
-        }
-
-        private void forceReopenSelectedJob() {
-            int row = jobsTable.getSelectedRow();
-            if (row < 0) {
-                JOptionPane.showMessageDialog(frame, "Please select a job first.");
-                return;
-            }
-            if (row >= cachedJobOverviews.size()) {
-                JOptionPane.showMessageDialog(frame, "Please refresh the jobs list first.");
-                return;
-            }
-            AdminService.JobOverview ov = cachedJobOverviews.get(row);
-            try {
-                adminService.forceReopenJob(ov.jobId, user == null ? "ADMIN" : user.getId());
-                refreshJobs();
-                refreshSummaryBar();
-                showToast("Job Reopened", "Job has been force-reopened.", JOptionPane.INFORMATION_MESSAGE);
-            } catch (IllegalArgumentException ex) {
-                JOptionPane.showMessageDialog(frame, ex.getMessage());
-            }
-        }
-
-        private void autoCloseExpiredJobs() {
-            int confirm = JOptionPane.showConfirmDialog(frame,
-                    "Auto-close all OPEN jobs whose deadlines have passed?",
-                    "Confirm Auto-Close", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
-            if (confirm != JOptionPane.YES_OPTION) return;
-            int count = adminService.triggerAutoCloseExpiredJobs(user == null ? "ADMIN" : user.getId());
-            refreshJobs();
-            refreshSummaryBar();
-            updateNotificationBadge();
-            if (count == 0) {
-                showToast("No Expired Jobs", "All OPEN jobs are within their deadlines.", JOptionPane.INFORMATION_MESSAGE);
-            } else {
-                showToast("Jobs Closed", count + " expired job(s) have been closed.", JOptionPane.INFORMATION_MESSAGE);
-            }
-        }
-
-        // ========================= Export =========================
-
-        private void exportWorkloadCsv() {
-            JFileChooser chooser = new JFileChooser();
-            chooser.setDialogTitle("Export Workload CSV");
-            chooser.setSelectedFile(new File("workload_export.csv"));
-            if (chooser.showSaveDialog(frame) != JFileChooser.APPROVE_OPTION) return;
-            try {
-                adminService.exportWorkloadToCsv(chooser.getSelectedFile().toPath());
-                adminService.addAuditEntry(user == null ? "ADMIN" : user.getId(),
-                        "EXPORT_WORKLOAD_CSV", chooser.getSelectedFile().getName(), "Exported workload data to CSV.");
-                showToast("Export Complete", "Workload data exported to:\n" + chooser.getSelectedFile().getAbsolutePath(), JOptionPane.INFORMATION_MESSAGE);
-            } catch (IOException ex) {
-                JOptionPane.showMessageDialog(frame, "Export failed: " + ex.getMessage());
-            }
-        }
-
-        private void exportJobsCsv() {
-            JFileChooser chooser = new JFileChooser();
-            chooser.setDialogTitle("Export Jobs CSV");
-            chooser.setSelectedFile(new File("jobs_export.csv"));
-            if (chooser.showSaveDialog(frame) != JFileChooser.APPROVE_OPTION) return;
-            try {
-                adminService.exportJobsToCsv(chooser.getSelectedFile().toPath());
-                adminService.addAuditEntry(user == null ? "ADMIN" : user.getId(),
-                        "EXPORT_JOBS_CSV", chooser.getSelectedFile().getName(), "Exported jobs data to CSV.");
-                showToast("Export Complete", "Jobs data exported to:\n" + chooser.getSelectedFile().getAbsolutePath(), JOptionPane.INFORMATION_MESSAGE);
-            } catch (IOException ex) {
-                JOptionPane.showMessageDialog(frame, "Export failed: " + ex.getMessage());
+                JOptionPane.showMessageDialog(frame, ex.getMessage(), "Password Change Failed", JOptionPane.WARNING_MESSAGE);
             }
         }
     }
@@ -4278,9 +4648,10 @@ public class SwingApp {
         private final int hoursPerWeek;
         private final int positions;
         private final String deadline;
+        private final JobStatus status;
 
         private JobInput(String moduleCode, String moduleName, String description, String requiredSkills,
-                int hoursPerWeek, int positions, String deadline) {
+                int hoursPerWeek, int positions, String deadline, JobStatus status) {
             this.moduleCode = moduleCode;
             this.moduleName = moduleName;
             this.description = description;
@@ -4288,6 +4659,7 @@ public class SwingApp {
             this.hoursPerWeek = hoursPerWeek;
             this.positions = positions;
             this.deadline = deadline;
+            this.status = status;
         }
     }
 

@@ -1,5 +1,6 @@
 package com.group52.tarecruitment;
 
+import com.group52.tarecruitment.repository.ApplicationAuditLogRepository;
 import com.group52.tarecruitment.repository.ApplicationRepository;
 import com.group52.tarecruitment.repository.JobRepository;
 import com.group52.tarecruitment.repository.NotificationRepository;
@@ -8,6 +9,7 @@ import com.group52.tarecruitment.repository.WorkloadRepository;
 import com.group52.tarecruitment.service.AdminService;
 import com.group52.tarecruitment.service.ApplicationService;
 import com.group52.tarecruitment.service.AuthService;
+import com.group52.tarecruitment.service.ExportService;
 import com.group52.tarecruitment.service.JobService;
 import com.group52.tarecruitment.service.NotificationService;
 import com.group52.tarecruitment.service.WorkloadService;
@@ -26,6 +28,8 @@ public class SwingMain {
                 new NotificationRepository(dataDirectory.resolve("notifications.csv"));
         WorkloadRepository workloadRepository =
                 new WorkloadRepository(dataDirectory.resolve("workloads.json"));
+        ApplicationAuditLogRepository auditLogRepository =
+                new ApplicationAuditLogRepository(dataDirectory.resolve("audit_log.csv"));
 
         AuthService authService = new AuthService(userRepository);
         NotificationService notificationService = new NotificationService(notificationRepository);
@@ -33,8 +37,12 @@ public class SwingMain {
         WorkloadService workloadService = new WorkloadService(workloadRepository);
         ApplicationService applicationService =
                 new ApplicationService(applicationRepository, jobRepository, workloadService, notificationService);
+        applicationService.setAuditLogRepository(auditLogRepository);
         AdminService adminService =
-                new AdminService(userRepository, jobRepository, applicationRepository, notificationService, jobService);
+                new AdminService(userRepository, jobRepository, applicationRepository, notificationService);
+        ExportService exportService = new ExportService(
+                userRepository, jobRepository, applicationRepository,
+                adminService, dataDirectory.resolve("exports"));
 
         SwingApp app = new SwingApp(
                 authService,
@@ -42,7 +50,8 @@ public class SwingMain {
                 applicationService,
                 dataDirectory,
                 adminService,
-                notificationService);
+                notificationService,
+                exportService);
         app.start();
     }
 }

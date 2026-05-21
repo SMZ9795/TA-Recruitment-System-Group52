@@ -13,6 +13,8 @@ public class User {
     private boolean active;
     private String cvFilePath;
     private String avatarFilePath;
+    private int failedLoginAttempts;
+    private String lockedUntil; // ISO date-time string, empty means not locked
 
     public User() {
         this.cvFilePath = "";
@@ -141,4 +143,9 @@ public class User {
     public void setAvatarFilePath(String avatarFilePath) {
         this.avatarFilePath = avatarFilePath == null ? "" : avatarFilePath;
     }
+
+    public int getFailedLoginAttempts() { return failedLoginAttempts; }
+    public void setFailedLoginAttempts(int failedLoginAttempts) { this.failedLoginAttempts = failedLoginAttempts; }
+    public String getLockedUntil() { return lockedUntil == null ? "" : lockedUntil; }
+    public void setLockedUntil(String lockedUntil) { this.lockedUntil = lockedUntil == null ? "" : lockedUntil; }
 }

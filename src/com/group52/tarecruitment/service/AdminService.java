@@ -566,274 +566,231 @@ public class AdminService {
         return WorkloadTrend.NEW;
     }
 
-    // ========================= Job management =========================
+    // -------------------------------------------------------------------------
+    // WorkloadAlert: structured alert system
+    // -------------------------------------------------------------------------
 
-    /**
-     * Force-close a job regardless of MO ownership.
-     * Only Admin should call this method.
-     */
-    public Job forceCloseJob(String jobId, String adminUserId) {
-        if (jobId == null || jobId.isBlank()) {
-            throw new IllegalArgumentException("Job ID is required.");
+    /** Severity of a workload alert. */
+    public enum AlertSeverity {
+        CRITICAL, WARNING, INFO;
+
+        public String label() {
+            return switch (this) {
+                case CRITICAL -> "Critical";
+                case WARNING  -> "Warning";
+                case INFO     -> "Info";
+            };
         }
-        Job job = jobRepository.findById(jobId.trim())
-                .orElseThrow(() -> new IllegalArgumentException("Job not found."));
-        if (job.getStatus() == JobStatus.CLOSED) {
-            throw new IllegalArgumentException("This job is already closed.");
+    }
+
+    /** A single workload alert entry. */
+    public static class WorkloadAlert {
+        private final AlertSeverity severity;
+        private final String taUserId;
+        private final String taName;
+        private final String message;
+        private final String suggestedAction;
+
+        public WorkloadAlert(AlertSeverity severity, String taUserId, String taName,
+                             String message, String suggestedAction) {
+            this.severity        = severity;
+            this.taUserId        = taUserId;
+            this.taName          = taName;
+            this.message         = message;
+            this.suggestedAction = suggestedAction;
         }
-        job.setStatus(JobStatus.CLOSED);
-        jobRepository.save(job);
-        addAuditEntry(adminUserId, "FORCE_CLOSE_JOB", jobId,
-                "Closed job " + job.getModuleCode() + " - " + job.getModuleName());
-        publishAdminNotification(adminUserId, NotificationType.ADMIN_JOB_FORCE_CLOSED,
-                "Force-closed job: " + job.getModuleCode() + " - " + job.getModuleName(), jobId);
-        return job;
+
+        public AlertSeverity getSeverity()      { return severity; }
+        public String getTaUserId()             { return taUserId; }
+        public String getTaName()               { return taName; }
+        public String getMessage()              { return message; }
+        public String getSuggestedAction()      { return suggestedAction; }
     }
 
     /**
-     * Force-reopen a closed or filled job regardless of MO ownership.
-     * Only Admin should call this method.
+     * Generates a list of workload alerts for all active TAs.
+     * <ul>
+     *   <li>CRITICAL — TA is overloaded (assigned > availableHours)</li>
+     *   <li>WARNING  — TA is at risk (>= 80 % utilisation)</li>
+     *   <li>INFO     — TA has declared availableHours but has no accepted job yet (idle capacity)</li>
+     * </ul>
+     * Alerts are sorted: CRITICAL first, then WARNING, then INFO.
      */
-    public Job forceReopenJob(String jobId, String adminUserId) {
-        if (jobId == null || jobId.isBlank()) {
-            throw new IllegalArgumentException("Job ID is required.");
-        }
-        Job job = jobRepository.findById(jobId.trim())
-                .orElseThrow(() -> new IllegalArgumentException("Job not found."));
-        if (job.getStatus() == JobStatus.OPEN) {
-            throw new IllegalArgumentException("This job is already open.");
-        }
-        // Check deadline
-        if (job.getDeadline() != null && !job.getDeadline().isBlank()) {
-            try {
-                if (LocalDate.parse(job.getDeadline().trim()).isBefore(LocalDate.now())) {
-                    throw new IllegalArgumentException(
-                            "Cannot reopen a job whose deadline has passed (" + job.getDeadline() + ").");
-                }
-            } catch (DateTimeParseException ignored) {
-                // If deadline is unparseable, allow reopen
+    public List<WorkloadAlert> getWorkloadAlerts() {
+        List<WorkloadAlert> alerts = new ArrayList<>();
+
+        // CRITICAL and WARNING from TAs with accepted jobs
+        for (TAWorkloadSummary s : getAllTAWorkloads()) {
+            if (s.isOverloaded()) {
+                int excess = s.getTotalAssignedHours() - s.getAvailableHours();
+                alerts.add(new WorkloadAlert(
+                        AlertSeverity.CRITICAL,
+                        s.getTaUserId(), s.getTaName(),
+                        String.format("Assigned %dh/week exceeds declared capacity of %dh/week (overloaded by %dh).",
+                                s.getTotalAssignedHours(), s.getAvailableHours(), excess),
+                        "Review accepted applications and consider redistributing workload."));
+            } else if (s.getRiskLevel() == RiskLevel.AT_RISK) {
+                alerts.add(new WorkloadAlert(
+                        AlertSeverity.WARNING,
+                        s.getTaUserId(), s.getTaName(),
+                        String.format("Utilisation at %.0f%% (%dh assigned of %dh available).",
+                                s.getUtilisationPercent(), s.getTotalAssignedHours(), s.getAvailableHours()),
+                        "Monitor closely before assigning additional positions."));
             }
         }
-        job.setStatus(JobStatus.OPEN);
-        jobRepository.save(job);
-        addAuditEntry(adminUserId, "FORCE_REOPEN_JOB", jobId,
-                "Reopened job " + job.getModuleCode() + " - " + job.getModuleName());
-        return job;
+
+        // INFO — idle TAs (available hours declared but no accepted job)
+        for (WorkloadAlert a : getIdleTAAlerts()) {
+            alerts.add(a);
+        }
+
+        alerts.sort(Comparator.comparingInt(a -> a.getSeverity().ordinal()));
+        return alerts;
+    }
+
+    /** INFO-level alerts for TAs with declared capacity but no accepted positions. */
+    private List<WorkloadAlert> getIdleTAAlerts() {
+        List<Application> allApps = applicationRepository.findAll();
+        List<WorkloadAlert> idle = new ArrayList<>();
+        for (User ta : userRepository.findAll()) {
+            if (ta.getRole() != Role.TA || !ta.isActive() || ta.getAvailableHours() <= 0) continue;
+            boolean hasAccepted = allApps.stream()
+                    .anyMatch(app -> app.getTaUserId().equalsIgnoreCase(ta.getId())
+                            && app.getStatus() == ApplicationStatus.ACCEPTED);
+            if (!hasAccepted) {
+                idle.add(new WorkloadAlert(
+                        AlertSeverity.INFO,
+                        ta.getId(), ta.getName(),
+                        String.format("Has %dh/week available but no accepted positions yet.", ta.getAvailableHours()),
+                        "Consider this TA for open positions that match their skills."));
+            }
+        }
+        return idle;
     }
 
     /**
-     * Auto-close all expired (past-deadline) OPEN jobs.
-     * Returns the number of jobs closed.
+     * Returns active TAs who have declared available hours but hold no accepted positions.
+     * Useful for identifying untapped capacity.
      */
-    public int triggerAutoCloseExpiredJobs(String adminUserId) {
-        int closedCount = 0;
-        for (Job job : jobRepository.findAll()) {
-            if (job.getStatus() != JobStatus.OPEN) continue;
-            if (job.getDeadline() == null || job.getDeadline().isBlank()) continue;
-            try {
-                if (LocalDate.parse(job.getDeadline().trim()).isBefore(LocalDate.now())) {
-                    job.setStatus(JobStatus.CLOSED);
-                    jobRepository.save(job);
-                    closedCount++;
-                }
-            } catch (DateTimeParseException ignored) {
-                // skip unparseable deadlines
-            }
-        }
-        if (closedCount > 0) {
-            addAuditEntry(adminUserId, "AUTO_CLOSE_EXPIRED", "-",
-                    "Auto-closed " + closedCount + " expired job(s).");
-            publishAdminNotification(adminUserId, NotificationType.ADMIN_JOBS_AUTO_CLOSED,
-                    "Auto-closed " + closedCount + " expired job(s).", "AUTO_CLOSE");
-        }
-        return closedCount;
-    }
-
-    // ========================= Application overview =========================
-
-    /** All applications enriched with Job and TA display names. */
-    public List<EnrichedApplication> getAllApplicationsEnriched() {
-        List<EnrichedApplication> result = new ArrayList<>();
-        for (Application app : applicationRepository.findAll()) {
-            String moduleCode = "";
-            String moduleName = "";
-            Optional<Job> jobOpt = jobRepository.findById(app.getJobId());
-            if (jobOpt.isPresent()) {
-                moduleCode = jobOpt.get().getModuleCode();
-                moduleName = jobOpt.get().getModuleName();
-            }
-            String taName = userRepository.findById(app.getTaUserId())
-                    .map(User::getName).orElse(app.getTaUserId());
-            result.add(new EnrichedApplication(
-                    app.getId(), app.getJobId(), moduleCode, moduleName,
-                    app.getTaUserId(), taName, app.getStatus(), app.getAppliedDate()));
-        }
-        result.sort(Comparator.comparing((EnrichedApplication e) -> e.appliedDate == null ? "" : e.appliedDate).reversed());
-        return result;
-    }
-
-    /** Applications filtered by status. Pass null to get all. */
-    public List<EnrichedApplication> getApplicationsByStatus(ApplicationStatus status) {
-        if (status == null) {
-            return getAllApplicationsEnriched();
-        }
-        return getAllApplicationsEnriched().stream()
-                .filter(e -> e.status == status)
+    public List<User> getIdleTAs() {
+        List<Application> allApps = applicationRepository.findAll();
+        return userRepository.findAll().stream()
+                .filter(u -> u.getRole() == Role.TA && u.isActive() && u.getAvailableHours() > 0)
+                .filter(ta -> allApps.stream()
+                        .noneMatch(app -> app.getTaUserId().equalsIgnoreCase(ta.getId())
+                                && app.getStatus() == ApplicationStatus.ACCEPTED))
                 .toList();
     }
 
-    /** Application count statistics by status. */
-    public ApplicationStats getApplicationStatistics() {
-        List<Application> all = applicationRepository.findAll();
-        int pending = 0, accepted = 0, rejected = 0, withdrawn = 0;
-        for (Application app : all) {
-            switch (app.getStatus()) {
-                case PENDING, APPLIED, REVIEWING -> pending++;
-                case ACCEPTED -> accepted++;
-                case REJECTED -> rejected++;
-                case WITHDRAWN -> withdrawn++;
-            }
+    // -------------------------------------------------------------------------
+    // Department / module-level statistics
+    // -------------------------------------------------------------------------
+
+    /** Aggregated statistics for a single module (department). */
+    public static class ModuleStats {
+        public final String moduleCode;
+        public final String moduleName;
+        public final int totalPositions;
+        public final int filledPositions;
+        public final int assignedTAs;
+        public final int totalAssignedHours;
+
+        public ModuleStats(String moduleCode, String moduleName,
+                           int totalPositions, int filledPositions,
+                           int assignedTAs, int totalAssignedHours) {
+            this.moduleCode          = moduleCode;
+            this.moduleName          = moduleName;
+            this.totalPositions      = totalPositions;
+            this.filledPositions     = filledPositions;
+            this.assignedTAs         = assignedTAs;
+            this.totalAssignedHours  = totalAssignedHours;
         }
-        return new ApplicationStats(all.size(), pending, accepted, rejected, withdrawn);
-    }
 
-    // ========================= User detail =========================
-
-    /** Detailed user summary for admin inspection. */
-    public String getUserDetailSummary(String userId) {
-        if (userId == null || userId.isBlank()) {
-            return "User ID is required.";
+        /** Percentage of positions filled (0–100). */
+        public double fillRate() {
+            if (totalPositions <= 0) return 0.0;
+            return Math.min(100.0, (double) filledPositions / totalPositions * 100.0);
         }
-        User user = userRepository.findById(userId.trim()).orElse(null);
-        if (user == null) {
-            return "User not found.";
+
+        public String filledRatio() {
+            return filledPositions + "/" + totalPositions;
         }
-        StringBuilder sb = new StringBuilder();
-        sb.append("User ID:         ").append(user.getId()).append("\n");
-        sb.append("Name:            ").append(safe(user.getName())).append("\n");
-        sb.append("Email:           ").append(safe(user.getEmail())).append("\n");
-        sb.append("Role:            ").append(user.getRole()).append("\n");
-        sb.append("Status:          ").append(user.isActive() ? "Active" : "Deactivated").append("\n");
-
-        if (user.getRole() == Role.TA) {
-            sb.append("Programme:       ").append(safe(user.getProgramme())).append("\n");
-            sb.append("Year of Study:   ").append(user.getYearOfStudy()).append("\n");
-            sb.append("Skills:          ").append(safe(user.getSkills())).append("\n");
-            sb.append("Available h/wk:  ").append(user.getAvailableHours()).append("\n");
-            sb.append("CV File:         ").append(safe(user.getCvFilePath()).isBlank() ? "Not uploaded" : user.getCvFilePath()).append("\n");
-
-            // Application stats for this TA
-            List<Application> taApps = applicationRepository.findByTaUserId(userId.trim());
-            long acceptedCount = taApps.stream().filter(a -> a.getStatus() == ApplicationStatus.ACCEPTED).count();
-            long pendingCount = taApps.stream()
-                    .filter(a -> a.getStatus() == ApplicationStatus.PENDING
-                            || a.getStatus() == ApplicationStatus.APPLIED
-                            || a.getStatus() == ApplicationStatus.REVIEWING).count();
-            sb.append("\nApplication Summary:\n");
-            sb.append("  Total applied:   ").append(taApps.size()).append("\n");
-            sb.append("  Accepted:        ").append(acceptedCount).append("\n");
-            sb.append("  Pending/Review:  ").append(pendingCount).append("\n");
-
-            // Workload info if there are accepted apps
-            if (acceptedCount > 0 && user.isActive()) {
-                try {
-                    TAWorkloadSummary workload = getTAWorkload(userId.trim());
-                    sb.append("\nWorkload:\n");
-                    sb.append("  Assigned h/wk:   ").append(workload.getTotalAssignedHours()).append("\n");
-                    sb.append("  Remaining h/wk:  ").append(workload.getRemainingHours()).append("\n");
-                    sb.append("  Risk Level:      ").append(workload.getRiskLevel().label()).append("\n");
-                    sb.append("  Utilisation:     ").append(String.format("%.0f%%", workload.getUtilisationPercent())).append("\n");
-                } catch (IllegalArgumentException ignored) {
-                    // TA may not have accepted apps matching criteria
-                }
-            }
-        } else if (user.getRole() == Role.MO) {
-            // Show jobs posted by this MO
-            List<Job> moJobs = jobRepository.findByPostedByMoId(userId.trim());
-            sb.append("\nPosted Jobs: ").append(moJobs.size()).append("\n");
-            for (Job job : moJobs) {
-                sb.append("  • ").append(job.getModuleCode()).append(" - ").append(job.getModuleName())
-                        .append(" [").append(job.getStatus().name()).append("]\n");
-            }
-        }
-        return sb.toString();
-    }
-
-    // ========================= Audit log =========================
-
-    /** Record an audit log entry. */
-    public void addAuditEntry(String adminUserId, String action, String targetId, String details) {
-        auditLog.add(new AuditLogEntry(
-                adminUserId == null ? "SYSTEM" : adminUserId,
-                action, targetId == null ? "" : targetId,
-                details == null ? "" : details));
-    }
-
-    /** Returns all audit log entries (newest first). */
-    public List<AuditLogEntry> getAuditLog() {
-        List<AuditLogEntry> copy = new ArrayList<>(auditLog);
-        Collections.reverse(copy);
-        return copy;
-    }
-
-    // ========================= Data export =========================
-
-    /**
-     * Export all TA workload data to a CSV file.
-     * Returns the path of the written file.
-     */
-    public Path exportWorkloadToCsv(Path outputPath) throws IOException {
-        List<TAWorkloadSummary> workloads = getAllTAWorkloads();
-        try (BufferedWriter writer = Files.newBufferedWriter(outputPath)) {
-            writer.write("TA ID,TA Name,Available h/week,Assigned h/week,Remaining h,Utilisation %,Risk Level");
-            writer.newLine();
-            for (TAWorkloadSummary s : workloads) {
-                writer.write(String.format("\"%s\",\"%s\",%d,%d,%d,%.0f,\"%s\"",
-                        s.getTaUserId(), s.getTaName(), s.getAvailableHours(),
-                        s.getTotalAssignedHours(), s.getRemainingHours(),
-                        s.getUtilisationPercent(), s.getRiskLevel().label()));
-                writer.newLine();
-            }
-        }
-        return outputPath;
     }
 
     /**
-     * Export all job overview data to a CSV file.
+     * Returns per-module statistics: how many positions exist, how many are filled,
+     * how many distinct TAs are assigned, and total assigned hours for that module.
+     * Only includes OPEN or CLOSED jobs (excludes DRAFT).
      */
-    public Path exportJobsToCsv(Path outputPath) throws IOException {
-        List<JobOverview> jobs = getJobsOverview();
-        try (BufferedWriter writer = Files.newBufferedWriter(outputPath)) {
-            writer.write("Job ID,Module Code,Module Name,MO,Filled,Positions,Status,Deadline");
-            writer.newLine();
-            for (JobOverview j : jobs) {
-                writer.write(String.format("\"%s\",\"%s\",\"%s\",\"%s\",%d,%d,\"%s\",\"%s\"",
-                        j.jobId, j.moduleCode, j.moduleName, j.postedByMoName,
-                        j.filled, j.positions, j.status.name(), j.deadline));
-                writer.newLine();
-            }
+    public List<ModuleStats> getDepartmentStats() {
+        List<Application> allApps = applicationRepository.findAll();
+        List<Job> jobs = jobRepository.findAll().stream()
+                .filter(j -> j.getStatus() == JobStatus.OPEN || j.getStatus() == JobStatus.FILLED)
+                .toList();
+
+        // Group by moduleCode, accumulating positions, filled count, assigned TAs, and hours
+        java.util.Map<String, int[]> totals = new java.util.LinkedHashMap<>(); // [positions, filled, hours]
+        java.util.Map<String, String> names = new java.util.LinkedHashMap<>();
+        java.util.Map<String, java.util.Set<String>> tasByModule = new java.util.LinkedHashMap<>();
+
+        for (Job job : jobs) {
+            String code = job.getModuleCode();
+            names.putIfAbsent(code, job.getModuleName());
+            totals.putIfAbsent(code, new int[3]);
+            tasByModule.putIfAbsent(code, new java.util.HashSet<>());
+
+            List<Application> accepted = allApps.stream()
+                    .filter(a -> a.getJobId().equals(job.getId())
+                            && a.getStatus() == ApplicationStatus.ACCEPTED)
+                    .toList();
+            totals.get(code)[0] += job.getPositions();
+            totals.get(code)[1] += accepted.size();
+            totals.get(code)[2] += accepted.size() * job.getHoursPerWeek();
+            for (Application a : accepted) tasByModule.get(code).add(a.getTaUserId());
         }
-        return outputPath;
+
+        List<ModuleStats> result = new ArrayList<>();
+        for (String code : totals.keySet()) {
+            int[] t = totals.get(code);
+            result.add(new ModuleStats(code, names.get(code), t[0], t[1],
+                    tasByModule.get(code).size(), t[2]));
+        }
+        result.sort(Comparator.comparing(s -> s.moduleCode));
+        return result;
     }
 
-    // ========================= Internal helpers =========================
+    // -------------------------------------------------------------------------
+    // Capacity planning helpers
+    // -------------------------------------------------------------------------
 
-    private String resolveMoName(String moId) {
-        if (moId == null || moId.isBlank()) return "Unknown";
-        return userRepository.findById(moId.trim())
-                .map(User::getName)
-                .orElse(moId);
+    /**
+     * Total declared available hours across all active TAs.
+     * Represents the system's maximum weekly TA capacity.
+     */
+    public int getTotalAvailableCapacity() {
+        return userRepository.findAll().stream()
+                .filter(u -> u.getRole() == Role.TA && u.isActive())
+                .mapToInt(User::getAvailableHours)
+                .sum();
     }
 
-    private void publishAdminNotification(String adminUserId, NotificationType type,
-                                          String message, String relatedId) {
-        if (notificationService == null || adminUserId == null || adminUserId.isBlank()) return;
-        notificationService.publish(Role.ADMIN, type, adminUserId, message,
-                relatedId == null ? "" : relatedId);
+    /**
+     * Total hours currently assigned (accepted) across all active TAs.
+     */
+    public int getTotalAssignedHours() {
+        return getAllTAWorkloads().stream()
+                .mapToInt(TAWorkloadSummary::getTotalAssignedHours)
+                .sum();
     }
 
-    private static String safe(String value) {
-        return value == null ? "" : value;
+    /**
+     * System-wide utilisation percentage: totalAssigned / totalAvailable * 100.
+     * Returns 0 if no capacity is declared.
+     */
+    public double getSystemUtilisation() {
+        int capacity = getTotalAvailableCapacity();
+        if (capacity <= 0) return 0.0;
+        return Math.min(100.0, (double) getTotalAssignedHours() / capacity * 100.0);
     }
 
     /**
