@@ -273,27 +273,28 @@ public class SwingApp {
             JButton logoutButton = new JButton("Logout");
             logoutButton.setFont(new Font("Segoe UI", Font.BOLD, 13));
             logoutButton.setForeground(Color.WHITE);
-            logoutButton.setBackground(new Color(255, 255, 255, 40));
+            logoutButton.setBackground(new Color(103, 78, 150));
             logoutButton.setBorder(BorderFactory.createEmptyBorder(6, 16, 6, 16));
             logoutButton.setFocusPainted(false);
-            logoutButton.setOpaque(true);
-            logoutButton.setContentAreaFilled(true);
+            logoutButton.setOpaque(false);
+            logoutButton.setContentAreaFilled(false);
             logoutButton.setBorderPainted(false);
-            logoutButton.addMouseListener(new java.awt.event.MouseAdapter() {
+            
+            Color normalLogoutBg = new Color(103, 78, 150);
+            Color hoverLogoutBg = new Color(117, 95, 160);
+            logoutButton.setUI(new javax.swing.plaf.basic.BasicButtonUI() {
                 @Override
-                public void mouseEntered(java.awt.event.MouseEvent e) {
-                    if (logoutButton.isEnabled()) {
-                        logoutButton.setBackground(new Color(255, 255, 255, 60));
-                    }
-                }
-
-                @Override
-                public void mouseExited(java.awt.event.MouseEvent e) {
-                    if (logoutButton.isEnabled()) {
-                        logoutButton.setBackground(new Color(255, 255, 255, 40));
-                    }
+                public void paint(Graphics g, JComponent c) {
+                    javax.swing.AbstractButton b = (javax.swing.AbstractButton) c;
+                    Graphics2D g2 = (Graphics2D) g.create();
+                    g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                    g2.setColor(b.getModel().isRollover() ? hoverLogoutBg : normalLogoutBg);
+                    g2.fillRoundRect(0, 0, b.getWidth(), b.getHeight(), 6, 6);
+                    g2.dispose();
+                    super.paint(g, c);
                 }
             });
+            logoutButton.setCursor(new Cursor(Cursor.HAND_CURSOR));
             logoutButton.addActionListener(e -> logoutAction.run());
             rightArea.add(logoutButton);
         }
@@ -598,6 +599,122 @@ public class SwingApp {
         return hours;
     }
 
+    private class RoundedLineBorder implements javax.swing.border.Border {
+        private final Color color;
+        private final int radius;
+        private final int thickness;
+
+        public RoundedLineBorder(Color color, int radius, int thickness) {
+            this.color = color;
+            this.radius = radius;
+            this.thickness = thickness;
+        }
+
+        @Override
+        public void paintBorder(Component c, Graphics g, int x, int y, int width, int height) {
+            Graphics2D g2 = (Graphics2D) g.create();
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            g2.setColor(color);
+            g2.setStroke(new java.awt.BasicStroke(thickness));
+            g2.drawRoundRect(x + thickness / 2, y + thickness / 2, width - thickness, height - thickness, radius, radius);
+            g2.dispose();
+        }
+
+        @Override
+        public Insets getBorderInsets(Component c) {
+            return new Insets(thickness, thickness, thickness, thickness);
+        }
+
+        @Override
+        public boolean isBorderOpaque() {
+            return false;
+        }
+    }
+
+    private void styleRoundedInput(javax.swing.JComponent input) {
+        input.setBackground(Color.WHITE);
+        Color defaultBorderColor = new Color(209, 213, 219);
+        Color focusBorderColor = new Color(75, 54, 130);
+        
+        javax.swing.border.Border defaultBorder = BorderFactory.createCompoundBorder(
+                new RoundedLineBorder(defaultBorderColor, 6, 1),
+                BorderFactory.createEmptyBorder(8, 12, 8, 12));
+        javax.swing.border.Border focusBorder = BorderFactory.createCompoundBorder(
+                new RoundedLineBorder(focusBorderColor, 6, 2),
+                BorderFactory.createEmptyBorder(7, 11, 7, 11));
+        
+        input.setBorder(defaultBorder);
+        input.addFocusListener(new java.awt.event.FocusAdapter() {
+            @Override
+            public void focusGained(java.awt.event.FocusEvent e) {
+                input.setBorder(focusBorder);
+            }
+            @Override
+            public void focusLost(java.awt.event.FocusEvent e) {
+                input.setBorder(defaultBorder);
+            }
+        });
+    }
+
+    private JPanel createRoundedComboWrapper(JComboBox<?> combo) {
+        JPanel wrapper = new JPanel(new BorderLayout());
+        wrapper.setBackground(Color.WHITE);
+        combo.setBackground(Color.WHITE);
+        combo.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
+        wrapper.add(combo, BorderLayout.CENTER);
+        
+        Color defaultBorderColor = new Color(209, 213, 219);
+        Color focusBorderColor = new Color(75, 54, 130);
+        
+        javax.swing.border.Border defaultBorder = new RoundedLineBorder(defaultBorderColor, 6, 1);
+        javax.swing.border.Border focusBorder = new RoundedLineBorder(focusBorderColor, 6, 2);
+        
+        wrapper.setBorder(BorderFactory.createCompoundBorder(defaultBorder, BorderFactory.createEmptyBorder(2, 2, 2, 2)));
+        
+        combo.addFocusListener(new java.awt.event.FocusAdapter() {
+            @Override
+            public void focusGained(java.awt.event.FocusEvent e) {
+                wrapper.setBorder(BorderFactory.createCompoundBorder(focusBorder, BorderFactory.createEmptyBorder(1, 1, 1, 1)));
+            }
+            @Override
+            public void focusLost(java.awt.event.FocusEvent e) {
+                wrapper.setBorder(BorderFactory.createCompoundBorder(defaultBorder, BorderFactory.createEmptyBorder(2, 2, 2, 2)));
+            }
+        });
+        return wrapper;
+    }
+
+    private JButton createRoundedButton(String text, boolean primary) {
+        Color normalBg = primary ? new Color(75, 54, 130) : Color.WHITE;
+        Color fg = primary ? Color.WHITE : new Color(75, 54, 130);
+        Color borderColor = primary ? new Color(75, 54, 130) : new Color(209, 213, 219);
+        Color hoverBg = primary ? new Color(58, 31, 107) : new Color(249, 250, 251);
+
+        JButton button = new JButton(text) {
+            @Override
+            protected void paintComponent(Graphics g) {
+                Graphics2D g2 = (Graphics2D) g.create();
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                g2.setColor(getModel().isRollover() ? hoverBg : normalBg);
+                g2.fillRoundRect(0, 0, getWidth() - 1, getHeight() - 1, 8, 8);
+                
+                g2.setColor(borderColor);
+                g2.drawRoundRect(0, 0, getWidth() - 1, getHeight() - 1, 8, 8);
+                g2.dispose();
+                
+                super.paintComponent(g);
+            }
+        };
+        button.setOpaque(false);
+        button.setContentAreaFilled(false);
+        button.setBorderPainted(false);
+        button.setFocusPainted(false);
+        button.setForeground(fg);
+        button.setFont(new Font("Segoe UI", Font.BOLD, 14));
+        button.setCursor(new Cursor(Cursor.HAND_CURSOR));
+        return button;
+    }
+
     private String safeText(String value) {
         return value == null ? "" : value;
     }
@@ -610,6 +727,54 @@ public class SwingApp {
         styleUnifiedButton(button, false, false);
     }
 
+    private void styleGhostButton(JButton button) {
+        button.setOpaque(true);
+        button.setContentAreaFilled(true);
+        button.setBackground(Color.WHITE);
+        button.setForeground(QMUL_PURPLE);
+        button.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(QMUL_PURPLE, 1, true),
+                BorderFactory.createEmptyBorder(10, 18, 10, 18)));
+        button.setFont(new Font("Segoe UI", Font.BOLD, 14));
+        button.setFocusPainted(false);
+        button.setCursor(new Cursor(Cursor.HAND_CURSOR));
+        button.addMouseListener(new java.awt.event.MouseAdapter() {
+            @Override
+            public void mouseEntered(java.awt.event.MouseEvent e) {
+                if (button.isEnabled()) {
+                    button.setBackground(new Color(245, 240, 252));
+                }
+            }
+            @Override
+            public void mouseExited(java.awt.event.MouseEvent e) {
+                if (button.isEnabled()) {
+                    button.setBackground(Color.WHITE);
+                }
+            }
+        });
+    }
+
+    private void styleMaterialInput(javax.swing.JComponent input) {
+        input.setBackground(Color.WHITE);
+        javax.swing.border.Border defaultBorder = BorderFactory.createCompoundBorder(
+                BorderFactory.createMatteBorder(0, 0, 1, 0, new Color(200, 200, 200)),
+                BorderFactory.createEmptyBorder(6, 0, 6, 0));
+        javax.swing.border.Border focusBorder = BorderFactory.createCompoundBorder(
+                BorderFactory.createMatteBorder(0, 0, 2, 0, QMUL_PURPLE),
+                BorderFactory.createEmptyBorder(5, 0, 6, 0));
+        input.setBorder(defaultBorder);
+        input.addFocusListener(new java.awt.event.FocusAdapter() {
+            @Override
+            public void focusGained(java.awt.event.FocusEvent e) {
+                input.setBorder(focusBorder);
+            }
+            @Override
+            public void focusLost(java.awt.event.FocusEvent e) {
+                input.setBorder(defaultBorder);
+            }
+        });
+    }
+
     private void styleDangerButton(JButton button) {
         styleUnifiedButton(button, true, true);
     }
@@ -617,14 +782,33 @@ public class SwingApp {
     private void styleUnifiedButton(JButton button, boolean bold, boolean danger) {
         Color normalBg = danger ? new Color(220, 53, 69) : QMUL_PURPLE;
         Color hoverBg = danger ? new Color(200, 35, 51) : new Color(107, 63, 160);
-        button.setOpaque(true);
-        button.setContentAreaFilled(true);
+        button.setOpaque(false);
+        button.setContentAreaFilled(false);
         button.setBorderPainted(false);
         button.setFocusPainted(false);
         button.setBackground(normalBg);
         button.setForeground(Color.WHITE);
         button.setFont(new Font("Segoe UI", bold ? Font.BOLD : Font.PLAIN, 14));
         button.setBorder(BorderFactory.createEmptyBorder(10, 18, 10, 18));
+        
+        button.setUI(new javax.swing.plaf.basic.BasicButtonUI() {
+            @Override
+            public void paint(Graphics g, JComponent c) {
+                javax.swing.AbstractButton b = (javax.swing.AbstractButton) c;
+                Graphics2D g2 = (Graphics2D) g.create();
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                
+                Color bg = b.isEnabled() ? b.getBackground() : (Color) b.getClientProperty("button.disabledBg");
+                if (bg == null) bg = new Color(120, 105, 145);
+                
+                g2.setColor(bg);
+                g2.fillRoundRect(0, 0, b.getWidth(), b.getHeight(), 8, 8);
+                g2.dispose();
+                
+                super.paint(g, c);
+            }
+        });
+
         button.putClientProperty("button.hover", Boolean.FALSE);
         button.putClientProperty("button.disabledBg", new Color(120, 105, 145));
         button.putClientProperty("button.disabledFg", Color.WHITE);
@@ -645,7 +829,8 @@ public class SwingApp {
         });
         button.addPropertyChangeListener("enabled", evt -> {
             if (button.isEnabled()) {
-                button.setBackground(QMUL_PURPLE);
+                Color origBg = danger ? new Color(220, 53, 69) : QMUL_PURPLE;
+                button.setBackground(origBg);
                 button.setForeground(Color.WHITE);
             } else {
                 button.setBackground((Color) button.getClientProperty("button.disabledBg"));
@@ -657,19 +842,19 @@ public class SwingApp {
         }
     }
 
-    private JPanel createAuthBrandPanel(boolean includeTagline) {
+    private JPanel createAuthBrandPanel(boolean includeTagline, boolean darkTheme) {
         JPanel panel = new JPanel();
         panel.setOpaque(false);
         panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
         JLabel brand = new JLabel("BUPT x QMUL");
         brand.setFont(new Font("Segoe UI", Font.BOLD, 30));
-        brand.setForeground(QMUL_PURPLE);
+        brand.setForeground(darkTheme ? Color.WHITE : QMUL_PURPLE);
         JLabel system = new JLabel("TA Recruitment System");
         system.setFont(new Font("Segoe UI", Font.BOLD, 24));
-        system.setForeground(new Color(36, 41, 56));
+        system.setForeground(darkTheme ? Color.WHITE : new Color(36, 41, 56));
         JLabel tagline = new JLabel(BRAND_TAGLINE);
         tagline.setFont(new Font("Segoe UI", Font.PLAIN, 13));
-        tagline.setForeground(MUTED_TEXT_COLOR);
+        tagline.setForeground(darkTheme ? new Color(255, 255, 255, 180) : MUTED_TEXT_COLOR);
         panel.add(brand);
         panel.add(system);
         if (includeTagline) {
@@ -1035,86 +1220,183 @@ public class SwingApp {
 
         private LoginPanel() {
             setLayout(new BorderLayout());
-            JPanel centerWrapper = new JPanel(new GridBagLayout());
-            centerWrapper.setOpaque(false);
 
-            JPanel card = new JPanel(new BorderLayout(24, 0));
-            card.setBackground(Color.WHITE);
-            card.setBorder(BorderFactory.createCompoundBorder(
-                    BorderFactory.createLineBorder(new Color(226, 229, 236), 1, true),
-                    BorderFactory.createEmptyBorder(24, 24, 24, 24)));
-            card.setPreferredSize(new Dimension(940, 520));
-
-            JPanel left = new JPanel();
-            left.setOpaque(false);
-            left.setPreferredSize(new Dimension(340, 0));
+            // LEFT PANEL (400px wide, beautiful solid system purple with abstract geometric accents)
+            JPanel left = new JPanel() {
+                @Override
+                protected void paintComponent(Graphics g) {
+                    super.paintComponent(g);
+                    Graphics2D g2 = (Graphics2D) g.create();
+                    g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                    
+                    // Draw the exact solid system purple background (#4B3682)
+                    g2.setColor(new Color(75, 54, 130));
+                    g2.fillRect(0, 0, getWidth(), getHeight());
+                    
+                    // Paint abstract geometric rings with low opacity to prevent a "bare" look
+                    g2.setColor(new Color(255, 255, 255, 12));
+                    g2.fillOval(-120, -120, 360, 360);
+                    g2.fillOval(getWidth() - 160, getHeight() - 220, 320, 320);
+                    
+                    g2.setColor(new Color(255, 255, 255, 6));
+                    g2.fillOval(80, getHeight() / 2 - 160, 260, 260);
+                    
+                    // Draw a subtle glowing arc intersecting the branding text
+                    g2.setStroke(new java.awt.BasicStroke(2));
+                    g2.setColor(new Color(255, 255, 255, 18));
+                    g2.drawArc(-200, getHeight() / 2 - 250, 500, 500, 45, 270);
+                    
+                    g2.dispose();
+                }
+            };
+            left.setPreferredSize(new Dimension(400, 0));
             left.setLayout(new BoxLayout(left, BoxLayout.Y_AXIS));
-            left.add(createAuthBrandPanel(true));
-            left.add(Box.createVerticalStrut(20));
-            JLabel loginHint = new JLabel("Sign in to manage jobs, applications, and notifications.");
-            loginHint.setForeground(MUTED_TEXT_COLOR);
-            loginHint.setFont(new Font("Segoe UI", Font.PLAIN, 14));
-            left.add(loginHint);
-            left.add(Box.createVerticalStrut(18));
-            JLabel loginCardBadge = new JLabel("Fast access to TA, MO, and Admin portals");
-            loginCardBadge.setFont(new Font("Segoe UI", Font.BOLD, 13));
-            loginCardBadge.setForeground(QMUL_PURPLE);
-            left.add(loginCardBadge);
+            left.setBorder(BorderFactory.createEmptyBorder(48, 32, 48, 32));
+            
+            // Top branding text
+            JLabel topLabel = new JLabel("BU x QM JOINT PROGRAMME");
+            topLabel.setFont(new Font("Segoe UI", Font.BOLD, 11));
+            topLabel.setForeground(new Color(255, 255, 255, 140));
+            topLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
+            left.add(topLabel);
+            
+            left.add(Box.createVerticalGlue());
+            
+            // Center main title and subtitle
+            JLabel brandLabel = new JLabel("BUPT x QMUL");
+            brandLabel.setFont(new Font("Segoe UI", Font.BOLD, 38));
+            brandLabel.setForeground(Color.WHITE);
+            brandLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
 
-            JPanel form = new JPanel(new GridLayout(0, 2, 15, 14));
-            form.setPreferredSize(new Dimension(450, 250));
-            form.setBorder(BorderFactory.createCompoundBorder(
-                    BorderFactory.createLineBorder(new Color(220, 225, 233), 1, true),
-                    BorderFactory.createEmptyBorder(28, 28, 28, 28)));
-            form.setBackground(Color.WHITE);
-            form.setOpaque(true);
+            JLabel sysLabel = new JLabel("TA Recruitment System");
+            sysLabel.setFont(new Font("Segoe UI", Font.PLAIN, 18));
+            sysLabel.setForeground(new Color(255, 255, 255, 220));
+            sysLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
 
+            left.add(brandLabel);
+            left.add(Box.createVerticalStrut(10));
+            left.add(sysLabel);
+            
+            left.add(Box.createVerticalGlue());
+            
+            // Bottom copyright text
+            JLabel bottomLabel = new JLabel("© 2026 BUPT x QMUL. All rights reserved.");
+            bottomLabel.setFont(new Font("Segoe UI", Font.PLAIN, 11));
+            bottomLabel.setForeground(new Color(255, 255, 255, 100));
+            bottomLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
+            left.add(bottomLabel);
+
+            // RIGHT PANEL (pure white background filling the remaining width)
+            JPanel right = new JPanel(new GridBagLayout());
+            right.setBackground(Color.WHITE);
+            right.setOpaque(true);
+
+            // Centered form container inside the right column
+            JPanel formContainer = new JPanel();
+            formContainer.setOpaque(false);
+            formContainer.setLayout(new BoxLayout(formContainer, BoxLayout.Y_AXIS));
+            formContainer.setPreferredSize(new Dimension(380, 520));
+            formContainer.setMaximumSize(new Dimension(380, 520));
+
+            JLabel title = new JLabel("Welcome back");
+            title.setFont(new Font("Segoe UI", Font.BOLD, 30));
+            title.setForeground(new Color(31, 41, 55));
+            title.setAlignmentX(Component.LEFT_ALIGNMENT);
+            formContainer.add(title);
+            
+            formContainer.add(Box.createVerticalStrut(8));
+            
+            JLabel subtitle = new JLabel("Sign in to continue to your dashboard.");
+            subtitle.setFont(new Font("Segoe UI", Font.PLAIN, 15));
+            subtitle.setForeground(new Color(107, 114, 128));
+            subtitle.setAlignmentX(Component.LEFT_ALIGNMENT);
+            formContainer.add(subtitle);
+            formContainer.add(Box.createVerticalStrut(40));
+
+            JPanel form = new JPanel(new GridBagLayout());
+            form.setOpaque(false);
+            form.setAlignmentX(Component.LEFT_ALIGNMENT);
+            GridBagConstraints gbc = new GridBagConstraints();
+            gbc.fill = GridBagConstraints.HORIZONTAL;
+            gbc.weightx = 1.0;
+            gbc.gridx = 0;
+
+            Color labelColor = new Color(75, 85, 99);
+
+            gbc.gridy = 0; 
+            gbc.insets = new Insets(0, 0, 6, 0);
             JLabel roleLabel = new JLabel("Role");
-            roleLabel.setFont(new Font("Segoe UI", Font.BOLD, 14));
-            form.add(roleLabel);
+            roleLabel.setFont(new Font("Segoe UI", Font.BOLD, 12));
+            roleLabel.setForeground(labelColor);
+            form.add(roleLabel, gbc);
+
+            gbc.gridy = 1;
+            gbc.insets = new Insets(0, 0, 24, 0);
             roleCombo = new JComboBox<>(new Role[] {Role.TA, Role.MO, Role.ADMIN});
             roleCombo.setFont(new Font("Segoe UI", Font.PLAIN, 14));
-            form.add(roleCombo);
+            roleCombo.setFocusable(false);
+            form.add(createRoundedComboWrapper(roleCombo), gbc);
 
+            gbc.gridy = 2;
+            gbc.insets = new Insets(0, 0, 6, 0);
             JLabel emailLabel = new JLabel("Email");
-            emailLabel.setFont(new Font("Segoe UI", Font.BOLD, 14));
-            form.add(emailLabel);
+            emailLabel.setFont(new Font("Segoe UI", Font.BOLD, 12));
+            emailLabel.setForeground(labelColor);
+            form.add(emailLabel, gbc);
+
+            gbc.gridy = 3;
+            gbc.insets = new Insets(0, 0, 24, 0);
             emailField = new JTextField();
             emailField.setFont(new Font("Segoe UI", Font.PLAIN, 14));
-            form.add(emailField);
+            styleRoundedInput(emailField);
+            form.add(emailField, gbc);
 
+            gbc.gridy = 4;
+            gbc.insets = new Insets(0, 0, 6, 0);
             JLabel pwdLabel = new JLabel("Password");
-            pwdLabel.setFont(new Font("Segoe UI", Font.BOLD, 14));
-            form.add(pwdLabel);
+            pwdLabel.setFont(new Font("Segoe UI", Font.BOLD, 12));
+            pwdLabel.setForeground(labelColor);
+            form.add(pwdLabel, gbc);
+
+            gbc.gridy = 5;
+            gbc.insets = new Insets(0, 0, 32, 0);
             passwordField = new JPasswordField();
             passwordField.setFont(new Font("Segoe UI", Font.PLAIN, 14));
-            form.add(passwordField);
+            styleRoundedInput(passwordField);
+            form.add(passwordField, gbc);
 
-            loginButton = new JButton("Login");
-            stylePrimaryButton(loginButton);
+            gbc.gridy = 6;
+            gbc.insets = new Insets(0, 0, 16, 0);
+            loginButton = createRoundedButton("Sign in", true);
+            loginButton.setPreferredSize(new Dimension(0, 42));
             loginButton.addActionListener(e -> login());
-            form.add(loginButton);
+            form.add(loginButton, gbc);
 
-            registerButton = new JButton("Register as TA");
-            styleSecondaryButton(registerButton);
+            gbc.gridy = 7;
+            gbc.insets = new Insets(0, 0, 10, 0);
+            registerButton = createRoundedButton("Create a TA account", false);
+            registerButton.setPreferredSize(new Dimension(0, 42));
             registerButton.addActionListener(e -> showRegisterPage());
-            form.add(registerButton);
+            form.add(registerButton, gbc);
 
+            formContainer.add(form);
+            formContainer.add(Box.createVerticalGlue());
+            
             statusLabel = new JLabel(" ");
             statusLabel.setFont(new Font("Segoe UI", Font.PLAIN, 12));
             statusLabel.setForeground(new Color(100, 100, 100));
+            statusLabel.setAlignmentX(Component.LEFT_ALIGNMENT);
+            formContainer.add(statusLabel);
 
-            JPanel centerContainer = new JPanel(new BorderLayout());
-            centerContainer.setOpaque(false);
-            centerContainer.add(form, BorderLayout.CENTER);
-            centerContainer.add(statusLabel, BorderLayout.SOUTH);
+            // Center the form container in the right column
+            GridBagConstraints containerGbc = new GridBagConstraints();
+            containerGbc.gridx = 0;
+            containerGbc.gridy = 0;
+            containerGbc.anchor = GridBagConstraints.CENTER;
+            right.add(formContainer, containerGbc);
 
-            card.add(left, BorderLayout.WEST);
-            card.add(centerContainer, BorderLayout.CENTER);
-            centerWrapper.add(card);
-
-            add(buildTopBar("BUPT International School TA Recruitment System", null), BorderLayout.NORTH);
-            add(centerWrapper, BorderLayout.CENTER);
+            add(left, BorderLayout.WEST);
+            add(right, BorderLayout.CENTER);
             frameSetDefaultButton();
         }
 
@@ -1192,22 +1474,6 @@ public class SwingApp {
     }
 
     private class RegisterPanel extends AvatarAwarePanel {
-        @Override
-        protected void paintComponent(java.awt.Graphics g) {
-            super.paintComponent(g);
-            java.awt.Graphics2D g2 = (java.awt.Graphics2D) g.create();
-            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-            java.awt.GradientPaint gradient = new java.awt.GradientPaint(
-                    0, 0, new Color(248, 250, 255),
-                    getWidth(), getHeight(), new Color(233, 239, 255));
-            g2.setPaint(gradient);
-            g2.fillRect(0, 0, getWidth(), getHeight());
-            g2.setColor(new Color(90, 35, 130, 18));
-            g2.fillOval(getWidth() - 240, 40, 180, 180);
-            g2.fillOval(30, getHeight() - 220, 160, 160);
-            g2.dispose();
-        }
-
         private final JLabel avatarPreview;
         private final JTextField studentIdField;
         private final JTextField nameField;
@@ -1218,152 +1484,308 @@ public class SwingApp {
         private final JTextArea skillsArea;
         private final JTextField hoursField;
         private final JLabel avatarPathLabel;
-        private final JPanel avatarWallPanel;
         private final List<JButton> avatarChoiceButtons = new ArrayList<>();
         private String selectedAvatarPath = "";
 
         private RegisterPanel() {
             setLayout(new BorderLayout());
-            setOpaque(false);
 
-            JPanel wrapper = new JPanel(new GridBagLayout());
-            wrapper.setOpaque(false);
-            JPanel card = new JPanel(new BorderLayout(24, 0));
-            card.setBackground(Color.WHITE);
-            card.setBorder(BorderFactory.createCompoundBorder(
-                    BorderFactory.createLineBorder(new Color(226, 229, 236), 1, true),
-                    BorderFactory.createEmptyBorder(24, 24, 24, 24)));
-            card.setPreferredSize(new Dimension(980, 640));
-
-            JPanel left = new JPanel();
-            left.setOpaque(false);
-            left.setPreferredSize(new Dimension(350, 0));
+            // LEFT PANEL (400px wide, beautiful solid system purple with abstract geometric accents)
+            JPanel left = new JPanel() {
+                @Override
+                protected void paintComponent(Graphics g) {
+                    super.paintComponent(g);
+                    Graphics2D g2 = (Graphics2D) g.create();
+                    g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                    
+                    // Draw the exact solid system purple background (#4B3682)
+                    g2.setColor(new Color(75, 54, 130));
+                    g2.fillRect(0, 0, getWidth(), getHeight());
+                    
+                    // Paint abstract geometric rings with low opacity to prevent a "bare" look
+                    g2.setColor(new Color(255, 255, 255, 12));
+                    g2.fillOval(-120, -120, 360, 360);
+                    g2.fillOval(getWidth() - 160, getHeight() - 220, 320, 320);
+                    
+                    g2.setColor(new Color(255, 255, 255, 6));
+                    g2.fillOval(80, getHeight() / 2 - 160, 260, 260);
+                    
+                    // Draw a subtle glowing arc intersecting the branding text
+                    g2.setStroke(new java.awt.BasicStroke(2));
+                    g2.setColor(new Color(255, 255, 255, 18));
+                    g2.drawArc(-200, getHeight() / 2 - 250, 500, 500, 45, 270);
+                    
+                    g2.dispose();
+                }
+            };
+            left.setPreferredSize(new Dimension(400, 0));
             left.setLayout(new BoxLayout(left, BoxLayout.Y_AXIS));
-            left.add(createAuthBrandPanel(true));
-            left.add(Box.createVerticalStrut(18));
-            JLabel heading = new JLabel("Create your TA profile");
-            heading.setFont(new Font("Segoe UI", Font.BOLD, 24));
-            heading.setForeground(new Color(36, 41, 56));
-            JLabel subheading = new JLabel("Upload a photo, fill in your details, and register in one place.");
-            subheading.setForeground(MUTED_TEXT_COLOR);
-            subheading.setFont(new Font("Segoe UI", Font.PLAIN, 14));
-            JLabel avatarSectionLabel = new JLabel("Avatar Preview");
-            avatarSectionLabel.setFont(new Font("Segoe UI", Font.BOLD, 14));
-            avatarSectionLabel.setForeground(new Color(36, 41, 56));
-            avatarPreview = new JLabel(loadAvatarIcon("", 160));
-            avatarPreview.setAlignmentX(CENTER_ALIGNMENT);
-            avatarPreview.setPreferredSize(new Dimension(160, 160));
-            avatarPreview.setMaximumSize(new Dimension(160, 160));
-            avatarPreview.setMinimumSize(new Dimension(160, 160));
-            avatarPreview.setBorder(BorderFactory.createCompoundBorder(
-                    BorderFactory.createLineBorder(new Color(214, 219, 229), 1, true),
-                    BorderFactory.createEmptyBorder(10, 10, 10, 10)));
-            avatarPathLabel = new JLabel("Using default avatar");
-            avatarPathLabel.setForeground(MUTED_TEXT_COLOR);
-            avatarPathLabel.setAlignmentX(CENTER_ALIGNMENT);
-            avatarWallPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 10, 10));
-            avatarWallPanel.setOpaque(false);
-            avatarWallPanel.setMaximumSize(new Dimension(280, 150));
+            left.setBorder(BorderFactory.createEmptyBorder(48, 32, 48, 32));
+            
+            // Top branding text
+            JLabel topLabel = new JLabel("BU x QM JOINT PROGRAMME");
+            topLabel.setFont(new Font("Segoe UI", Font.BOLD, 11));
+            topLabel.setForeground(new Color(255, 255, 255, 140));
+            topLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
+            left.add(topLabel);
+            
+            left.add(Box.createVerticalGlue());
+            
+            // Center main title and subtitle
+            JLabel brandLabel = new JLabel("BUPT x QMUL");
+            brandLabel.setFont(new Font("Segoe UI", Font.BOLD, 38));
+            brandLabel.setForeground(Color.WHITE);
+            brandLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
+
+            JLabel sysLabel = new JLabel("TA Recruitment System");
+            sysLabel.setFont(new Font("Segoe UI", Font.PLAIN, 18));
+            sysLabel.setForeground(new Color(255, 255, 255, 220));
+            sysLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
+
+            left.add(brandLabel);
+            left.add(Box.createVerticalStrut(10));
+            left.add(sysLabel);
+            
+            left.add(Box.createVerticalGlue());
+            
+            // Bottom copyright text
+            JLabel bottomLabel = new JLabel("© 2026 BUPT x QMUL. All rights reserved.");
+            bottomLabel.setFont(new Font("Segoe UI", Font.PLAIN, 11));
+            bottomLabel.setForeground(new Color(255, 255, 255, 100));
+            bottomLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
+            left.add(bottomLabel);
+
+            // RIGHT PANEL (pure white background filling the remaining width)
+            JPanel right = new JPanel(new GridBagLayout());
+            right.setBackground(Color.WHITE);
+            right.setOpaque(true);
+
+            // Scrollable form container inside the right column
+            JPanel formContainer = new JPanel();
+            formContainer.setOpaque(false);
+            formContainer.setLayout(new BoxLayout(formContainer, BoxLayout.Y_AXIS));
+            formContainer.setBorder(BorderFactory.createEmptyBorder(32, 48, 32, 48));
+
+            JLabel title = new JLabel("Create your TA profile");
+            title.setFont(new Font("Segoe UI", Font.BOLD, 28));
+            title.setForeground(new Color(31, 41, 55));
+            title.setAlignmentX(Component.LEFT_ALIGNMENT);
+            formContainer.add(title);
+            
+            formContainer.add(Box.createVerticalStrut(6));
+            
+            JLabel subtitle = new JLabel("Upload a photo and fill in your academic details to get started.");
+            subtitle.setFont(new Font("Segoe UI", Font.PLAIN, 14));
+            subtitle.setForeground(new Color(107, 114, 128));
+            subtitle.setAlignmentX(Component.LEFT_ALIGNMENT);
+            formContainer.add(subtitle);
+            
+            formContainer.add(Box.createVerticalStrut(24));
+
+            // Avatar Selection Panel
+            JPanel avatarSec = new JPanel(new BorderLayout(20, 0));
+            avatarSec.setOpaque(false);
+            avatarSec.setAlignmentX(Component.LEFT_ALIGNMENT);
+            
+            avatarPreview = new JLabel(loadAvatarIcon("", 88));
+            avatarPreview.setPreferredSize(new Dimension(88, 88));
+            avatarPreview.setMinimumSize(new Dimension(88, 88));
+            avatarPreview.setMaximumSize(new Dimension(88, 88));
+            avatarSec.add(avatarPreview, BorderLayout.WEST);
+            
+            JPanel avatarRight = new JPanel();
+            avatarRight.setOpaque(false);
+            avatarRight.setLayout(new BoxLayout(avatarRight, BoxLayout.Y_AXIS));
+            
+            JPanel wallPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+            wallPanel.setOpaque(false);
             for (String fileName : presetAvatarFiles) {
                 JButton choiceButton = createAvatarChoiceButton(fileName, fileName, this::selectPresetAvatar);
+                choiceButton.setPreferredSize(new Dimension(46, 46));
+                choiceButton.setMinimumSize(new Dimension(46, 46));
+                choiceButton.setMaximumSize(new Dimension(46, 46));
+                choiceButton.setIcon(loadAvatarIcon(AVATAR_DIR + "/" + fileName, 40));
+                choiceButton.setBorder(BorderFactory.createLineBorder(new Color(214, 219, 229), 1, true));
                 avatarChoiceButtons.add(choiceButton);
-                avatarWallPanel.add(choiceButton);
+                wallPanel.add(choiceButton);
             }
             
-            JPanel actionPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 10, 0));
-            actionPanel.setOpaque(false);
+            JPanel btnsPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+            btnsPanel.setOpaque(false);
             
             JButton uploadButton = new JButton("Upload Image");
             styleSecondaryButton(uploadButton);
-            uploadButton.addActionListener(e -> {
-                JFileChooser chooser = new JFileChooser();
-                chooser.setDialogTitle("Select Avatar Image");
-                chooser.setFileFilter(new javax.swing.filechooser.FileNameExtensionFilter("Images", "jpg", "jpeg", "png"));
-                if (chooser.showOpenDialog(SwingApp.this.frame) == JFileChooser.APPROVE_OPTION) {
-                    java.io.File file = chooser.getSelectedFile();
-                    selectedAvatarPath = file.getAbsolutePath();
-                    avatarPreview.setIcon(loadAvatarIcon(selectedAvatarPath, 160));
-                    avatarPathLabel.setText(file.getName());
-                    for (JButton btn : avatarChoiceButtons) {
-                        btn.setBorder(BorderFactory.createLineBorder(new Color(214, 219, 229), 2, true));
-                    }
-                }
-            });
+            uploadButton.setFont(new Font("Segoe UI", Font.BOLD, 12));
+            uploadButton.setBorder(BorderFactory.createEmptyBorder(6, 12, 6, 12));
+            uploadButton.addActionListener(e -> chooseRegisterAvatar());
             
             JButton resetAvatarButton = new JButton("Use Default");
             styleSecondaryButton(resetAvatarButton);
+            resetAvatarButton.setFont(new Font("Segoe UI", Font.BOLD, 12));
+            resetAvatarButton.setBorder(BorderFactory.createEmptyBorder(6, 12, 6, 12));
             resetAvatarButton.addActionListener(e -> resetRegisterAvatar());
             
-            actionPanel.add(uploadButton);
-            actionPanel.add(resetAvatarButton);
-            left.add(heading);
-            left.add(Box.createVerticalStrut(8));
-            left.add(subheading);
-            left.add(Box.createVerticalStrut(18));
-            left.add(avatarSectionLabel);
-            left.add(Box.createVerticalStrut(10));
-            left.add(avatarPreview);
-            left.add(Box.createVerticalStrut(10));
-            left.add(avatarPathLabel);
-            left.add(Box.createVerticalStrut(14));
-            left.add(avatarWallPanel);
-            left.add(Box.createVerticalStrut(12));
-            left.add(actionPanel);
+            btnsPanel.add(uploadButton);
+            btnsPanel.add(resetAvatarButton);
+            
+            avatarPathLabel = new JLabel("Using default avatar");
+            avatarPathLabel.setFont(new Font("Segoe UI", Font.PLAIN, 12));
+            avatarPathLabel.setForeground(new Color(120, 120, 120));
+            avatarPathLabel.setBorder(BorderFactory.createEmptyBorder(0, 8, 4, 0));
+            
+            avatarRight.add(wallPanel);
+            avatarRight.add(Box.createVerticalStrut(8));
+            avatarRight.add(btnsPanel);
+            avatarRight.add(avatarPathLabel);
+            
+            avatarSec.add(avatarRight, BorderLayout.CENTER);
+            formContainer.add(avatarSec);
+            
+            formContainer.add(Box.createVerticalStrut(24));
 
-            JPanel right = new JPanel(new GridLayout(0, 2, 12, 12));
-            right.setOpaque(false);
-            right.setBorder(BorderFactory.createEmptyBorder(8, 0, 0, 0));
+            // Grid layout for 2-column fields
+            JPanel fieldsGrid = new JPanel(new GridBagLayout());
+            fieldsGrid.setOpaque(false);
+            fieldsGrid.setAlignmentX(Component.LEFT_ALIGNMENT);
+            
+            GridBagConstraints fgbc = new GridBagConstraints();
+            fgbc.fill = GridBagConstraints.HORIZONTAL;
+            fgbc.weightx = 0.5;
+            
+            Color fieldLabelColor = new Color(75, 85, 99);
+            Font fieldLabelFont = new Font("Segoe UI", Font.BOLD, 12);
+            
             studentIdField = new JTextField();
+            styleRoundedInput(studentIdField);
             nameField = new JTextField();
+            styleRoundedInput(nameField);
             emailField = new JTextField();
+            styleRoundedInput(emailField);
             passwordField = new JPasswordField();
+            styleRoundedInput(passwordField);
             programmeField = new JTextField();
+            styleRoundedInput(programmeField);
             yearField = new JTextField();
-            skillsArea = new JTextArea(4, 20);
+            styleRoundedInput(yearField);
+            skillsArea = new JTextArea(3, 20);
+            styleRoundedInput(skillsArea);
+            skillsArea.setLineWrap(true);
+            skillsArea.setWrapStyleWord(true);
             hoursField = new JTextField();
-            right.add(createFieldLabel("Student ID"));
-            right.add(studentIdField);
-            right.add(createFieldLabel("Name"));
-            right.add(nameField);
-            right.add(createFieldLabel("Email"));
-            right.add(emailField);
-            right.add(createFieldLabel("Password"));
-            right.add(passwordField);
-            right.add(createFieldLabel("Programme"));
-            right.add(programmeField);
-            right.add(createFieldLabel("Year of Study"));
-            right.add(yearField);
-            right.add(createFieldLabel("Skills"));
-            right.add(new JScrollPane(skillsArea));
-            right.add(createFieldLabel("Available Hours/Week"));
-            right.add(hoursField);
+            styleRoundedInput(hoursField);
 
-            JPanel actionRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
+            // Row 0: Student ID and Name
+            JPanel sub0 = new JPanel(new BorderLayout(0, 4));
+            sub0.setOpaque(false);
+            JLabel l0 = new JLabel("Student ID"); l0.setFont(fieldLabelFont); l0.setForeground(fieldLabelColor);
+            sub0.add(l0, BorderLayout.NORTH);
+            sub0.add(studentIdField, BorderLayout.CENTER);
+            
+            JPanel sub1 = new JPanel(new BorderLayout(0, 4));
+            sub1.setOpaque(false);
+            JLabel l1 = new JLabel("Name"); l1.setFont(fieldLabelFont); l1.setForeground(fieldLabelColor);
+            sub1.add(l1, BorderLayout.NORTH);
+            sub1.add(nameField, BorderLayout.CENTER);
+            
+            fgbc.gridy = 0;
+            fgbc.gridx = 0; fgbc.insets = new Insets(0, 0, 16, 12); fieldsGrid.add(sub0, fgbc);
+            fgbc.gridx = 1; fgbc.insets = new Insets(0, 12, 16, 0); fieldsGrid.add(sub1, fgbc);
+            
+            // Row 1: Email and Password
+            JPanel sub2 = new JPanel(new BorderLayout(0, 4));
+            sub2.setOpaque(false);
+            JLabel l2 = new JLabel("Email"); l2.setFont(fieldLabelFont); l2.setForeground(fieldLabelColor);
+            sub2.add(l2, BorderLayout.NORTH);
+            sub2.add(emailField, BorderLayout.CENTER);
+            
+            JPanel sub3 = new JPanel(new BorderLayout(0, 4));
+            sub3.setOpaque(false);
+            JLabel l3 = new JLabel("Password"); l3.setFont(fieldLabelFont); l3.setForeground(fieldLabelColor);
+            sub3.add(l3, BorderLayout.NORTH);
+            sub3.add(passwordField, BorderLayout.CENTER);
+            
+            fgbc.gridy = 1;
+            fgbc.gridx = 0; fgbc.insets = new Insets(0, 0, 16, 12); fieldsGrid.add(sub2, fgbc);
+            fgbc.gridx = 1; fgbc.insets = new Insets(0, 12, 16, 0); fieldsGrid.add(sub3, fgbc);
+            
+            // Row 2: Programme and Year of Study
+            JPanel sub4 = new JPanel(new BorderLayout(0, 4));
+            sub4.setOpaque(false);
+            JLabel l4 = new JLabel("Programme"); l4.setFont(fieldLabelFont); l4.setForeground(fieldLabelColor);
+            sub4.add(l4, BorderLayout.NORTH);
+            sub4.add(programmeField, BorderLayout.CENTER);
+            
+            JPanel sub5 = new JPanel(new BorderLayout(0, 4));
+            sub5.setOpaque(false);
+            JLabel l5 = new JLabel("Year of Study"); l5.setFont(fieldLabelFont); l5.setForeground(fieldLabelColor);
+            sub5.add(l5, BorderLayout.NORTH);
+            sub5.add(yearField, BorderLayout.CENTER);
+            
+            fgbc.gridy = 2;
+            fgbc.gridx = 0; fgbc.insets = new Insets(0, 0, 16, 12); fieldsGrid.add(sub4, fgbc);
+            fgbc.gridx = 1; fgbc.insets = new Insets(0, 12, 16, 0); fieldsGrid.add(sub5, fgbc);
+            
+            // Row 3: Skills and Available Hours/Week
+            JPanel sub6 = new JPanel(new BorderLayout(0, 4));
+            sub6.setOpaque(false);
+            JLabel l6 = new JLabel("Skills (comma-separated)"); l6.setFont(fieldLabelFont); l6.setForeground(fieldLabelColor);
+            sub6.add(l6, BorderLayout.NORTH);
+            JScrollPane skillsScroll = new JScrollPane(skillsArea);
+            skillsScroll.setBorder(null);
+            sub6.add(skillsScroll, BorderLayout.CENTER);
+            
+            JPanel sub7 = new JPanel(new BorderLayout(0, 4));
+            sub7.setOpaque(false);
+            JLabel l7 = new JLabel("Available Hours/Week"); l7.setFont(fieldLabelFont); l7.setForeground(fieldLabelColor);
+            sub7.add(l7, BorderLayout.NORTH);
+            sub7.add(hoursField, BorderLayout.CENTER);
+            
+            fgbc.gridy = 3;
+            fgbc.gridx = 0; fgbc.insets = new Insets(0, 0, 16, 12); fieldsGrid.add(sub6, fgbc);
+            fgbc.gridx = 1; fgbc.insets = new Insets(0, 12, 16, 0); fieldsGrid.add(sub7, fgbc);
+            
+            formContainer.add(fieldsGrid);
+
+            // Action row buttons
+            JPanel actionRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
             actionRow.setOpaque(false);
+            actionRow.setAlignmentX(Component.LEFT_ALIGNMENT);
+            
             JButton submitButton = new JButton("Register Now");
             stylePrimaryButton(submitButton);
+            submitButton.setPreferredSize(new Dimension(160, 42));
             submitButton.addActionListener(e -> submitRegister());
+            
             JButton backButton = new JButton("Back to Login");
             styleSecondaryButton(backButton);
+            backButton.setPreferredSize(new Dimension(160, 42));
             backButton.addActionListener(e -> showLoginPage());
+            
             actionRow.add(submitButton);
+            actionRow.add(Box.createHorizontalStrut(12));
             actionRow.add(backButton);
+            
+            formContainer.add(Box.createVerticalStrut(16));
+            formContainer.add(actionRow);
 
-            JPanel rightWrapper = new JPanel(new BorderLayout(0, 18));
-            rightWrapper.setOpaque(false);
-            rightWrapper.add(right, BorderLayout.CENTER);
-            rightWrapper.add(actionRow, BorderLayout.SOUTH);
-
-            card.add(left, BorderLayout.WEST);
-            card.add(rightWrapper, BorderLayout.CENTER);
-            wrapper.add(card);
-            add(wrapper, BorderLayout.CENTER);
-        }
-
-        private JLabel createFieldLabel(String text) {
-            JLabel label = new JLabel(text);
-            label.setFont(new Font("Segoe UI", Font.BOLD, 14));
-            return label;
+            // Wrapping form inside a JScrollPane for responsiveness
+            JScrollPane scrollPane = new JScrollPane(formContainer);
+            scrollPane.setBorder(null);
+            scrollPane.setOpaque(false);
+            scrollPane.getViewport().setOpaque(false);
+            scrollPane.getVerticalScrollBar().setUnitIncrement(16);
+            
+            GridBagConstraints containerGbc = new GridBagConstraints();
+            containerGbc.gridx = 0;
+            containerGbc.gridy = 0;
+            containerGbc.fill = GridBagConstraints.BOTH;
+            containerGbc.weightx = 1.0;
+            containerGbc.weighty = 1.0;
+            containerGbc.insets = new Insets(20, 20, 20, 20);
+            right.add(scrollPane, containerGbc);
+            
+            add(left, BorderLayout.WEST);
+            add(right, BorderLayout.CENTER);
         }
 
         private void reset() {
@@ -1376,7 +1798,7 @@ public class SwingApp {
             skillsArea.setText("");
             hoursField.setText("");
             selectedAvatarPath = "";
-            avatarPreview.setIcon(loadAvatarIcon("", 180));
+            avatarPreview.setIcon(loadAvatarIcon("", 88));
             avatarPathLabel.setText("Using default avatar");
             updateAvatarWallSelection("");
         }
@@ -1392,19 +1814,19 @@ public class SwingApp {
                         : "TA" + studentIdField.getText().trim());
                 if (savedPath != null) {
                     selectedAvatarPath = savedPath.toAbsolutePath().toString();
-                    avatarPreview.setIcon(loadAvatarIcon(selectedAvatarPath, 180));
+                    avatarPreview.setIcon(loadAvatarIcon(selectedAvatarPath, 88));
                     avatarPathLabel.setText(new File(selectedAvatarPath).getName());
+                    updateAvatarWallSelection("");
                 }
             }
         }
 
         private void selectPresetAvatar(String fileName) {
             selectedAvatarPath = AVATAR_DIR + "/" + fileName;
-            avatarPreview.setIcon(loadAvatarIcon(selectedAvatarPath, 180));
+            avatarPreview.setIcon(loadAvatarIcon(selectedAvatarPath, 88));
             avatarPathLabel.setText(fileName);
             updateAvatarWallSelection(fileName);
         }
-
 
         private void updateAvatarWallSelection(String selectedFileName) {
             for (int i = 0; i < avatarChoiceButtons.size(); i++) {
@@ -1421,7 +1843,7 @@ public class SwingApp {
 
         private void resetRegisterAvatar() {
             selectedAvatarPath = "";
-            avatarPreview.setIcon(loadAvatarIcon("", 180));
+            avatarPreview.setIcon(loadAvatarIcon("", 88));
             avatarPathLabel.setText("Using default avatar");
             updateAvatarWallSelection("");
         }
@@ -3386,26 +3808,45 @@ public class SwingApp {
             JTextField positionsField = new JTextField(existing == null ? "" : String.valueOf(existing.getPositions()));
             JTextField deadlineField = new JTextField(existing == null ? "" : existing.getDeadline());
 
-            JPanel panel = new JPanel(new GridLayout(0, 1, 6, 6));
-            panel.add(new JLabel("Module Code"));
-            panel.add(moduleCodeField);
-            panel.add(new JLabel("Module Name"));
-            panel.add(moduleNameField);
-            panel.add(new JLabel("Description"));
-            panel.add(new JScrollPane(descriptionArea));
-            panel.add(new JLabel("Required Skills"));
-            panel.add(requiredSkillsField);
-            panel.add(new JLabel("Hours per Week"));
-            panel.add(hoursField);
-            panel.add(new JLabel("Positions"));
-            panel.add(positionsField);
-            panel.add(new JLabel("Deadline (YYYY-MM-DD)"));
-            panel.add(deadlineField);
+            JPanel panel = new JPanel(new GridBagLayout());
+            GridBagConstraints gbc = new GridBagConstraints();
+            gbc.insets = new Insets(4, 4, 4, 4);
+            gbc.fill = GridBagConstraints.HORIZONTAL;
+            gbc.weightx = 1.0;
+            gbc.gridx = 0;
+
+            gbc.gridy = 0; panel.add(new JLabel("Module Code"), gbc);
+            gbc.gridy = 1; panel.add(moduleCodeField, gbc);
+
+            gbc.gridy = 2; panel.add(new JLabel("Module Name"), gbc);
+            gbc.gridy = 3; panel.add(moduleNameField, gbc);
+
+            gbc.gridy = 4; panel.add(new JLabel("Description"), gbc);
+            gbc.gridy = 5; 
+            gbc.fill = GridBagConstraints.BOTH;
+            gbc.weighty = 1.0;
+            panel.add(new JScrollPane(descriptionArea), gbc);
+
+            gbc.fill = GridBagConstraints.HORIZONTAL;
+            gbc.weighty = 0.0;
+
+            gbc.gridy = 6; panel.add(new JLabel("Required Skills"), gbc);
+            gbc.gridy = 7; panel.add(requiredSkillsField, gbc);
+
+            gbc.gridy = 8; panel.add(new JLabel("Hours per Week"), gbc);
+            gbc.gridy = 9; panel.add(hoursField, gbc);
+
+            gbc.gridy = 10; panel.add(new JLabel("Positions"), gbc);
+            gbc.gridy = 11; panel.add(positionsField, gbc);
+
+            gbc.gridy = 12; panel.add(new JLabel("Deadline (YYYY-MM-DD)"), gbc);
+            gbc.gridy = 13; panel.add(deadlineField, gbc);
+
             if (existing != null) {
                 JLabel statusHint = new JLabel(
                         "Status: " + existing.getStatus().name() + "  (use Close / Reopen to change)");
                 statusHint.setForeground(MUTED_TEXT_COLOR);
-                panel.add(statusHint);
+                gbc.gridy = 14; panel.add(statusHint, gbc);
             }
 
             int option = JOptionPane.showConfirmDialog(

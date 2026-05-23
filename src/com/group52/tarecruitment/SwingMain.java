@@ -26,6 +26,8 @@ public class SwingMain {
                 new NotificationRepository(dataDirectory.resolve("notifications.csv"));
         WorkloadRepository workloadRepository =
                 new WorkloadRepository(dataDirectory.resolve("workloads.json"));
+        com.group52.tarecruitment.repository.ApplicationAuditLogRepository auditLogRepository =
+                new com.group52.tarecruitment.repository.ApplicationAuditLogRepository(dataDirectory.resolve("audit_logs.csv"));
 
         AuthService authService = new AuthService(userRepository);
         NotificationService notificationService = new NotificationService(notificationRepository);
@@ -33,6 +35,7 @@ public class SwingMain {
         WorkloadService workloadService = new WorkloadService(workloadRepository);
         ApplicationService applicationService =
                 new ApplicationService(applicationRepository, jobRepository, workloadService, notificationService, userRepository);
+        applicationService.setAuditLogRepository(auditLogRepository);
         AdminService adminService =
                 new AdminService(userRepository, jobRepository, applicationRepository, notificationService, jobService);
 
