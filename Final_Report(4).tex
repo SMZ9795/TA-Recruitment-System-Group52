@@ -1,0 +1,453 @@
+\documentclass[12pt, a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{mathptmx}
+\usepackage{geometry}
+\geometry{a4paper, left=2.5cm, right=2.5cm, top=2.5cm, bottom=2.5cm}
+\usepackage{xcolor}
+\usepackage{titlesec}
+\usepackage{tabularx}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{float}
+\usepackage{enumitem}
+\usepackage{amsmath}
+\usepackage{listings}
+
+\definecolor{TemplateBlue}{RGB}{31, 97, 141}
+
+\lstset{
+    basicstyle=\ttfamily\small,
+    breaklines=true,
+    frame=single,
+    rulecolor=\color{black!30},
+    backgroundcolor=\color{black!5},
+    keywordstyle=\color{blue}\bfseries,
+    commentstyle=\color{green!50!black}\itshape,
+    stringstyle=\color{red},
+    showstringspaces=false,
+    tabsize=4
+}
+
+\titleformat{\section}
+  {\normalfont\Large\color{TemplateBlue}}
+  {\thesection.}
+  {1em}
+  {}
+
+\titleformat{\subsection}
+  {\normalfont\large\bfseries\color{TemplateBlue}}
+  {\thesubsection}
+  {1em}
+  {}
+
+\titleformat{\subsubsection}
+  {\normalfont\normalsize\bfseries}
+  {\thesubsubsection}
+  {1em}
+  {}
+
+\begin{document}
+
+\begin{center}
+    {\huge \textcolor{TemplateBlue}{EBU6304 Software Engineering Group Project}}\\[1.5em]
+    {\Large 2025-26}\\[1.5em]
+\end{center}
+
+\begin{table}[h]
+\centering
+\renewcommand{\arraystretch}{1.2}
+\begin{tabular}{|l|l|l|}
+\hline
+\textbf{Group number} & 52 & \\ \hline
+member 1 & QM no: 231226680 & Name: Mengzhe Shi \\ \hline
+member 2 & QM no: 231226738 & Name: Zhixing Sun \\ \hline
+member 3 & QM no: 231226945 & Name: Yucheng Liu \\ \hline
+member 4 & QM no: 231226510 & Name: Wang Xiao \\ \hline
+member 5 & QM no: 231226244 & Name: Hanyu Xiao \\ \hline
+member 6 & QM no: 231225546 & Name: Conghao Li \\ \hline
+\end{tabular}
+\end{table}
+
+\vspace{1.5em}
+{\huge \textcolor{TemplateBlue}{Final short report}}\\[1.5em]
+
+%=============================================================================
+% SECTION 1: DESIGN
+% Template requirement: "Explain the design strategy and provide detailed
+% design descriptions at different levels, such as architecture, components,
+% and the design principles and patterns applied. You may use diagrams where
+% appropriate to illustrate and support your design ideas."
+%=============================================================================
+\section{Design}
+
+\subsection{Design Strategy}
+The TA Recruitment System serves three types of users: Teaching Assistants (TAs) who apply for positions, Module Organizers (MOs) who post jobs and review applicants, and Administrators who oversee system-wide workload distribution. The system supports the entire recruitment lifecycle---from account registration and job posting, through application submission and MO review, to workload tracking and administrative analytics.
+
+Development was constrained by strict pedagogical requirements: pure Java (JDK 17+) with no external frameworks (no Spring, no JPA), no build automation tools (no Maven/Gradle), and no database---all data must be persisted using flat CSV and JSON text files. These constraints shaped every architectural decision, forcing us to build persistence, validation, and dependency injection mechanisms from scratch.
+
+\subsection{Architecture: Model-View-Service-Repository (MVSR)}
+We designed a four-layer MVSR architecture rather than the traditional MVC pattern. In MVC, controllers tend to become bloated ``god classes'' that mix UI event routing with business rule enforcement. Our \texttt{ApplicationService} alone enforces over 15 distinct business rules (deadline checks, capacity limits, duplicate-application guards, workload-hour caps, and audit logging). Placing all of this inside Swing \texttt{ActionListener}s would have violated the Single Responsibility Principle and made unit testing impossible.
+
+The MVSR paradigm introduces a dedicated Service layer (pure business logic) and a dedicated Repository layer (file I/O abstraction):
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{architecture.png}
+    \caption{Model-View-Service-Repository (MVSR) Architecture}
+    \label{fig:architecture}
+\end{figure}
+
+All dependencies are wired manually in \texttt{SwingMain.java} via constructor injection. Each Service receives its Repository dependencies explicitly, making the dependency graph inspectable and---critically---enabling test isolation by substituting production file paths with temporary directories.
+
+\begin{lstlisting}[language=Java, caption=Manual dependency injection in SwingMain.java]
+UserRepository userRepo = new UserRepository(
+        dataDir.resolve("users.csv"));
+JobRepository jobRepo = new JobRepository(
+        dataDir.resolve("jobs.csv"));
+ApplicationRepository appRepo = new ApplicationRepository(
+        dataDir.resolve("applications.csv"));
+
+AuthService authService = new AuthService(userRepo);
+NotificationService notifService = new NotificationService(notifRepo);
+JobService jobService = new JobService(jobRepo, appRepo, notifService);
+ApplicationService appService = new ApplicationService(
+        appRepo, jobRepo, workloadService, notifService, userRepo);
+\end{lstlisting}
+
+\subsection{Component Design}
+
+\subsubsection{Application State Machine}
+The \texttt{Application} entity is governed by a strict Finite State Machine (FSM). An application can be in one of four states: \texttt{PENDING}, \texttt{ACCEPTED}, \texttt{REJECTED}, or \texttt{WITHDRAWN}. The \texttt{ApplicationService} is the sole authority for state transitions.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.6\textwidth]{statemachine.png}
+    \caption{Application State Machine Transitions}
+    \label{fig:statemachine}
+\end{figure}
+
+Before any transition, the service validates multiple business constraints: (1)~the job must be \texttt{OPEN} and not past its deadline---if the deadline has passed, the system self-heals by automatically closing the job; (2)~a TA cannot apply to the same job twice, with status-specific error messages; (3)~when accepting, the service checks the job's position limit and auto-transitions the job to \texttt{FILLED} if full; (4)~the TA's total assigned hours across all accepted jobs must not exceed their declared available hours; (5)~state changes can be recorded through \texttt{ApplicationAuditLog} when the audit repository is configured, and this behaviour is covered by automated tests; (6)~targeted notifications are dispatched to both the TA and the MO.
+
+\subsubsection{Authentication and Security}
+The \texttt{AuthService} supports dual-mode login---users can log in with either their user ID or email address, auto-detected by checking for an ``@'' character. After 5 consecutive failed attempts, the account is locked for 5 minutes using a stored \texttt{LocalDateTime} expiry. On the next login attempt, the service checks whether the lock has expired and automatically resets the counter if so. Password strength is enforced by \texttt{ValidationUtil.requirePassword()}.
+
+\subsubsection{AI-Powered Skill Matching}
+The \texttt{AiMatchingService} scores how well a TA's skills match a job's requirements using a four-layer sequential filter:
+
+\begin{table}[H]
+\centering
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{|c|l|c|l|}
+\hline
+\textbf{Layer} & \textbf{Strategy} & \textbf{Weight} & \textbf{Example} \\ \hline
+1 & Exact match (after synonym resolution) & 1.00 & ``py'' = ``python'' \\ \hline
+2 & Substring containment & 0.85 & ``core java'' contains ``java'' \\ \hline
+3 & Related-skill graph traversal & 0.50 & React related to JavaScript \\ \hline
+4 & Levenshtein fuzzy match ($\le 2$ edits) & 0.75 & ``pythn'' $\approx$ ``python'' \\ \hline
+\end{tabular}
+\caption{Four-layer matching strategy with confidence weights}
+\end{table}
+
+The synonym dictionary maps over 120 aliases to canonical forms (e.g., ``js'', ``ecmascript'', ``es6'' $\rightarrow$ ``javascript''). The related-skills graph contains 40+ nodes with directed edges connecting academically related concepts (e.g., ``machine learning'' is related to ``python'', ``statistics'', ``deep learning'', ``linear algebra''). The final score is computed as the weighted average of matched requirements, normalised to the range $[0, 100]$.
+
+\subsubsection{Workload Balancing}
+The \texttt{WorkloadBalancerService} provides refresh-based workload analytics. For each TA, it sums the weekly hours across all accepted jobs and classifies them into four levels: \texttt{UNDERUSED} (no work or significant remaining capacity), \texttt{BALANCED}, \texttt{OVERLOADED} (assigned exceeds available), and \texttt{HIGH\_RISK} (exceeds by more than 5 hours). It then generates concrete redistribution suggestions with priority levels.
+
+\subsection{Design Principles and Patterns Applied}
+
+\begin{table}[H]
+\centering
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{|l|p{10cm}|}
+\hline
+\textbf{Principle / Pattern} & \textbf{How Applied} \\ \hline
+Single Responsibility (SRP) & \texttt{CsvUtil} handles only CSV escaping; \texttt{ValidationUtil} handles only input validation; each Repository handles only one entity type. \\ \hline
+Open/Closed (OCP) & \texttt{JobFilterUtil} centralises multi-criteria filtering in a reusable static helper. \\ \hline
+Dependency Inversion (DIP) & All Services depend on repository components injected via constructors, never on concrete file paths. \\ \hline
+Observer (Pub/Sub) & \texttt{NotificationService} decouples event producers (Services) from consumers (UI panels). When \texttt{ApplicationService} accepts an application, it publishes a notification; the TA panel reads it on next refresh without direct coupling. \\ \hline
+State Machine & Application status transitions are centrally validated by \texttt{ApplicationService}, preventing illegal mutations. \\ \hline
+DTO Pattern & \texttt{MatchResult}, \texttt{WorkloadRecommendation}, and \texttt{RankedApplicant} are immutable data carriers between the Service and View layers. \\ \hline
+Strategy Pattern & Applicant sorting uses interchangeable comparators; job filtering is centralised in a reusable helper method. \\ \hline
+\end{tabular}
+\caption{Design principles and patterns applied in the system}
+\end{table}
+
+%=============================================================================
+% SECTION 2: IMPLEMENTATION
+% Template requirement: "Outline the implementation strategy and project build
+% plan. Discuss how version control is used to support development and
+% collaboration."
+%=============================================================================
+\section{Implementation}
+
+\subsection{Implementation Strategy: Iterative Development}
+We adopted an iterative and incremental methodology, delivering working software at the end of each of four sprints:
+
+\begin{table}[H]
+\centering
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{|c|p{3.5cm}|p{9.5cm}|}
+\hline
+\textbf{Sprint} & \textbf{Focus} & \textbf{Key Deliverables} \\ \hline
+1 & Foundation \& Core Flows & Initial project framework, basic directory structure, CSV data layer, Auth models, MO job management flow, and TA application base flow. \\ \hline
+2 & GUI \& Validation & Swing GUI refinement, CV upload handling, robust system validation/error handling, TA/MO application review workflows, and Admin workload monitoring prototype. \\ \hline
+3 & AI Core \& Analytics & \texttt{AiMatchingService} core logic, Admin analytics dashboard, TA notification centre, MO applicant ranking lists, and comprehensive job lifecycle rules. \\ \hline
+4 & Polish \& Advanced Features & AI job recommendations (TA side), \texttt{WorkloadBalancerService}, password security enhancements, CSV export, GitHub Actions CI, and final integration testing. \\ \hline
+\end{tabular}
+\caption{Iteration plan based on team workflow}
+\end{table}
+
+Each iteration produced a working, demonstrable increment. Sprint 1 established the foundational architecture and the critical path for job creation and application. Sprint 2 focused on stabilising the user interface, refining data validation, and expanding the core review workflows. Sprint 3 delivered the complex business logic, including the four-layer AI matching engine and the administrative analytics dashboards. Finally, Sprint 4 polished the user experience, implemented advanced features like the explainable workload balancing system, and ensured system stability through rigorous final testing.
+
+\subsection{Project Build Plan}
+The project compiles and runs on any standard JDK 17+ environment without any build tool:
+
+\begin{lstlisting}[language=powershell, caption=Build and run commands]
+# Windows PowerShell scripts shipped with the project
+.\scripts\build.ps1
+.\scripts\test.ps1
+.\scripts\run.ps1
+\end{lstlisting}
+
+The entire GUI is implemented as a single-window application using Swing's \texttt{CardLayout}. Role-based panels (\texttt{LoginPanel}, \texttt{RegisterPanel}, \texttt{TaPanel}, \texttt{MoPanel}, \texttt{AdminPanel}) are pre-loaded into a card stack and navigation occurs by switching the visible card, providing a seamless single-page-application experience. The role panels expose refresh actions and tab-change handlers that re-query the Service layer when data-heavy views are opened, ensuring the UI shows current data after user actions.
+
+A custom CSV persistence engine was built to handle data storage. The key challenge was embedded commas in user data (e.g., a skills field containing ``Java, C++, Python''). We implemented RFC 4180-compliant escaping in \texttt{CsvUtil}:
+
+\begin{lstlisting}[language=Java, caption=RFC 4180 CSV escaping in CsvUtil.java]
+public static String escape(String value) {
+    if (value == null) {
+        return "";
+    }
+    String escaped = value.replace("\"", "\"\"");
+    return "\"" + escaped + "\"";
+}
+\end{lstlisting}
+
+\subsection{Version Control for Development and Collaboration}
+We adopted a strict feature-branch workflow on GitHub. To ensure traceability, every feature (e.g., \texttt{mengzhe/admin-workload}) was developed in isolation and merged via Pull Requests (PRs). PRs facilitated asynchronous code review, which was crucial for validating complex logic like the AI matching algorithm before integration. Furthermore, we integrated \textbf{GitHub Actions CI} to automatically compile the project and run our \texttt{RecruitmentSystemTestRunner} on every PR. This quality gate immediately caught regressions, such as changes in CSV parsing breaking legacy data tests, ensuring \texttt{main} remained stable.
+
+Our primary collaborative challenge was merge conflicts in \texttt{SwingApp.java}, a monolithic GUI file exceeding 4,400 lines. We mitigated this through proactive rebasing against \texttt{main} to minimise branch divergence, and by establishing strict panel ownership (e.g., separating Admin and MO UI responsibilities). When conflicts occurred, we utilised Git's 3-way merge tools to safely resolve overlapping edits---ensuring, for example, that an \texttt{ActionListener} update in one panel did not break event routing in another.
+
+%=============================================================================
+% SECTION 3: TESTING
+% Template requirement: "Describe the testing strategy, techniques, test case
+% design, and the test results. Give specific examples."
+%=============================================================================
+\section{Testing}
+
+\subsection{Testing Strategy}
+Since external testing libraries (JUnit, TestNG) were not permitted, we built a custom test framework: \texttt{RecruitmentSystemTestRunner}. Each test method is executed inside a \texttt{try-catch} block; if it throws \texttt{AssertionError}, the test is marked as failed. The runner produces a formatted pass/fail summary at the end.
+
+To achieve strict test isolation, we engineered a \texttt{TestContext} class implementing \texttt{AutoCloseable}. For each test, it creates a fresh temporary directory, wires repositories and services to temporary CSV files, and recursively deletes the directory on teardown. This guarantees that every test starts with an empty, isolated database.
+
+\subsection{Testing Techniques and Test Case Design}
+
+\subsubsection{Equivalence Partitioning and Boundary Value Analysis}
+For \texttt{WorkloadRules.classify()}, we partitioned the input domain (weekly hours) into three equivalence classes and explicitly tested the boundary values:
+
+\begin{table}[H]
+\centering
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{|c|l|l|l|}
+\hline
+\textbf{Input (hours)} & \textbf{Equivalence Class} & \textbf{Expected Output} & \textbf{Result} \\ \hline
+3 & Underused ($< 4$) & \texttt{UNDERUSED} & PASS \\ \hline
+4 & Balanced (lower bound) & \texttt{BALANCED} & PASS \\ \hline
+12 & Balanced (upper bound) & \texttt{BALANCED} & PASS \\ \hline
+13 & Overloaded ($> 12$) & \texttt{OVERLOADED} & PASS \\ \hline
+\end{tabular}
+\caption{Boundary Value Analysis for workload classification}
+\end{table}
+
+\subsubsection{State Transition Testing}
+For the Application FSM, we tested every valid and invalid transition to ensure the state machine correctly rejects illegal mutations:
+
+\begin{table}[H]
+\centering
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{|l|l|l|l|}
+\hline
+\textbf{From State} & \textbf{Action} & \textbf{Expected Result} & \textbf{Result} \\ \hline
+PENDING & MO accepts & $\rightarrow$ ACCEPTED & PASS \\ \hline
+PENDING & MO rejects & $\rightarrow$ REJECTED & PASS \\ \hline
+PENDING & TA withdraws & $\rightarrow$ WITHDRAWN & PASS \\ \hline
+ACCEPTED & TA withdraws & \texttt{IllegalArgumentException} & PASS \\ \hline
+\end{tabular}
+\caption{State transition testing for the Application FSM}
+\end{table}
+
+\subsubsection{Specific Test Examples}
+
+\textbf{Example 1: Account locking after failed login attempts.}
+This test verifies that after 4 consecutive wrong passwords, the 5th attempt triggers the lock:
+\begin{lstlisting}[language=Java]
+User ta = ctx.authService.registerTa("231226001", 
+        "Test TA", "test@test.com", "Password1!");
+for (int i = 0; i < 4; i++) {
+    assertThrows(() -> ctx.authService.login("TA231226001", "wrong"));
+}
+// 5th attempt should trigger lock
+String msg = assertThrows(
+        () -> ctx.authService.login("TA231226001", "wrong"));
+assertTrue(msg.contains("locked"));
+\end{lstlisting}
+
+\textbf{Example 2: End-to-end integration lifecycle.}
+This test simulates the complete workflow: register a TA, create a job as MO, apply for the job, accept the application, and verify that the TA's workload hours are correctly incremented:
+\begin{lstlisting}[language=Java]
+User ta = ctx.authService.registerTa("231226002",
+        "Alice", "alice@test.com", "Password1!");
+Job job = ctx.jobService.createJob("EBU6304", "SE", 
+        "Java", "2026-12-31", 2, 8, moId);
+Application app = ctx.appService.applyForJob(job.getId(), ta.getId());
+ctx.appService.updateApplicationStatus(
+        app.getId(), moId, ApplicationStatus.ACCEPTED);
+int hours = ctx.appService.getAcceptedWorkloadHoursForTa(ta.getId());
+assertEquals(8, hours, "Workload hours should be 8 after acceptance");
+\end{lstlisting}
+
+\subsection{Test Results}
+The suite contains \textbf{42 automated test cases} spanning all layers. All 42 tests pass consistently.
+
+\begin{table}[H]
+\centering
+\renewcommand{\arraystretch}{1.2}
+\begin{tabular}{|l|c|p{6.5cm}|}
+\hline
+\textbf{Category} & \textbf{Count} & \textbf{Scope} \\ \hline
+Data Persistence & 4 & CSV read/write, repository restart survival, legacy format \\ \hline
+Authentication & 6 & Registration, login, password strength, account locking, password change \\ \hline
+Job Management & 3 & CRUD, deadline enforcement, capacity limits \\ \hline
+Application Workflow & 5 & State transitions, authorisation, duplicate prevention \\ \hline
+AI Matching & 5 & Exact/partial/empty matching, sorting, hour-limit penalties \\ \hline
+MO Ranking & 2 & Score-based sorting, minimum-score filtering \\ \hline
+Admin Analytics & 6 & Workload alerts, trends, idle TA detection \\ \hline
+Workload Rules & 3 & Boundary classification, transferable hours \\ \hline
+Notification & 2 & Filtering, unread count \\ \hline
+Export \& Integration & 4 & CSV export, end-to-end lifecycle \\ \hline
+Others & 2 & Legacy compatibility \\ \hline
+\textbf{Total} & \textbf{42} & \textbf{100\% pass rate} \\ \hline
+\end{tabular}
+\caption{Test coverage summary}
+\end{table}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{test_summary.png}
+    \caption{Part of Test Execution Summary}
+    \label{fig:test_summary}
+\end{figure}
+
+%=============================================================================
+% SECTION 4: THE USE OF GENERATIVE AI (GenAI)
+% Template requirement: "Describe the GenAI tool(s) used at different stages
+% of the software development process. Critically evaluate their effectiveness
+% in supporting development activities and discuss their limitations and
+% challenges."
+%=============================================================================
+\section{The Use of Generative AI (GenAI)}
+
+\subsection{GenAI Tools Used at Different Stages}
+We used \textbf{Google Gemini (Agentic IDE Assistant)} throughout the software development process. The following table summarises how it was applied at each stage:
+
+\begin{table}[H]
+\centering
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{|l|p{9cm}|}
+\hline
+\textbf{Development Stage} & \textbf{How GenAI Was Used} \\ \hline
+\textbf{Design} & Generated initial MVSR interface contracts and class diagrams from natural-language descriptions of the system requirements and constraints. \\ \hline
+\textbf{Algorithm Design} & Implemented the Levenshtein edit distance algorithm and the synonym dictionary structure from targeted prompts. \\ \hline
+\textbf{UI Development} & Generated Java Swing panel layouts from English descriptions (e.g., ``create a registration form with name, email, password, and avatar selection''). Generated \texttt{GridBagLayout} constraints, \texttt{JTable} models, and event listeners. \\ \hline
+\textbf{Debugging} & Analysed stack traces from our custom test runner to identify root causes. Suggested fixes for null pointer exceptions and CSV parsing edge cases. \\ \hline
+\textbf{Testing} & Helped draft test cases for boundary conditions and suggested edge cases we had not considered. \\ \hline
+\textbf{Git / Collaboration} & Assisted in resolving complex merge conflicts in \texttt{SwingApp.java}. \\ \hline
+\end{tabular}
+\caption{GenAI usage across development stages}
+\end{table}
+
+\subsection{Effectiveness Evaluation}
+GenAI proved highly effective for the following tasks:
+\begin{itemize}
+    \item \textbf{UI boilerplate (saved $\sim$70\% of time)}: Swing layout code is notoriously tedious---specifying \texttt{GridBagConstraints} for every component requires dozens of lines of near-identical code. Describing the desired layout in English and having the AI generate it was the single largest productivity gain.
+    \item \textbf{Algorithm implementation}: When prompted with ``Implement a Java method that calculates Levenshtein edit distance using a 2D DP matrix, no external libraries,'' the AI produced a correct $O(N \times M)$ solution immediately, saving significant development and debugging time.
+    \item \textbf{Debugging isolated issues}: For single-file bugs with clear stack traces, the AI identified root causes quickly and suggested targeted fixes.
+\end{itemize}
+
+\subsection{Limitations and Challenges}
+
+Despite its productivity benefits, GenAI exhibited several significant limitations that required constant human oversight:
+
+\begin{enumerate}
+    \item \textbf{Framework Hallucination}: Unless explicitly constrained with ``Do not use Spring, JPA, or any external libraries,'' the AI would frequently generate code with \texttt{@Autowired} annotations, \texttt{javax.persistence} imports, or Jackson JSON parsing. These violations were caught at compile time but wasted development cycles. We had to include this constraint in nearly every prompt.
+    
+    \item \textbf{Context Window Degradation}: When \texttt{SwingApp.java} exceeded 4,000 lines, the AI frequently lost track of which inner class it was modifying. For example, when asked to ``add a refresh button to the Admin Notifications tab,'' it sometimes modified the MO panel instead. We mitigated this by providing exact line numbers and class names in prompts.
+    
+    \item \textbf{Destructive Code Overwrites}: During refactoring operations, the AI occasionally deleted adjacent business logic that was unrelated to the requested change. For instance, when asked to add configured audit logging to \texttt{updateApplicationStatus()}, it removed the workload-hour validation check. This regression was caught \textit{only} because our automated test suite failed, underscoring the critical importance of comprehensive test coverage when working with AI tools.
+    
+    \item \textbf{Over-Engineering}: For straightforward tasks like reading a CSV file, the AI sometimes suggested \texttt{ExecutorService} thread pools or NIO channel pipelines. We had to actively simplify its suggestions to match the project's academic scope.
+    
+    \item \textbf{Inconsistent Merge Conflict Resolution}: When used to resolve multi-file merge conflicts, the AI sometimes produced incomplete merges that compiled but silently dropped functionality from one branch. We learned to always run the full test suite after AI-assisted merges.
+\end{enumerate}
+
+\textbf{Critical evaluation}: GenAI is an effective accelerator for boilerplate generation and isolated algorithmic tasks. However, it cannot replace the software engineer's responsibility for maintaining architectural coherence, enforcing cross-cutting constraints (e.g., ``state transitions must preserve configured audit logging and workload validation''), and validating system-wide correctness. Our automated test suite proved essential as a safety net against AI-introduced regressions. The most important lesson is that AI-assisted development demands \textit{more} testing discipline, not less.
+
+\newpage
+%=============================================================================
+{\normalfont\Large\color{TemplateBlue} Individual contribution and reflection}\\[1em]
+%=============================================================================
+
+Each group member provides one paragraph outlining their key contribution to the project (\textbf{this has been agreed by the group}) and another paragraph reflecting on their learning experience.
+
+\vspace{1em}
+\textbf{QM no:} 231226680 \hspace{2em} \textbf{Name:} Mengzhe Shi\\
+\textbf{Main contribution:}\\
+Across the four iterations, I was responsible for the core application review module, administrator capabilities, and the MO applicant ranking system. In early iterations, I established the foundation of the application review and admin modules, while improving system validation and error handling to ensure stable business inputs. I also contributed to administrator-side workload analysis features. In Iteration 3, I developed the MO applicant ranking system, implementing applicant ranking lists, filtering mechanisms, workload-aware sorting, explanation popups, and integration with AI matching scores. I also designed helper utilities for future ranking extensions. Finally, I polished the MO review workflow by introducing MO notification cards, pending-review indicators, enhanced filtering, and future MO ranking extension helpers. In addition, I participated in testing, repository integration, and branch management.\\
+
+\textbf{Reflective statement:}\\
+Developing the MO applicant ranking system and application review modules significantly deepened my understanding of data sorting, filtering, and workflow control within a monolithic application. The primary challenge was designing a ranking algorithm that seamlessly integrated with the AI matching scores while remaining flexible for future extensions. I learned the importance of robust input validation and error handling; early on, unstable inputs caused unexpected crashes, which I resolved by implementing a stricter validation utility. Working on the MO review workflow taught me how to design intuitive user interfaces for complex administrative tasks, especially when review actions, applicant ranking, notifications, and application status updates needed to remain consistent. Furthermore, collaborating on a shared repository highlighted the necessity of clear modular boundaries to minimise merge conflicts. I also gained practical experience with Git branch management, pull request preparation, testing, and iterative integration across multiple development stages. Designing future extension helpers further improved my understanding of maintainable software architecture and long-term system scalability. Overall, the experience improved my skills in Java Swing, system architecture, collaborative development, and iterative software engineering.
+
+\vspace{1.5em}
+\textbf{QM no:} 231226738 \hspace{2em} \textbf{Name:} Zhixing Sun\\
+\textbf{Main contribution:}\\
+I led the development of the authentication and security modules, as well as the administrator analytics dashboard. I initially participated in repository structuring and README maintenance. In Iteration 2, I implemented the Auth login module, basic Admin workload monitoring, and CV upload functionality. In Iteration 3, I developed the comprehensive Admin analytics suite, including risk assessment based on available hours, overloaded filters, TA search/trend views, and job statistics bars. In the final iteration, I focused on password security, implementing password change UIs, old password verification, strength prompts, and enhanced audit logging.\\
+\textbf{Reflective statement:}\\
+Building the authentication module and admin analytics dashboard was a rewarding challenge that exposed me to the complexities of system security and data visualisation. Implementing the password security features required careful consideration of user experience alongside strict validation rules. The most significant challenge was developing the workload analytics; calculating and visualising risk levels dynamically without a relational database required efficient data processing and aggregation logic. I developed strong skills in designing responsive Swing components, particularly custom table renderers for the analytics dashboards. The process also taught me the critical importance of audit logging in enterprise systems. Navigating Git workflows and resolving conflicts during collaborative UI updates further refined my teamwork and version control capabilities.
+
+\vspace{1.5em}
+\textbf{QM no:} 231226945 \hspace{2em} \textbf{Name:} Yucheng Liu\\
+\textbf{Main contribution:}\\
+My primary focus was engineering the AI-powered matching and workload balancing services. I initially developed the TA application module and modernised the UI. In Iteration 3, I architected the core \texttt{AiMatchingService}, implementing the multi-layer skill matching algorithm, whilst also handling TA workload persistence and dashboard UI optimisation. In Iteration 4, I designed the \texttt{WorkloadBalancerService}, creating the deterministic logic for Admin workload balancing and the explainable AI workload recommendation system, ensuring fair and transparent hour redistribution.\\
+\textbf{Reflective statement:}\\
+Designing the AI matching and workload balancing services fundamentally changed my approach to algorithmic problem-solving. Translating vague matching requirements into a deterministic, four-layer scoring algorithm involved deep engagement with data structures and dynamic programming, particularly for the Levenshtein distance implementation. The main challenge was ensuring the workload balancing recommendations were both mathematically sound and explainable to users; black-box algorithms are unacceptable in administrative systems. This required creating detailed explanation texts for every recommendation. While Generative AI accelerated the prototyping of the scoring heuristic, refining the logic to handle edge cases was a rigorously manual engineering task. This project significantly enhanced my skills in algorithm design, Java streams, and building transparent, rule-based decision engines.
+
+\vspace{1.5em}
+\textbf{QM no:} 231226510 \hspace{2em} \textbf{Name:} Wang Xiao\\
+\textbf{Main contribution:}\\
+I owned the Job lifecycle, build/release engineering, and data-export domains end-to-end across all four iterations, delivering five reviewed pull requests (\#51--\#55) in the final sprint alone. Foundationally, I designed the MO job management flow, the TA/MO application review pipeline, TA profile editing, and the multi-condition job board filter. In Iteration 3, I defined the complete Job state machine---\texttt{OPEN}~$\leftrightarrow$~\texttt{FILLED}, manual close/reopen, and the auto-close-on-expiry self-healing path---with full lifecycle test coverage. In Iteration 4, I shifted to engineering quality: I built the timestamped CSV export service (TA workload summary, job filling status, applicant lists) with collision-safe filenames; rescued the test suite from a broken merge by rewriting 12 compile-failing tests into real integration tests, restoring a clean 42/42 green; stood up the GitHub Actions CI pipeline that now blocks any PR that breaks the build; rewrote the README with Mermaid architecture and sequence diagrams and added six cross-platform one-line scripts (build/test/run for both Bash and PowerShell); modernised the Swing UI (rounded-pill buttons, a gradient login hero, fixed a latent danger-button colour bug); and shipped a bilingual auto-demo mode that scripts the full TA~$\rightarrow$~MO~$\rightarrow$~Admin~$\rightarrow$~Export walkthrough in $\sim$120 seconds, complete with backup-and-restore safety nets and a JVM shutdown hook for crash-safe replay.\\
+\textbf{Reflective statement:}\\
+Owning the build, CI, and demo infrastructure forced me to think about software as a system that other people---reviewers, teammates, even future me---have to operate, not just code that runs on my own machine. Two episodes stand out. First, watching a merged branch silently break the test suite on \texttt{main} convinced me that a green local run means nothing without an automated quality gate; designing the GitHub Actions workflow taught me that CI is less a tool than a social contract. Second, building the auto-demo mode pushed me into reasoning about partial failure: what if the demo is force-killed mid-playback and leaves the seed data half-mutated? Solving that with a layered defence (file-level backups, a JVM shutdown hook, and a startup-scan that auto-restores orphaned \texttt{.demo-backup} files) was my first real encounter with idempotency and graceful degradation. Beyond DevOps, designing the Job state machine taught me to encode invariants in code rather than in documentation, and writing RFC-4180-compliant CSV exports gave me a healthy respect for data formats that look simple but bite you on every embedded comma. Across five PRs in the final iteration alone, I also learned how disciplined commit hygiene, scoped diffs, and self-explanatory PR descriptions multiply the team's review velocity. This project crystallised my belief that engineering excellence is not about clever code, but about systems that fail safely, recover automatically, and stay honest with the next developer who touches them.
+
+\vspace{1.5em}
+\textbf{QM no:} 231226244 \hspace{2em} \textbf{Name:} Hanyu Xiao\\
+\textbf{Main contribution:}\\
+I established the initial project framework and subsequently focused on the TA user experience, including notifications and AI recommendations. After setting up the base directory structure, I developed the TA Swing GUI, implementing CV path saving and upload validation. In Iteration 3, I built the TA Notification Centre, handling read/unread states and refresh-based status updates. In the final iteration, I implemented the TA-side AI job recommendations, integrating AI Fit scores, ``Recommended only'' filters, recommendation explanation panels, and comprehensive automated/manual testing documentation.\\
+\textbf{Reflective statement:}\\
+Establishing the project framework and developing the TA interface taught me how foundational architectural decisions impact the entire development lifecycle. Building the Notification Centre was particularly challenging; implementing a publish/subscribe pattern to decouple the UI from backend events required a paradigm shift in how I structured Swing components. Integrating the AI recommendation data into the TA dashboard involved designing intuitive UI elements to explain complex algorithmic decisions to the user. I also learned the immense value of writing comprehensive test documentation, which significantly improved the reliability of my features. This experience greatly improved my proficiency in UI/UX design within Java Swing, event-driven programming, and test-driven development.
+
+\vspace{1.5em}
+\textbf{QM no:} 231225546 \hspace{2em} \textbf{Name:} Conghao Li\\
+\textbf{Main contribution:}\\
+My contributions centred on data persistence, notification backends, and comprehensive final testing. After early repository maintenance, I resolved deadline validation bugs, generated seed CSV test data, and resolved data conflicts. In Iteration 3, I architected the notification backend, moving notifications from a UI utility to persistent data storage with dedicated models and services. In Iteration 4, I led the final testing and documentation efforts, producing the Regression Checklist, integration tests, User Manual, Screenshots Guide, Final Demo Script, and the Iteration 4 Completion Report.\\
+\textbf{Reflective statement:}\\
+Focusing on data persistence and quality assurance gave me a holistic view of the software engineering process. Migrating the notification system to a persistent backend taught me the intricacies of flat-file I/O and the importance of consistent CSV persistence practices in a desktop environment. The most significant challenge was orchestrating the final integration testing; designing comprehensive test scenarios that covered all edge cases without a dedicated testing framework required creativity and meticulous planning. Authoring the User Manual and Demo Script emphasised the importance of clear, user-centric technical writing. This project solidified my understanding of software testing methodologies, data management, and the critical role of documentation in delivering a polished final product.
+
+\end{document}
+
+
+\maketitle
+
+\section{Introduction}
+
+\end{document}
