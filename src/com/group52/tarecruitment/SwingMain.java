@@ -8,6 +8,7 @@ import com.group52.tarecruitment.repository.WorkloadRepository;
 import com.group52.tarecruitment.service.AdminService;
 import com.group52.tarecruitment.service.ApplicationService;
 import com.group52.tarecruitment.service.AuthService;
+import com.group52.tarecruitment.service.ExportService;
 import com.group52.tarecruitment.service.JobService;
 import com.group52.tarecruitment.service.NotificationService;
 import com.group52.tarecruitment.service.WorkloadService;
@@ -38,6 +39,9 @@ public class SwingMain {
         applicationService.setAuditLogRepository(auditLogRepository);
         AdminService adminService =
                 new AdminService(userRepository, jobRepository, applicationRepository, notificationService, jobService);
+        ExportService exportService = new ExportService(
+                userRepository, jobRepository, applicationRepository, adminService,
+                dataDirectory.resolve("exports"));
 
         SwingApp app = new SwingApp(
                 authService,
@@ -46,6 +50,7 @@ public class SwingMain {
                 dataDirectory,
                 adminService,
                 notificationService);
+        app.setExportService(exportService);
         app.start();
     }
 }

@@ -144,6 +144,8 @@ public class SwingApp {
     private final AdminService adminService;
     private final NotificationService notificationService;
     private final Path dataDirectory;
+    private com.group52.tarecruitment.service.ExportService exportService;
+    private AutoDemoController autoDemoController;
 
     private JFrame frame;
     private CardLayout rootLayout;
@@ -184,6 +186,14 @@ public class SwingApp {
         this.notificationService = notificationService;
     }
 
+    /**
+     * Inject the export service so that the auto-demo (and any future
+     * UI-side export buttons) can run. Must be called before {@link #start()}.
+     */
+    public void setExportService(com.group52.tarecruitment.service.ExportService exportService) {
+        this.exportService = exportService;
+    }
+
     public void start() {
         SwingUtilities.invokeLater(this::initAndShow);
     }
@@ -220,6 +230,13 @@ public class SwingApp {
         rootPanel.add(adminPanel, PAGE_ADMIN);
 
         frame.setContentPane(rootPanel);
+
+        if (exportService != null && dataDirectory != null && adminService != null) {
+            autoDemoController = new AutoDemoController(this, authService, jobService,
+                    applicationService, adminService, exportService, dataDirectory);
+            loginPanel.installDemoButton(autoDemoController);
+        }
+
         showLoginPage();
         frame.setVisible(true);
     }
@@ -1217,6 +1234,30 @@ public class SwingApp {
         private final JButton loginButton;
         private final JButton registerButton;
         private final JLabel statusLabel;
+        private final JPanel form;
+
+        void installDemoButton(AutoDemoController controller) {
+            if (controller == null || !controller.isAvailable()) {
+                return;
+            }
+            JButton demo = new JButton("Play Demo");
+            stylePrimaryButton(demo);
+            demo.setToolTipText("Run the auto demo: TA \u2192 MO \u2192 Admin walkthrough (~9 min).");
+            demo.addActionListener(e -> {
+                int ok = JOptionPane.showConfirmDialog(frame,
+                        "Start the full auto demo? Your data/ files will be backed up\n"
+                                + "and restored when it finishes (or if you close the app).",
+                        "Auto Demo", JOptionPane.OK_CANCEL_OPTION);
+                if (ok == JOptionPane.OK_OPTION) {
+                    controller.start();
+                }
+            });
+            JLabel spacer = new JLabel(" ");
+            form.add(spacer);
+            form.add(demo);
+            form.revalidate();
+            form.repaint();
+        }
 
         private LoginPanel() {
             setLayout(new BorderLayout());
@@ -1870,10 +1911,31 @@ public class SwingApp {
     }
 
     private class TaPanel extends AvatarAwarePanel {
-        private static final String TAB_DASHBOARD = "dashboard";
-        private static final String TAB_JOB_BOARD = "jobBoard";
-        private static final String TAB_PROFILE = "profile";
-        private static final String TAB_NOTIFICATIONS = "notifications";
+        static final String TAB_DASHBOARD = "dashboard";
+        static final String TAB_JOB_BOARD = "jobBoard";
+        static final String TAB_PROFILE = "profile";
+        static final String TAB_NOTIFICATIONS = "notifications";
+
+        void demoShowTab(String tab) {
+            switch (tab) {
+                case TAB_DASHBOARD:
+                    refreshApplications();
+                    refreshNotifications();
+                    break;
+                case TAB_JOB_BOARD:
+                    refreshJobs();
+                    break;
+                case TAB_NOTIFICATIONS:
+                    refreshNotifications();
+                    break;
+                case TAB_PROFILE:
+                    loadProfile();
+                    break;
+                default:
+                    return;
+            }
+            contentLayout.show(contentPanel, tab);
+        }
 
         private final JLabel titleLabel;
         private final JLabel profileAvatarLabel;
@@ -2951,10 +3013,30 @@ public class SwingApp {
     }
 
     private class MoPanel extends JPanel {
-        private static final String TAB_DASHBOARD = "dashboard";
-        private static final String TAB_APPLICANTS = "applicants";
-        private static final String TAB_PROFILE = "profile";
-        private static final String TAB_NOTIFICATIONS = "notifications";
+        static final String TAB_DASHBOARD = "dashboard";
+        static final String TAB_APPLICANTS = "applicants";
+        static final String TAB_PROFILE = "profile";
+        static final String TAB_NOTIFICATIONS = "notifications";
+
+        void demoShowTab(String tab) {
+            switch (tab) {
+                case TAB_DASHBOARD:
+                    refreshJobs();
+                    break;
+                case TAB_APPLICANTS:
+                    refreshApplicants();
+                    break;
+                case TAB_PROFILE:
+                    loadProfile();
+                    break;
+                case TAB_NOTIFICATIONS:
+                    refreshMoNotificationsTab();
+                    break;
+                default:
+                    return;
+            }
+            contentLayout.show(contentPanel, tab);
+        }
 
         private final JLabel titleLabel;
         private final CardLayout contentLayout;
@@ -3875,12 +3957,38 @@ public class SwingApp {
     }
 
     private class AdminPanel extends JPanel {
-        private static final String TAB_WORKLOAD = "workload";
-        private static final String TAB_ACCOUNTS = "accounts";
-        private static final String TAB_JOBS = "jobs";
-        private static final String TAB_APPLICATIONS = "applications";
-        private static final String TAB_AUDIT = "audit";
-        private static final String TAB_NOTIFICATIONS = "notifications";
+        static final String TAB_WORKLOAD = "workload";
+        static final String TAB_ACCOUNTS = "accounts";
+        static final String TAB_JOBS = "jobs";
+        static final String TAB_APPLICATIONS = "applications";
+        static final String TAB_AUDIT = "audit";
+        static final String TAB_NOTIFICATIONS = "notifications";
+
+        void demoShowTab(String tab) {
+            switch (tab) {
+                case TAB_WORKLOAD:
+                    refreshWorkload();
+                    break;
+                case TAB_ACCOUNTS:
+                    refreshAccounts();
+                    break;
+                case TAB_JOBS:
+                    refreshJobs();
+                    break;
+                case TAB_APPLICATIONS:
+                    refreshApplications();
+                    break;
+                case TAB_AUDIT:
+                    refreshAuditLog();
+                    break;
+                case TAB_NOTIFICATIONS:
+                    refreshAdminNotifications();
+                    break;
+                default:
+                    return;
+            }
+            contentLayout.show(contentPanel, tab);
+        }
 
         private final JLabel titleLabel;
         private final CardLayout contentLayout;
@@ -5030,7 +5138,36 @@ public class SwingApp {
 
     void demoRefreshCurrentPanel() {
         SwingUtilities.invokeLater(() -> {
-            // Best-effort refresh of whatever panel is currently showing
+            if (taPanel != null) {
+                taPanel.demoShowTab(TaPanel.TAB_DASHBOARD);
+            }
+            if (moPanel != null) {
+                moPanel.demoShowTab(MoPanel.TAB_DASHBOARD);
+            }
+            if (adminPanel != null) {
+                adminPanel.demoShowTab(AdminPanel.TAB_WORKLOAD);
+            }
+        });
+    }
+
+    void demoSelectTaTab(String tab) {
+        SwingUtilities.invokeLater(() -> { if (taPanel != null) taPanel.demoShowTab(tab); });
+    }
+
+    void demoSelectMoTab(String tab) {
+        SwingUtilities.invokeLater(() -> { if (moPanel != null) moPanel.demoShowTab(tab); });
+    }
+
+    void demoSelectAdminTab(String tab) {
+        SwingUtilities.invokeLater(() -> { if (adminPanel != null) adminPanel.demoShowTab(tab); });
+    }
+
+    void demoShowRegisterPage() {
+        SwingUtilities.invokeLater(() -> {
+            if (registerPanel != null) {
+                registerPanel.reset();
+                showPage(PAGE_REGISTER);
+            }
         });
     }
 
