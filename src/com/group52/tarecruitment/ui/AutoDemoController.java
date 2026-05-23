@@ -153,6 +153,15 @@ final class AutoDemoController {
     }
 
     void start() {
+        startInternal(this::buildScript, "Auto Demo");
+    }
+
+    /** Start Wang Xiao's personal demo (job lifecycle + filters + exports). */
+    void startXiaoDemo() {
+        startInternal(this::buildXiaoScript, "Auto Demo - Wang Xiao");
+    }
+
+    private void startInternal(Runnable scriptBuilder, String dialogTitle) {
         if (running || !isAvailable()) {
             return;
         }
@@ -163,10 +172,10 @@ final class AutoDemoController {
             running = false;
             JOptionPane.showMessageDialog(app.getMainFrame(),
                     "Failed to back up data before demo:\n" + ex.getMessage(),
-                    "Auto Demo", JOptionPane.ERROR_MESSAGE);
+                    dialogTitle, JOptionPane.ERROR_MESSAGE);
             return;
         }
-        buildScript();
+        scriptBuilder.run();
         currentStep = 0;
         scheduleNext();
     }
@@ -370,6 +379,145 @@ final class AutoDemoController {
                 14000, null));
     }
 
+    // ==================================================================
+    // Wang Xiao's personal demo (~4 min 30 s)
+    // Focuses on the four ownership areas claimed in the final report:
+    //   1. Job lifecycle state machine (OPEN / FILLED / CLOSED + auto-heal)
+    //   2. Multi-condition job board filter (TA side)
+    //   3. TA profile self-service (CV / avatar / password)
+    //   4. Timestamped CSV export service with collision-safe filenames
+    // Engineering-quality contributions (CI, test rescue, scripts, README,
+    // crash-safe demo infrastructure) are mentioned in captions but not
+    // demoed in the UI since they live outside the running app.
+    // ==================================================================
+    private void buildXiaoScript() {
+        steps.clear();
+
+        final String taEmail = "carol.wu@bupt.local";
+        final String taPassword = "ta345678";
+        final String moEmail = "drsmith@bupt.local";
+        final String moPassword = "mo123456";
+        final String adminEmail = "admin@bupt.local";
+        final String adminPassword = "admin123";
+        final String demoJobId = "JOB100001"; // CS101, posted by Dr Smith (MO001), OPEN.
+
+        // -------- Phase 0: Intro (12s) --------
+        steps.add(new Step(
+                "Wang Xiao's contribution demo — Job lifecycle, filters, profile, CSV exports.",
+                "Wang Xiao 的个人演示 —— 岗位生命周期、筛选、个人资料、CSV 导出。",
+                12000, () -> app.demoReturnToLogin()));
+
+        // -------- Phase 1: Job Lifecycle State Machine (75s) --------
+        steps.add(new Step(
+                "Part 1 / 4 — Job lifecycle. Signing in as MO Dr Smith, who owns CS101.",
+                "第 1 部分 / 共 4 部分 —— 岗位生命周期。以 CS101 的发布人 Dr Smith 登录。",
+                10000, () -> safeEnterAs(moEmail, moPassword)));
+
+        steps.add(new Step(
+                "Dr Smith's dashboard — note CS101 is currently OPEN. Watch the status column.",
+                "Dr Smith 工作台 —— 注意 CS101 当前是 OPEN 状态，看 status 列。",
+                14000, () -> app.demoSelectMoTab("dashboard")));
+
+        steps.add(new Step(
+                "Manually closing CS101 via the service-layer state machine. OPEN → CLOSED.",
+                "通过 Service 层状态机手动关闭 CS101。OPEN → CLOSED。",
+                14000, () -> safeCloseJob(demoJobId, moEmail, moPassword)));
+
+        steps.add(new Step(
+                "Status flipped to CLOSED. Reopening it now — back to OPEN, fully idempotent.",
+                "状态切换到 CLOSED。现在重新开启 —— 回到 OPEN，操作幂等。",
+                14000, () -> safeReopenJob(demoJobId, moEmail, moPassword)));
+
+        steps.add(new Step(
+                "Plus: jobs auto-FILLED when all positions accepted, auto-CLOSED on deadline. Self-healing.",
+                "另外：所有坑位被通过时自动 FILLED；过截止日期自动 CLOSED。自愈状态机。",
+                14000, () -> app.demoSelectMoTab("dashboard")));
+
+        // -------- Phase 2: Multi-condition Job Board Filter (55s) --------
+        steps.add(new Step(
+                "Part 2 / 4 — Multi-condition job board filter. Signing in as TA Carol Wu.",
+                "第 2 部分 / 共 4 部分 —— 多条件岗位筛选。以 TA Carol Wu 登录。",
+                10000, () -> safeEnterAs(taEmail, taPassword)));
+
+        steps.add(new Step(
+                "Job Board lists every OPEN position with an AI Fit score.",
+                "Job Board 列出所有 OPEN 岗位，每个都带 AI 匹配分。",
+                12000, () -> app.demoSelectTaTab("jobBoard")));
+
+        steps.add(new Step(
+                "Filters: skills, max hours, MO, status — combinable in any order.",
+                "筛选条件：技能、最大工时、MO、状态 —— 任意组合。",
+                15000, null));
+
+        steps.add(new Step(
+                "And a 'Recommended only' toggle that hides anything below the AI threshold.",
+                "再加上 'Recommended only' 开关，过滤掉所有低于 AI 阈值的岗位。",
+                18000, null));
+
+        // -------- Phase 3: TA Profile Self-Service (40s) --------
+        steps.add(new Step(
+                "Part 3 / 4 — TA profile self-service: edit programme, hours, skills, CV, avatar.",
+                "第 3 部分 / 共 4 部分 —— TA 个人资料自助：专业、工时、技能、CV、头像。",
+                14000, () -> app.demoSelectTaTab("profile")));
+
+        steps.add(new Step(
+                "Every field validated server-side; password change requires old password + audit log.",
+                "所有字段服务端校验；改密码需要旧密码并写入审计日志。",
+                16000, null));
+
+        steps.add(new Step(
+                "Self-service reduces MO support load. Same surface reused by MO profile screen.",
+                "自助大幅降低 MO 支持工作量。MO 个人资料页复用同一套实现。",
+                10000, null));
+
+        // -------- Phase 4: CSV Exports + collision-safe filenames (70s) --------
+        steps.add(new Step(
+                "Part 4 / 4 — CSV exports. Signing in as Admin to trigger all three reports.",
+                "第 4 部分 / 共 4 部分 —— CSV 导出。以 Admin 登录，依次触发三份报表。",
+                10000, () -> safeEnterAs(adminEmail, adminPassword)));
+
+        steps.add(new Step(
+                "Export #1 — TA Workload Summary (Balanced / Overloaded / Underused).",
+                "导出 1 —— TA 工作量汇总（Balanced / Overloaded / Underused）。",
+                10000, this::safeExportWorkload));
+
+        steps.add(new Step(
+                "Export #2 — Job Filling Status (positions / filled / remaining / fillRatio).",
+                "导出 2 —— 岗位填充情况（坑位 / 已填 / 剩余 / 填充率）。",
+                10000, this::safeExportJobFilling));
+
+        steps.add(new Step(
+                "Export #3 — All Applications across every MO and every job.",
+                "导出 3 —— 跨 MO、跨岗位的全部申请。",
+                10000, this::safeExportAllApplications));
+
+        steps.add(new Step(
+                "Collision-safe: clicking the same export twice in one second gets a numeric suffix.",
+                "防冲突：同秒重复导出会自动追加数字后缀。",
+                12000, this::safeExportWorkloadTwice));
+
+        steps.add(new Step(
+                "Every export is RFC-4180 compliant — commas, quotes, newlines all escaped safely.",
+                "每份导出都符合 RFC-4180 —— 逗号、引号、换行都安全转义。",
+                12000, null));
+
+        // -------- Phase 5: Engineering-quality wrap (40s) --------
+        steps.add(new Step(
+                "Off-screen, I also stood up the GitHub Actions CI that blocks any red PR.",
+                "线下我还搭建了 GitHub Actions CI，任何打挂构建的 PR 都过不了。",
+                12000, null));
+
+        steps.add(new Step(
+                "Rescued the test suite from a broken merge — 12 ghost tests → real integration tests, 42/42 green.",
+                "拯救了一次合并后的测试套件 —— 把 12 个假测试重写为真集成测试，42/42 全绿。",
+                14000, null));
+
+        steps.add(new Step(
+                "Demo complete. Data files are being restored so you can replay anytime. Thanks!",
+                "演示结束。数据文件正在恢复，可随时重播。谢谢！",
+                14000, null));
+    }
+
     // ------------------------------------------------------------------
     // Step actions (all swallow exceptions and forward to the caption so
     // a partial environment never crashes the whole demo).
@@ -415,6 +563,61 @@ final class AutoDemoController {
         } catch (Exception ex) {
             app.demoAppendCaption("(export failed: " + ex.getMessage() + ")",
                     "\uff08\u5bfc\u51fa\u5931\u8d25\uff1a" + ex.getMessage() + "\uff09");
+        }
+    }
+
+    private void safeExportJobFilling() {
+        try {
+            Path exported = exportService.exportJobFillingStatus();
+            app.demoAppendCaption("\u2192 " + exported.getFileName(),
+                    "\u2192 " + exported.getFileName());
+        } catch (Exception ex) {
+            app.demoAppendCaption("(export failed: " + ex.getMessage() + ")",
+                    "\uff08\u5bfc\u51fa\u5931\u8d25\uff1a" + ex.getMessage() + "\uff09");
+        }
+    }
+
+    private void safeExportAllApplications() {
+        try {
+            Path exported = exportService.exportAllApplications();
+            app.demoAppendCaption("\u2192 " + exported.getFileName(),
+                    "\u2192 " + exported.getFileName());
+        } catch (Exception ex) {
+            app.demoAppendCaption("(export failed: " + ex.getMessage() + ")",
+                    "\uff08\u5bfc\u51fa\u5931\u8d25\uff1a" + ex.getMessage() + "\uff09");
+        }
+    }
+
+    /** Trigger the same export twice in a row so the collision-suffix path is observable. */
+    private void safeExportWorkloadTwice() {
+        try {
+            Path first = exportService.exportTaWorkloadSummary();
+            Path second = exportService.exportTaWorkloadSummary();
+            app.demoAppendCaption("\u2192 " + first.getFileName() + " + " + second.getFileName(),
+                    "\u2192 " + first.getFileName() + " + " + second.getFileName());
+        } catch (Exception ex) {
+            app.demoAppendCaption("(export failed: " + ex.getMessage() + ")",
+                    "\uff08\u5bfc\u51fa\u5931\u8d25\uff1a" + ex.getMessage() + "\uff09");
+        }
+    }
+
+    private void safeCloseJob(String jobId, String moEmail, String moPassword) {
+        try {
+            User mo = authService.login(moEmail, moPassword);
+            jobService.closeJob(jobId, mo.getId());
+        } catch (Exception ex) {
+            app.demoAppendCaption("(close failed: " + ex.getMessage() + ")",
+                    "\uff08\u5173\u95ed\u5931\u8d25\uff1a" + ex.getMessage() + "\uff09");
+        }
+    }
+
+    private void safeReopenJob(String jobId, String moEmail, String moPassword) {
+        try {
+            User mo = authService.login(moEmail, moPassword);
+            jobService.reopenJob(jobId, mo.getId());
+        } catch (Exception ex) {
+            app.demoAppendCaption("(reopen failed: " + ex.getMessage() + ")",
+                    "\uff08\u91cd\u5f00\u5931\u8d25\uff1a" + ex.getMessage() + "\uff09");
         }
     }
 

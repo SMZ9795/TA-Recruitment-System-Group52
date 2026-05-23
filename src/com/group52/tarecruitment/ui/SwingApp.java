@@ -1055,9 +1055,9 @@ public class SwingApp {
             if (controller == null || !controller.isAvailable()) {
                 return;
             }
-            JButton demo = new JButton("Play Demo");
+            JButton demo = new JButton("Play Full Demo");
             stylePrimaryButton(demo);
-            demo.setToolTipText("Run the auto demo: TA \u2192 MO \u2192 Admin walkthrough (~9 min).");
+            demo.setToolTipText("Run the full auto demo: TA \u2192 MO \u2192 Admin walkthrough (~9 min).");
             demo.addActionListener(e -> {
                 int ok = JOptionPane.showConfirmDialog(frame,
                         "Start the full auto demo? Your data/ files will be backed up\n"
@@ -1067,9 +1067,23 @@ public class SwingApp {
                     controller.start();
                 }
             });
-            JLabel spacer = new JLabel(" ");
-            form.add(spacer);
+
+            JButton xiao = new JButton("Wang Xiao's Demo");
+            styleSecondaryButton(xiao);
+            xiao.setToolTipText("Run Wang Xiao's personal demo: job lifecycle, filters, "
+                    + "TA profile, CSV exports + collision-safe filenames (~4.5 min).");
+            xiao.addActionListener(e -> {
+                int ok = JOptionPane.showConfirmDialog(frame,
+                        "Start Wang Xiao's personal demo? Same backup-and-restore safety net\n"
+                                + "applies as the full demo. About 4.5 minutes.",
+                        "Auto Demo - Wang Xiao", JOptionPane.OK_CANCEL_OPTION);
+                if (ok == JOptionPane.OK_OPTION) {
+                    controller.startXiaoDemo();
+                }
+            });
+
             form.add(demo);
+            form.add(xiao);
             form.revalidate();
             form.repaint();
         }
@@ -1103,7 +1117,7 @@ public class SwingApp {
             left.add(loginCardBadge);
 
             form = new JPanel(new GridLayout(0, 2, 15, 14));
-            form.setPreferredSize(new Dimension(450, 280));
+            form.setPreferredSize(new Dimension(450, 320));
             form.setBorder(BorderFactory.createCompoundBorder(
                     BorderFactory.createLineBorder(new Color(220, 225, 233), 1, true),
                     BorderFactory.createEmptyBorder(28, 28, 28, 28)));
