@@ -1354,7 +1354,7 @@ public class SwingApp {
             formContainer.add(subtitle);
             formContainer.add(Box.createVerticalStrut(40));
 
-            JPanel form = new JPanel(new GridBagLayout());
+            form = new JPanel(new GridBagLayout());
             form.setOpaque(false);
             form.setAlignmentX(Component.LEFT_ALIGNMENT);
             GridBagConstraints gbc = new GridBagConstraints();
