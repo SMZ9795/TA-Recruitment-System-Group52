@@ -234,7 +234,7 @@ public class SwingApp {
         if (exportService != null && dataDirectory != null && adminService != null) {
             autoDemoController = new AutoDemoController(this, authService, jobService,
                     applicationService, adminService, exportService, dataDirectory);
-            loginPanel.installDemoButton(autoDemoController);
+            // loginPanel.installDemoButton(autoDemoController);
         }
 
         showLoginPage();
